@@ -1,0 +1,28 @@
+﻿# Dependencias e pastas geradas
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+.turbo/
+.vercel/
+.next/
+
+# Backups e dados pessoais do app
+meu-cronograma-concursos-dados*.json
+planeja-concursos-backup-*.json
+backup-*/
+recuperacao-estado-*/
+LEIA-ME-USAR-NO-DRIVE.txt
+
+# Ambientes e chaves locais
+.env
+.env.*
+!.env.example
+
+# Sistema operacional / editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

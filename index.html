@@ -1,0 +1,471 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meu Cronograma Concursos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=20260708-auditoria-final-2" />
+    <script src="./vendor/lucide.min.js"></script>
+    <script src="./vendor/mammoth.browser.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand sidebar-identity">
+          <div class="brand-top">
+            <h1 class="brand-logo"><span>Meu Cronograma</span><span>Concursos</span></h1>
+            <div class="brand-controls">
+              <button id="themeToggleButton" class="sidebar-icon-button" type="button" aria-label="Alternar modo noite"><i data-lucide="moon"></i></button>
+              <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir dados e backup" aria-expanded="false"><i data-lucide="settings"></i></button>
+            </div>
+          </div>
+          <p class="brand-tagline">Seu edital em ciclos inteligentes de estudo.</p>
+          <div id="settingsMenu" class="settings-popover" hidden>
+            <div class="settings-popover-header">
+              <strong>Dados e backup</strong>
+              <span>Configura&ccedil;&otilde;es do arquivo local</span>
+            </div>
+            <div class="backup-actions">
+              <button id="saveNowButton" class="backup-button" type="button"><i data-lucide="save"></i><span>Salvar</span></button>
+              <button id="saveDataFileButton" class="backup-button" type="button"><i data-lucide="cloud-upload"></i><span>Salvar no Drive</span></button>
+              <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Backup</span></button>
+              <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar</span></label>
+              <input id="importBackupInput" type="file" accept="application/json,.json" />
+              <button id="loadDataFileButton" class="backup-button" type="button"><i data-lucide="folder-sync"></i><span>Carregar dados</span></button>
+              <button id="createDataFileButton" class="backup-button" type="button"><i data-lucide="file-plus-2"></i><span>Criar dados</span></button>
+              <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Conectar dados</span></button>
+              <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Ciclo anterior</span></button>
+              <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
+              <span id="saveStatus" class="save-status">Dados salvos localmente</span>
+            </div>
+          </div>
+        </div>
+        <div class="contest-switcher sidebar-plan">
+          <label for="planSelect">Planejamento atual</label>
+          <div class="plan-context-card">
+            <select id="planSelect"></select>
+            <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo concurso</span></button>
+          </div>
+        </div>
+        <nav class="tabs sidebar-flow" aria-label="Se&ccedil;&otilde;es do planejamento">
+          <button class="tab-button active" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span></button>
+          <button class="tab-button" type="button" data-tab-target="conteudo"><i data-lucide="file-text"></i><span>Conte&uacute;do Program&aacute;tico</span></button>
+          <button class="tab-button locked" type="button" data-tab-target="pesos" disabled><i data-lucide="sliders-horizontal"></i><span>Prioridade das Mat&eacute;rias</span></button>
+          <button class="tab-button locked" type="button" data-tab-target="cronograma" disabled><i data-lucide="calendar-range"></i><span>Metas do Ciclo</span></button>
+          <button class="tab-button" type="button" data-tab-target="revisoes"><i data-lucide="repeat-2"></i><span>Revis&otilde;es</span></button>
+          <button class="tab-button" type="button" data-tab-target="erros"><i data-lucide="notebook"></i><span>Caderno de Resumos</span></button>
+          <button class="tab-button" type="button" data-tab-target="evolucao"><i data-lucide="trending-up"></i><span>Painel de Evolu&ccedil;&atilde;o</span></button>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="status-pill" id="confirmationStatus">Aguardando cadastro</div>
+        </div>
+      </aside>
+
+      <section class="content-area">
+        <section class="tab-panel active" id="tab-concurso">
+          <div class="panel-heading hero-heading">
+            <div>
+              <span class="section-kicker">Dados iniciais</span>
+              <h2>Dados do Concurso</h2>
+              <p>Configure as informa&ccedil;&otilde;es principais para gerar seu cronograma de estudos.</p>
+            </div>
+          </div>
+
+          <div class="contest-form-card">
+            <div class="form-section">
+              <h3>Informa&ccedil;&otilde;es do concurso</h3>
+              <div class="form-grid">
+                <label>Nome do concurso
+                  <input id="contestName" type="text" placeholder="Ex.: TCE, CGU, Prefeitura..." />
+                </label>
+                <label>Banca
+                  <input id="examBoard" type="text" placeholder="Ex.: FCC, FGV, Cesgranrio" />
+                </label>
+                <label>Cargo
+                  <input id="jobRole" type="text" placeholder="Ex.: Auditor de Controle" />
+                </label>
+                <label>Data da prova
+                  <input id="examDate" type="date" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3>Planejamento de estudos</h3>
+              <div class="form-grid compact">
+                <label>Data inicial do planejamento
+                  <input id="planStartDate" type="date" />
+                </label>
+                <label>Carga hor&aacute;ria do ciclo
+                  <input id="weeklyHours" type="number" min="1" step="0.5" value="24" />
+                </label>
+                <label>Dura&ccedil;&atilde;o padr&atilde;o de cada bloco
+                  <select id="blockDuration">
+                    <option value="1">1h</option>
+                    <option value="1.5" selected>1h30</option>
+                    <option value="2">2h</option>
+                    <option value="2.5">2h30</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="contest-actions">
+              <button id="saveContestButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar dados</span></button>
+              <button id="goContentButton" class="primary-button" type="button"><i data-lucide="arrow-right"></i><span>Avan&ccedil;ar para conte&uacute;do program&aacute;tico</span></button>
+            </div>
+          </div>
+
+          <div class="summary-strip" id="contestSummary"></div>
+          <div class="summary-grid contest-auto-summary" id="contestAutoSummary" hidden></div>
+        </section>
+
+        <section class="tab-panel" id="tab-conteudo">
+          <div class="panel-heading">
+            <div>
+              <h2>Adicionar edital</h2>
+              <p>Envie o edital em PDF ou Word. O sistema identifica as mat&eacute;rias, organiza os assuntos e mostra uma pr&eacute;via antes de confirmar.</p>
+            </div>
+          </div>
+
+          <div class="content-flow-steps" aria-label="Etapas da leitura do edital">
+            <span data-content-step="1" class="is-active"><strong>1</strong> Enviar edital</span>
+            <span data-content-step="2"><strong>2</strong> Conferir mat&eacute;rias</span>
+            <span data-content-step="3"><strong>3</strong> Confirmar conte&uacute;do</span>
+          </div>
+
+          <div class="content-import-card">
+            <div class="import-card-header">
+              <div>
+                <span class="step-label">Passo 1</span>
+                <h3>Envie o edital</h3>
+                <p>Importe o arquivo completo ou cole somente a parte de conhecimentos/conte&uacute;do program&aacute;tico.</p>
+              </div>
+              <div class="import-actions">
+                <button id="processButton" class="primary-button" type="button"><i data-lucide="sparkles"></i><span>Organizar conte&uacute;do</span></button>
+              </div>
+            </div>
+            <div class="import-choice-grid">
+              <div class="import-choice-card">
+                <div>
+                  <strong>Arquivo do edital</strong>
+                  <span>PDF ou Word com o conte&uacute;do do concurso.</span>
+                </div>
+                <div class="import-box">
+                  <label class="file-button" for="fileInput"><i data-lucide="file-up"></i><span>Escolher arquivo</span></label>
+                  <input id="fileInput" type="file" accept=".txt,.docx,.pdf,text/plain,application/pdf" />
+                  <span id="fileName" class="file-name">Nenhum arquivo selecionado</span>
+                  <button id="clearButton" class="ghost-button compact-button" type="button"><i data-lucide="x"></i><span>Limpar</span></button>
+                </div>
+              </div>
+              <div class="import-helper-card">
+                <strong>Para melhores resultados</strong>
+                <p>Se o edital vier muito grande, cole apenas a se&ccedil;&atilde;o de conhecimentos. Mat&eacute;rias em linhas separadas ajudam a organiza&ccedil;&atilde;o.</p>
+                <details>
+                  <summary>Ver exemplo</summary>
+                  <pre>L&Iacute;NGUA PORTUGUESA
+Interpreta&ccedil;&atilde;o de texto. Gram&aacute;tica. Reda&ccedil;&atilde;o oficial.
+
+DIREITO ADMINISTRATIVO
+Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
+                </details>
+              </div>
+            </div>
+            <details class="manual-content-panel advanced-content-options">
+              <summary>Op&ccedil;&otilde;es avan&ccedil;adas</summary>
+              <div class="manual-content-intro">
+                <strong>Colar conte&uacute;do manualmente</strong>
+                <span>Use esta op&ccedil;&atilde;o se preferir inserir o trecho do edital sem importar arquivo.</span>
+              </div>
+              <textarea id="programText" spellcheck="true" placeholder="Portugu&ecirc;s&#10;Interpreta&ccedil;&atilde;o de texto; coes&atilde;o; coer&ecirc;ncia.&#10;&#10;Direito Administrativo&#10;Princ&iacute;pios; atos administrativos; licita&ccedil;&otilde;es."></textarea>
+            </details>
+          </div>
+
+          <div class="content-review-step">
+            <div class="review-step-header">
+              <div>
+                <span class="step-label">Passo 2</span>
+                <h3>Confira o que foi encontrado</h3>
+                <p>Revise as mat&eacute;rias e temas antes de avan&ccedil;ar. Se algo n&atilde;o ficar bom, ajuste manualmente ou cole novamente o trecho do edital.</p>
+              </div>
+            </div>
+            <div class="summary-grid content-summary" id="contentSummary"></div>
+          </div>
+
+          <div class="content-organizer-card" hidden>
+            <div class="organizer-header">
+              <div>
+                <span class="step-label">Passo 3</span>
+                <h3>Confirme as mat&eacute;rias e temas</h3>
+                <p>Marque o que ser&aacute; estudado, edite nomes quando necess&aacute;rio e confirme para seguir para as prioridades.</p>
+              </div>
+              <div class="table-actions">
+                <button id="selectAllTopicsButton" class="ghost-button compact-button" type="button"><i data-lucide="check-square"></i><span>Selecionar tudo</span></button>
+              </div>
+            </div>
+            <input id="selectAll" class="visually-hidden" type="checkbox" aria-label="Selecionar todas" />
+            <div id="topicsBody" class="subject-accordion"></div>
+            <div id="emptyState" class="empty-state">
+              <i data-lucide="rows-3" aria-hidden="true"></i>
+              <span>Nenhum conte&uacute;do processado</span>
+            </div>
+          </div>
+
+          <div class="content-actions">
+            <button id="backToContestButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
+            <button id="saveContentButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar conte&uacute;do</span></button>
+            <button id="confirmButton" class="primary-button" type="button"><i data-lucide="check-circle-2"></i><span>Est&aacute; certo, continuar</span></button>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-pesos">
+          <div class="panel-heading">
+            <div>
+              <h2>Prioridade das Mat&eacute;rias</h2>
+              <p>Defina a import&acirc;ncia de cada mat&eacute;ria na prova e sua dificuldade pessoal para calcular a prioridade de estudo.</p>
+            </div>
+            <details class="more-actions">
+              <summary>Mais a&ccedil;&otilde;es</summary>
+              <button id="downloadButton" class="ghost-button" type="button"><i data-lucide="download"></i><span>Exportar JSON</span></button>
+            </details>
+          </div>
+          <div class="priority-summary" id="prioritySummary"></div>
+          <div class="planning-grid" id="planningGrid"></div>
+
+          <div class="cycle-adjust-card priority-cycle-card">
+            <div class="cycle-adjust-header">
+              <div>
+                <h3>Gerar Ciclo de Estudos</h3>
+                <p>Revise a capacidade do ciclo, ajuste a carga se necess&aacute;rio e gere as pr&oacute;ximas metas.</p>
+              </div>
+            </div>
+            <div class="summary-strip" id="generationSummary"></div>
+            <div class="cycle-info-grid">
+              <div class="cycle-info-item">
+                <span>Ciclo atual</span>
+                <strong id="cycleLabel">Ciclo atual</strong>
+                <input id="referenceWeek" type="hidden" />
+              </div>
+              <div class="cycle-info-item">
+                <span>Carga padr&atilde;o do ciclo</span>
+                <output id="registeredWeeklyHours">24h</output>
+              </div>
+              <div class="cycle-info-item">
+                <span>Dura&ccedil;&atilde;o padr&atilde;o do bloco</span>
+                <output id="registeredBlockDuration">1h30</output>
+              </div>
+            </div>
+            <div class="cycle-options">
+              <label class="checkbox-label subtle-option">
+                <input id="overrideCycleToggle" type="checkbox" />
+                <span>Alterar carga deste ciclo</span>
+              </label>
+              <label id="overrideWeeklyField" class="cycle-override-field" hidden>Carga do ciclo
+                <input id="overrideWeeklyHours" type="number" min="0" step="0.5" placeholder="Ex.: 18" />
+              </label>
+              <label class="checkbox-label subtle-option">
+                <input id="allowResidualBlock" type="checkbox" checked />
+                <span>Usar saldo restante para revis&atilde;o curta</span>
+              </label>
+            </div>
+            <details class="daily-details" hidden>
+              <summary>Horas por dia do ciclo</summary>
+              <div class="daily-grid" id="dailyHoursGrid"></div>
+            </details>
+            <div class="deadline-panel" id="generationDeadline"></div>
+            <div class="generation-actions">
+              <button id="backToContentFromPriorityButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
+              <button id="saveCycleAdjustmentsButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar ajustes</span></button>
+              <button id="generateScheduleButton" class="primary-button" type="button"><i data-lucide="calendar-plus"></i><span>Gerar ciclo</span></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-cronograma">
+          <div class="panel-heading">
+            <div>
+              <h2>Metas do Ciclo</h2>
+              <p>Acompanhe as metas geradas, registre desempenho e programe as revis&otilde;es.</p>
+            </div>
+            <button class="schedule-filter-toggle" id="pendingOnlyToggle" type="button" aria-pressed="false">
+              <span class="filter-check" aria-hidden="true"></span>
+              <span>Metas pendentes</span>
+            </button>
+            <div class="mini-status" id="scheduleStatus" hidden>Nenhum ciclo gerado</div>
+          </div>
+          <div class="summary-grid" id="summaryGrid"></div>
+          <div class="schedule-wrap" id="scheduleWrap"></div>
+          <div class="cycle-closure-panel" id="cycleClosurePanel" hidden></div>
+          <div class="schedule-actions" id="scheduleActions" hidden>
+            <button id="backToGenerateFromScheduleButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
+            <button id="saveTrackingButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar acompanhamento</span></button>
+            <button id="finishCycleButton" class="primary-button" type="button"><i data-lucide="check-circle-2"></i><span>Finalizar ciclo</span></button>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-concluidos">
+          <div class="panel-heading">
+            <div>
+              <h2>Temas Conclu&iacute;dos</h2>
+            </div>
+          </div>
+          <div class="table-wrap simple">
+            <table>
+              <thead><tr><th>Data</th><th>Mat&eacute;ria</th><th>Tema conclu&iacute;do</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead>
+              <tbody id="completedBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-revisoes">
+          <div class="panel-heading">
+            <div>
+              <h2>Revis&otilde;es</h2>
+            </div>
+            <label class="review-filter">Filtro
+              <select id="reviewFilter">
+                <option value="all">Pendentes</option>
+                <option value="today">Hoje</option>
+                <option value="overdue">Atrasadas</option>
+                <option value="upcoming">Pr&oacute;ximas</option>
+                <option value="done">Conclu&iacute;das</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrap simple">
+            <table>
+              <thead><tr><th>Revis&atilde;o</th><th>Mat&eacute;ria</th><th>Tema</th><th>Ciclo</th><th>Data base</th><th>Prazo</th><th>Status</th></tr></thead>
+              <tbody id="reviewsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-erros">
+          <div class="panel-heading">
+            <div>
+              <h2>Caderno de Resumos</h2>
+              <p>Escolha a mat&eacute;ria e o tema para escrever ou revisar suas anota&ccedil;&otilde;es.</p>
+            </div>
+          </div>
+          <div class="notebook">
+            <div class="notebook-columns">
+              <div class="notebook-col">
+                <h3>Mat&eacute;rias</h3>
+                <div id="notebookSubjects" class="notebook-list"></div>
+              </div>
+              <div class="notebook-col">
+                <h3>Temas</h3>
+                <div id="notebookThemes" class="notebook-list"></div>
+              </div>
+            </div>
+            <div class="notebook-editor">
+              <div id="notebookEditorHeader" class="notebook-editor-header"></div>
+              <div class="notebook-toolbar" aria-label="Ferramentas de formata&ccedil;&atilde;o do resumo">
+                <button type="button" data-notebook-command="undo"><i data-lucide="undo-2"></i><span>Desfazer</span></button>
+                <button type="button" data-notebook-command="bold"><strong>B</strong><span>Negrito</span></button>
+                <button type="button" data-notebook-command="italic"><em>I</em><span>It&aacute;lico</span></button>
+                <button type="button" data-notebook-command="heading"><i data-lucide="heading-3"></i><span>Subt&iacute;tulo</span></button>
+                <button type="button" data-notebook-command="bullet"><i data-lucide="list"></i><span>Lista</span></button>
+                <button type="button" data-notebook-command="image"><i data-lucide="image"></i><span>Imagem</span></button>
+                <button type="button" data-notebook-command="table"><i data-lucide="table"></i><span>Tabela</span></button>
+                <button type="button" data-notebook-command="clear"><i data-lucide="eraser"></i><span>Limpar estilo</span></button>
+                <details class="notebook-tool-menu notebook-size-menu">
+                  <summary><i data-lucide="type"></i><span>Tamanho</span><i data-lucide="chevron-down"></i></summary>
+                  <div class="notebook-tool-panel">
+                    <button type="button" data-notebook-class="note-size-normal"><span>Aa</span><span>Normal</span></button>
+                    <button type="button" data-notebook-class="note-size-large"><span class="size-sample large">Aa</span><span>Maior</span></button>
+                    <button type="button" data-notebook-class="note-size-xlarge"><span class="size-sample xlarge">Aa</span><span>Bem maior</span></button>
+                  </div>
+                </details>
+                <details class="notebook-tool-menu notebook-color-menu">
+                  <summary><i data-lucide="palette"></i><span>Cores</span><i data-lucide="chevron-down"></i></summary>
+                  <div class="notebook-tool-panel notebook-color-panel">
+                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-black"><span class="color-dot black"></span><span>Preto</span></button>
+                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-muted"><span class="color-dot muted"></span><span>Cinza</span></button>
+                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-blue"><span class="color-dot blue"></span><span>Azul</span></button>
+                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-red"><span class="color-dot red"></span><span>Vermelho</span></button>
+                    <button type="button" class="notebook-color-button" data-notebook-class="note-highlight"><span class="color-dot highlight"></span><span>Destaque</span></button>
+                  </div>
+                </details>
+              </div>
+              <div id="notebookText" class="notebook-rich-editor" contenteditable="false" role="textbox" aria-multiline="true" data-placeholder="Escreva ou cole aqui o resumo deste tema: conceitos-chave, macetes, artigos importantes, tudo que ajudar na revis&atilde;o."></div>
+              <div id="notebookStatus" class="notebook-status"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-evolucao">
+          <div class="panel-heading">
+            <div>
+              <h2>Painel de Evolu&ccedil;&atilde;o</h2>
+              <p>Acompanhe seu progresso acumulado, desempenho por mat&eacute;ria e revis&otilde;es pendentes.</p>
+            </div>
+          </div>
+          <div class="summary-grid" id="evolutionGrid"></div>
+          <div class="evolution-empty" id="evolutionEmpty" hidden>Finalize o primeiro ciclo para visualizar sua evolu&ccedil;&atilde;o.</div>
+          <div class="evolution-sections" id="evolutionSections">
+            <section class="evolution-card">
+              <h3>Evolu&ccedil;&atilde;o por ciclo</h3>
+              <div class="table-wrap simple">
+                <table>
+                  <thead><tr><th>Ciclo</th><th>Metas geradas</th><th>Metas conclu&iacute;das</th><th>Horas estudadas</th><th>Quest&otilde;es feitas</th><th>% de acerto</th><th>Revis&otilde;es criadas</th></tr></thead>
+                  <tbody id="evolutionCycleBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="evolution-card">
+              <h3>Desempenho por mat&eacute;ria</h3>
+              <div class="table-wrap simple">
+                <table>
+                  <thead><tr><th>Mat&eacute;ria</th><th>Temas conclu&iacute;dos</th><th>Quest&otilde;es feitas</th><th>Acertos</th><th>Erros</th><th>% de acerto</th><th>Dificuldade m&eacute;dia</th><th>Situa&ccedil;&atilde;o</th></tr></thead>
+                  <tbody id="evolutionSubjectBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="evolution-card">
+              <h3>Mat&eacute;rias de aten&ccedil;&atilde;o</h3>
+              <div id="attentionSubjects" class="attention-list"></div>
+            </section>
+            <section class="evolution-card">
+              <h3>Hist&oacute;rico de conte&uacute;dos conclu&iacute;dos</h3>
+              <div class="table-wrap simple">
+                <table>
+                  <thead><tr><th>Data</th><th>Ciclo</th><th>Mat&eacute;ria</th><th>Tema</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead>
+                  <tbody id="evolutionCompletedBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="rowTemplate">
+      <tr>
+        <td class="select-col"><input class="row-check" type="checkbox" aria-label="Selecionar linha" /></td>
+        <td><input class="cell-input" data-field="materia" /></td>
+        <td><textarea class="cell-area" data-field="assunto"></textarea></td>
+        <td><input class="cell-input number" data-field="ordem" type="number" min="1" /></td>
+        <td>
+          <select class="cell-input" data-field="estudar">
+            <option>Sim</option>
+            <option value="Nao">N&atilde;o</option>
+          </select>
+        </td>
+        <td><textarea class="cell-area" data-field="observacoes"></textarea></td>
+      </tr>
+    </template>
+
+    <script src="./app.js?v=20260708-auditoria-final-2"></script>
+  </body>
+</html>
+
+
+
+
