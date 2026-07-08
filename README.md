@@ -40,3 +40,5 @@ Arquivos como `meu-cronograma-concursos-dados.json`, backups e pastas `backup-*`
 ## Observação
 
 Ao abrir pelo GitHub Pages, o app funcionará no navegador e salvará os dados localmente naquele navegador. Para transferir dados entre dispositivos, exporte um backup JSON e importe no outro dispositivo.
+
+Projeto preparado para publicação no GitHub Pages.
