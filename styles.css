@@ -1355,7 +1355,7 @@ textarea:focus {
 
 .continue-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -1374,21 +1374,19 @@ textarea:focus {
 .continue-main-card,
 .continue-side-card,
 .continue-insights-card,
+.continue-progress-card,
 .continue-empty-card {
   padding: 22px;
 }
 
 .continue-progress-card {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
   gap: 18px;
   align-items: center;
-  padding: 18px 22px;
 }
 
 .continue-empty-card {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1494,10 +1492,6 @@ textarea:focus {
   display: grid;
   gap: 10px;
   margin-bottom: 14px;
-}
-
-.continue-insights-card {
-  grid-column: 1 / -1;
 }
 
 .continue-insight-list {
