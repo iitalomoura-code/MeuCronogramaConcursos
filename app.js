@@ -4,6 +4,8 @@ const PLANS_INDEX_KEY = "planejaConcursosPlanos";
 const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
 const LEGACY_APP_STATE_KEY = APP_STATE_KEY;
 const APP_THEME_KEY = "meu-cronograma-theme";
+const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
+const BACKUP_REMINDER_DAYS = 7;
 const STATUS_OPTIONS = ["N\u00e3o iniciado", "Em andamento", "Conclu\u00eddo", "Reprogramar"];
 const REVIEW_INTERVALS = [
   { key: "24h", label: "24h", days: 1 },
@@ -79,6 +81,8 @@ let performanceEditIndex = -1;
 let unitDetailIndex = -1;
 let recentTopicFeedback = null;
 let showPendingOnly = false;
+let continueSuggestionOffset = 0;
+let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
@@ -94,6 +98,13 @@ const els = {
   settingsMenu: document.querySelector("#settingsMenu"),
   planSelect: document.querySelector("#planSelect"),
   newPlanButton: document.querySelector("#newPlanButton"),
+  planMenuButton: document.querySelector("#planMenuButton"),
+  planMenu: document.querySelector("#planMenu"),
+  deletePlanModal: document.querySelector("#deletePlanModal"),
+  deletePlanQuestion: document.querySelector("#deletePlanQuestion"),
+  cancelDeletePlanButton: document.querySelector("#cancelDeletePlanButton"),
+  cancelDeletePlanBackdrop: document.querySelector("#cancelDeletePlanBackdrop"),
+  confirmDeletePlanButton: document.querySelector("#confirmDeletePlanButton"),
   contestName: document.querySelector("#contestName"),
   examBoard: document.querySelector("#examBoard"),
   jobRole: document.querySelector("#jobRole"),
@@ -143,6 +154,7 @@ const els = {
   generateScheduleButton: document.querySelector("#generateScheduleButton"),
   saveCycleAdjustmentsButton: document.querySelector("#saveCycleAdjustmentsButton"),
   scheduleStatus: document.querySelector("#scheduleStatus"),
+  continuePanel: document.querySelector("#continuePanel"),
   pendingOnlyToggle: document.querySelector("#pendingOnlyToggle"),
   summaryGrid: document.querySelector("#summaryGrid"),
   scheduleWrap: document.querySelector("#scheduleWrap"),
@@ -177,6 +189,9 @@ const els = {
   loadDataFileButton: document.querySelector("#loadDataFileButton"),
   saveDataFileButton: document.querySelector("#saveDataFileButton"),
   exportBackupButton: document.querySelector("#exportBackupButton"),
+  backupNowButton: document.querySelector("#backupNowButton"),
+  backupReminderStatus: document.querySelector("#backupReminderStatus"),
+  backupReminderNotice: document.querySelector("#backupReminderNotice"),
   importBackupInput: document.querySelector("#importBackupInput"),
   saveStatus: document.querySelector("#saveStatus"),
 };
@@ -573,7 +588,7 @@ function completedUnitKeys() {
   const keys = new Set();
   state.completedHistory.forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
   state.generatedBlocks
-    .filter((block) => block.status === "Conclu\u00eddo")
+    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo")
     .forEach((block) => keys.add(topicKey(block.materia, block.assunto)));
   return keys;
 }
@@ -581,8 +596,21 @@ function completedUnitKeys() {
 function availableStudyUnits(item, analysis) {
   const units = item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
   const completed = completedUnitKeys();
+  const reviewUnits = reviewAttentionUnitsForSubject(item.materia);
   const pending = units.filter((unit) => !completed.has(topicKey(item.materia, unit)));
-  return pending.length ? pending : ["Revis\u00e3o geral e quest\u00f5es da mat\u00e9ria"];
+  const merged = [...reviewUnits, ...pending].filter((unit, index, list) => list.findIndex((candidate) => topicKey(item.materia, candidate) === topicKey(item.materia, unit)) === index);
+  return merged.length ? merged : ["Revis\u00e3o geral e quest\u00f5es da mat\u00e9ria"];
+}
+
+function reviewAttentionUnitsForSubject(materia = "") {
+  ensureReviewsArray();
+  return state.reviews
+    .filter((record) => record.status !== "Conclu\u00edda" && normalizeForMatch(record.materia || "") === normalizeForMatch(materia))
+    .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }))
+    .filter((record) => record.statusInfo.group === "overdue" || record.statusInfo.group === "today")
+    .sort((a, b) => a.statusInfo.remaining - b.statusInfo.remaining)
+    .map((record) => record.assunto)
+    .filter(Boolean);
 }
 
 function uppercaseRatio(value) {
@@ -770,7 +798,49 @@ function parseProgramContent(rawText) {
   return rows;
 }
 
-function switchTab(tabName, activeButton = null) {
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function updateSidebarActiveIndicator(activeButton = document.querySelector(".tab-button.active")) {
+  const nav = document.querySelector(".sidebar-flow");
+  if (!nav || !activeButton) return;
+  const navRect = nav.getBoundingClientRect();
+  const buttonRect = activeButton.getBoundingClientRect();
+  nav.style.setProperty("--active-indicator-y", `${buttonRect.top - navRect.top + nav.scrollTop}px`);
+  nav.style.setProperty("--active-indicator-height", `${buttonRect.height}px`);
+  nav.classList.add("has-active-indicator");
+}
+
+function animatePanelNumbers(tabName) {
+  if (prefersReducedMotion() || animatedMetricPanels.has(tabName)) return;
+  const panel = document.querySelector(`#tab-${tabName}`);
+  if (!panel) return;
+  animatedMetricPanels.add(tabName);
+  const numberEls = [...panel.querySelectorAll(".summary-grid strong, .priority-summary strong, .continue-progress strong")];
+  numberEls.forEach((node) => {
+    const original = node.textContent.trim();
+    const match = original.match(/^(\d+)(%)?$/);
+    if (!match) return;
+    const target = Number(match[1]);
+    const suffix = match[2] || "";
+    const startedAt = performance.now();
+    const duration = 520;
+    const step = (now) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      node.textContent = `${Math.round(target * eased)}${suffix}`;
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        node.textContent = original;
+      }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function activateTab(tabName, activeButton = null) {
   const firstMatch = document.querySelector(`[data-tab-target="${tabName}"]`);
   els.tabs.forEach((button) => {
     const isActive = activeButton ? button === activeButton : button === firstMatch;
@@ -778,6 +848,20 @@ function switchTab(tabName, activeButton = null) {
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
   if (tabName === "erros") renderErrors();
+  if (tabName === "continuar") renderContinuePanel();
+  requestAnimationFrame(() => {
+    updateSidebarActiveIndicator(document.querySelector(`[data-tab-target="${tabName}"]`));
+    animatePanelNumbers(tabName);
+  });
+}
+
+function switchTab(tabName, activeButton = null) {
+  const run = () => activateTab(tabName, activeButton);
+  if (!prefersReducedMotion() && document.startViewTransition) {
+    document.startViewTransition(run);
+    return;
+  }
+  run();
 }
 
 function setTabEnabled(tabName, enabled) {
@@ -1601,9 +1685,9 @@ function renderPriorityXray(subjects) {
           <span class="xray-rank">${index + 1}</span>
           <div>
             <strong>${escapeHtml(subject.materia)}</strong>
-            <p>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"} Â· ${subject.reason}</p>
+            <p>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"} &middot; ${subject.reason}</p>
           </div>
-          <span class="priority-badge ${subject.priority.className}">${subject.priority.label} Â· ${subject.priority.percent}%</span>
+          <span class="priority-badge ${subject.priority.className}">${subject.priority.label} &middot; ${subject.priority.percent}%</span>
         </article>
       `).join("")}
     </div>
@@ -1681,6 +1765,181 @@ function priorityInfo(score) {
   return { label: "Muito alta", className: "very-high", percent };
 }
 
+function entryDateValue(entry = {}) {
+  const candidates = [
+    entry.completedAt,
+    entry.savedAt,
+    entry.concluidoEm ? parseBrazilianDate(entry.concluidoEm) : null,
+    entry.createdAt,
+  ].filter(Boolean);
+  for (const value of candidates) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.getTime();
+  }
+  return 0;
+}
+
+function adaptiveHistoryEntries() {
+  const entries = [];
+  const pushBlock = (block = {}, source = "") => {
+    if (!block || !block.materia) return;
+    const questoes = Number(block.questoes) || 0;
+    const acertos = Math.min(Number(block.acertos) || 0, questoes);
+    entries.push({
+      source,
+      materia: block.materia,
+      assunto: block.assunto || "",
+      questoes,
+      acertos,
+      percentual: questoes ? acertos / questoes : Number(block.percentual) || 0,
+      dificuldade: block.dificuldade || "",
+      status: normalizeStatus(block.status),
+      concluidoEm: block.concluidoEm || "",
+      completedAt: block.completedAt || block.savedAt || "",
+      savedAt: block.savedAt || "",
+      createdAt: block.createdAt || "",
+    });
+  };
+
+  state.completedHistory.forEach((block) => pushBlock(block, "completedHistory"));
+  state.generatedBlocks.forEach((block) => pushBlock(block, "generatedBlocks"));
+  state.cycleHistory.forEach((cycle) => {
+    (cycle.generatedBlocks || []).forEach((block) => pushBlock(block, "cycleHistory"));
+    (cycle.completedHistory || []).forEach((block) => pushBlock(block, "cycleHistory"));
+  });
+  state.cycleResults.forEach((result) => {
+    (result.completed || []).forEach((block) => pushBlock({ ...block, savedAt: result.savedAt || result.closedAt || "" }, "cycleResults"));
+  });
+
+  return entries.sort((a, b) => entryDateValue(a) - entryDateValue(b));
+}
+
+function topicMatches(entry = {}, materia = "", assunto = "") {
+  if (normalizeForMatch(entry.materia || "") !== normalizeForMatch(materia || "")) return false;
+  if (!assunto) return true;
+  const entryTopic = normalizeForMatch(entry.assunto || "");
+  const targetTopic = normalizeForMatch(assunto || "");
+  return entryTopic === targetTopic || entryTopic.includes(targetTopic) || targetTopic.includes(entryTopic);
+}
+
+function accuracyFromEntries(entries = []) {
+  const totals = entries.reduce((sum, entry) => {
+    sum.questoes += Number(entry.questoes) || 0;
+    sum.acertos += Number(entry.acertos) || 0;
+    return sum;
+  }, { questoes: 0, acertos: 0 });
+  return totals.questoes ? totals.acertos / totals.questoes : null;
+}
+
+function recentPerformanceDrop(entries = []) {
+  const answered = entries.filter((entry) => Number(entry.questoes) > 0);
+  if (answered.length < 4) return false;
+  const recent = answered.slice(-2);
+  const previous = answered.slice(-6, -2);
+  const recentAccuracy = accuracyFromEntries(recent);
+  const previousAccuracy = accuracyFromEntries(previous);
+  return previousAccuracy !== null && recentAccuracy !== null && previousAccuracy - recentAccuracy >= 0.15 && recentAccuracy < 0.75;
+}
+
+function reviewAttentionFor(materia = "", assunto = "") {
+  ensureReviewsArray();
+  const related = state.reviews
+    .filter((record) => record.status !== "Conclu\u00edda" && topicMatches(record, materia, assunto))
+    .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }));
+  const overdue = related.filter((record) => record.statusInfo.group === "overdue");
+  const today = related.filter((record) => record.statusInfo.group === "today");
+  return { related, overdue, today, hasAttention: overdue.length > 0 || today.length > 0 };
+}
+
+function adaptivePerformanceForSubject(materia = "") {
+  return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia));
+}
+
+function adaptivePerformanceForTopic(materia = "", assunto = "") {
+  return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia, assunto));
+}
+
+function adaptivePriorityAdjustment(target = {}) {
+  const materia = target.materia || "";
+  const assunto = target.assunto || "";
+  const subjectEntries = adaptivePerformanceForSubject(materia);
+  const topicEntries = assunto ? adaptivePerformanceForTopic(materia, assunto) : [];
+  const entries = topicEntries.length >= 2 || topicEntries.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0) >= 10 ? topicEntries : subjectEntries;
+  const recentAnswered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
+  const recentAccuracy = accuracyFromEntries(recentAnswered);
+  const highDifficulty = entries.slice(-6).filter((entry) => entry.dificuldade === "Alta").length;
+  const reprograms = entries.filter((entry) => normalizeStatus(entry.status) === "Reprogramar").length;
+  const reviewAttention = reviewAttentionFor(materia, assunto);
+  let adjustment = 0;
+  const reasons = [];
+
+  if (recentAccuracy !== null && recentAnswered.reduce((sum, entry) => sum + Number(entry.questoes), 0) >= 5) {
+    if (recentAccuracy < 0.6) {
+      adjustment += 0.18;
+      reasons.push(`acerto recente de ${Math.round(recentAccuracy * 100)}%`);
+    } else if (recentAccuracy < 0.75) {
+      adjustment += 0.1;
+      reasons.push(`acerto recente de ${Math.round(recentAccuracy * 100)}%`);
+    }
+  }
+
+  if (highDifficulty >= 1) {
+    adjustment += 0.08;
+    reasons.push("dificuldade sentida alta");
+  }
+
+  if (reprograms >= 2) {
+    adjustment += 0.09;
+    reasons.push("duas ou mais reprograma\u00e7\u00f5es");
+  }
+
+  if (reviewAttention.overdue.length) {
+    adjustment += 0.12;
+    reasons.unshift("revis\u00e3o merece aten\u00e7\u00e3o");
+  } else if (reviewAttention.today.length) {
+    adjustment += 0.07;
+    reasons.unshift("revis\u00e3o merece aten\u00e7\u00e3o");
+  }
+
+  if (recentPerformanceDrop(entries)) {
+    adjustment += 0.08;
+    reasons.push("queda de desempenho recente");
+  }
+
+  const cap = assunto ? 0.35 : 0.3;
+  return {
+    adjustment: Math.min(cap, adjustment),
+    reasons: [...new Set(reasons)],
+    accuracy: recentAccuracy,
+    reviewAttention,
+    basis: entries === topicEntries ? "topic" : "subject",
+  };
+}
+
+function adaptivePriorityReason(target = {}) {
+  const data = adaptivePriorityAdjustment(target);
+  if (data.reviewAttention.overdue.length || data.reviewAttention.today.length) {
+    return "Revis\u00e3o merece aten\u00e7\u00e3o antes de avan\u00e7ar.";
+  }
+  if (!data.adjustment) return "";
+  const accuracyReason = data.reasons.find((reason) => reason.includes("acerto recente"));
+  if (accuracyReason) return `Prioridade refor\u00e7ada: ${accuracyReason}.`;
+  return "Refor\u00e7o sugerido pelo seu desempenho recente.";
+}
+
+function adaptivePriorityForTarget(target = {}) {
+  const base = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(target)) || 0;
+  const adjustment = adaptivePriorityAdjustment(target);
+  return {
+    base,
+    adjusted: Math.min(1, base + adjustment.adjustment),
+    adjustment: adjustment.adjustment,
+    reason: adaptivePriorityReason(target),
+    reasons: adjustment.reasons,
+    reviewAttention: adjustment.reviewAttention,
+  };
+}
+
 function scheduleConfig() {
   const base = getContestConfig();
   const override = Number(els.overrideWeeklyHours.value);
@@ -1706,6 +1965,38 @@ function renderCycleLabel() {
   if (els.cycleLabel) els.cycleLabel.textContent = currentCycleLabel();
 }
 
+function showToast(message) {
+  if (!message) return;
+  let container = document.querySelector(".toast-region");
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "toast-region";
+    container.setAttribute("aria-live", "polite");
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = "app-toast";
+  toast.textContent = message;
+  container.appendChild(toast);
+  window.setTimeout(() => toast.classList.add("is-leaving"), 2600);
+  window.setTimeout(() => toast.remove(), 3050);
+}
+
+function closePerformancePanelAnimated(afterClose = null) {
+  const modal = document.querySelector(".performance-modal");
+  const finish = () => {
+    performanceEditIndex = -1;
+    renderGeneratedSchedule();
+    if (typeof afterClose === "function") afterClose();
+  };
+  if (!modal || prefersReducedMotion()) {
+    finish();
+    return;
+  }
+  modal.classList.add("is-closing");
+  window.setTimeout(finish, 190);
+}
+
 function updateOverrideVisibility() {
   if (!els.overrideCycleToggle || !els.overrideWeeklyField) return;
   els.overrideWeeklyField.hidden = !els.overrideCycleToggle.checked;
@@ -1728,10 +2019,20 @@ function updateGenerationSummary() {
   updateDeadlineDisplays(config);
 }
 
-function distributeBlocks(materias, totalBlocks) {
+function distributeBlocks(materias, totalBlocks, options = {}) {
   if (!materias.length || totalBlocks <= 0) return [];
-  const scored = materias.map((materia) => ({ ...materia, prioridade: priorityScore(materia) }));
-  const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0);
+  const scored = materias.map((materia) => {
+    const basePriority = priorityScore(materia);
+    const adaptive = options.adaptive ? adaptivePriorityForTarget({ ...materia, prioridade: basePriority, prioridadeBase: basePriority }) : null;
+    return {
+      ...materia,
+      prioridadeBase: basePriority,
+      prioridade: adaptive ? adaptive.adjusted : basePriority,
+      adaptiveAdjustment: adaptive?.adjustment || 0,
+      adaptiveReason: adaptive?.reason || "",
+    };
+  });
+  const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0) || scored.length || 1;
   const minimum = totalBlocks >= scored.length ? 1 : 0;
   let used = minimum * scored.length;
   const distribution = scored.map((item) => {
@@ -1752,7 +2053,7 @@ function buildAlternatingQueue(distribution, analysis) {
     ...item,
     remaining: item.blocos,
     topicCursor: 0,
-    studyUnits: availableStudyUnits(item, analysis),
+    studyUnits: rankStudyUnitsByAdaptivePriority(item, availableStudyUnits(item, analysis)),
   }));
   const queue = [];
   let previous = "";
@@ -1763,8 +2064,21 @@ function buildAlternatingQueue(distribution, analysis) {
       .sort((a, b) => b.remaining - a.remaining || b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
     const fallback = pool.filter((item) => item.remaining > 0).sort((a, b) => b.remaining - a.remaining || b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
     const chosen = candidates[0] || fallback[0];
-    const assunto = chooseTopicForBlock(chosen);
-    queue.push({ materia: chosen.materia, assunto, prioridade: chosen.prioridade });
+    const topic = chooseTopicForBlock(chosen);
+    const topicAdaptive = adaptivePriorityForTarget({
+      materia: chosen.materia,
+      assunto: topic.assunto,
+      prioridade: chosen.prioridade,
+      prioridadeBase: chosen.prioridadeBase,
+    });
+    queue.push({
+      materia: chosen.materia,
+      assunto: topic.assunto,
+      prioridade: Math.max(chosen.prioridade, topicAdaptive.adjusted),
+      prioridadeBase: chosen.prioridadeBase,
+      adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicAdaptive.adjustment || 0),
+      adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
+    });
     chosen.remaining -= 1;
     previous = chosen.materia;
   }
@@ -1774,10 +2088,34 @@ function buildAlternatingQueue(distribution, analysis) {
 
 function chooseTopicForBlock(subject) {
   const topics = subject.studyUnits || subject.assuntos || [];
-  if (!topics.length) return "Selecionar tema";
+  if (!topics.length) return { assunto: "Selecionar tema" };
   const current = topics[subject.topicCursor % topics.length];
   subject.topicCursor += 1;
-  return current;
+  return typeof current === "string" ? { assunto: current } : current;
+}
+
+function rankStudyUnitsByAdaptivePriority(subject, units = []) {
+  return units
+    .map((assunto, index) => {
+      const adaptive = adaptivePriorityForTarget({
+        materia: subject.materia,
+        assunto,
+        prioridade: subject.prioridade,
+        prioridadeBase: subject.prioridadeBase,
+      });
+      return {
+        assunto,
+        originalIndex: index,
+        adaptiveScore: adaptive.adjusted,
+        adaptiveAdjustment: adaptive.adjustment,
+        adaptiveReason: adaptive.reason,
+      };
+    })
+    .sort((a, b) =>
+      b.adaptiveAdjustment - a.adaptiveAdjustment ||
+      b.adaptiveScore - a.adaptiveScore ||
+      a.originalIndex - b.originalIndex
+    );
 }
 
 function createWeeklySlots(config) {
@@ -1843,6 +2181,9 @@ function blockRow(number, duration, item, type) {
     materia: item.materia,
     assunto: item.assunto,
     prioridade: item.prioridade,
+    prioridadeBase: item.prioridadeBase ?? item.prioridade,
+    adaptiveAdjustment: item.adaptiveAdjustment || 0,
+    adaptiveReason: item.adaptiveReason || "",
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
     status: "N\u00e3o iniciado",
@@ -1929,7 +2270,7 @@ function generateSchedule() {
   const analysis = updateDeadlineDisplays(config);
   const slots = createWeeklySlots(config);
   const totalBlocks = Math.max(1, slots.length);
-  state.distribution = distributeBlocks(state.planningBase.materias, totalBlocks);
+  state.distribution = distributeBlocks(state.planningBase.materias, totalBlocks, { adaptive: true });
   const queue = buildAlternatingQueue(state.distribution, analysis);
   state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots), config.horasSemanaCronograma, config.duracaoBloco);
   setTabEnabled("cronograma", true);
@@ -1948,6 +2289,7 @@ function renderGeneratedSchedule() {
   renderReviews();
   renderErrors();
   renderEvolution();
+  renderContinuePanel();
 
   if (!state.generatedBlocks.length) {
     if (els.scheduleStatus) els.scheduleStatus.textContent = "Nenhum ciclo gerado";
@@ -2037,6 +2379,269 @@ function renderGeneratedSchedule() {
   if (window.lucide) window.lucide.createIcons();
 }
 
+function pendingCycleEntries() {
+  return state.generatedBlocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => isPendingBlock(block));
+}
+
+function continueSuggestionScore(entry) {
+  const block = entry.block || {};
+  const adaptive = adaptivePriorityForTarget(block);
+  const review = reviewAttentionFor(block.materia, block.assunto);
+  const status = normalizeStatus(block.status);
+  let score = 0;
+  if (review.overdue.length) score += 120;
+  else if (review.today.length) score += 90;
+  if (status === "Em andamento") score += 45;
+  score += (adaptive.adjustment || 0) * 100;
+  score += (Number(block.prioridade) || 0) * 30;
+  return { score, adaptive, review };
+}
+
+function rankedContinueEntries() {
+  return pendingCycleEntries()
+    .map((entry) => ({ ...entry, suggestion: continueSuggestionScore(entry) }))
+    .sort((a, b) =>
+      b.suggestion.score - a.suggestion.score ||
+      a.index - b.index
+    );
+}
+
+function splitPerformanceGroups(entries = []) {
+  const answered = entries.filter((entry) => Number(entry.questoes) > 0);
+  if (answered.length < 4) return null;
+  const midpoint = Math.floor(answered.length / 2);
+  const previous = answered.slice(0, midpoint);
+  const recent = answered.slice(midpoint);
+  const previousAccuracy = accuracyFromEntries(previous);
+  const recentAccuracy = accuracyFromEntries(recent);
+  if (previousAccuracy === null || recentAccuracy === null) return null;
+  return { previousAccuracy, recentAccuracy, previous, recent };
+}
+
+function subjectNamesForInsights() {
+  const names = new Set();
+  if (state.planningBase?.materias) state.planningBase.materias.forEach((subject) => names.add(subject.materia));
+  adaptiveHistoryEntries().forEach((entry) => names.add(entry.materia));
+  state.generatedBlocks.forEach((block) => names.add(block.materia));
+  state.reviews.forEach((record) => names.add(record.materia));
+  return [...names].filter(Boolean);
+}
+
+function buildPerformanceInsights(skipReason = "") {
+  const insights = [];
+  const skip = normalizeForMatch(skipReason || "");
+  const addInsight = (insight) => {
+    if (!insight?.title || !insight?.detail) return;
+    const fingerprint = `${normalizeForMatch(insight.title)}::${normalizeForMatch(insight.detail)}`;
+    if (skip && normalizeForMatch(insight.detail).includes(skip)) return;
+    if (insights.some((item) => item.fingerprint === fingerprint || item.type === insight.type && item.subject === insight.subject && item.topic === insight.topic)) return;
+    insights.push({ ...insight, fingerprint });
+  };
+
+  const attentionReviews = reviewScheduleRows("all").filter((record) => record.status !== "Conclu\u00edda" && (record.statusInfo.group === "overdue" || record.statusInfo.group === "today"));
+  if (attentionReviews.length) {
+    addInsight({
+      type: "review",
+      rank: 100,
+      title: `${attentionReviews.length} revis\u00e3o${attentionReviews.length === 1 ? "" : "es"} merece${attentionReviews.length === 1 ? "" : "m"} aten\u00e7\u00e3o`,
+      detail: `A mais antiga est\u00e1 relacionada a ${attentionReviews[0].assunto || attentionReviews[0].materia}.`,
+      subject: attentionReviews[0].materia,
+      topic: attentionReviews[0].assunto,
+    });
+  }
+
+  subjectNamesForInsights().forEach((materia) => {
+    const entries = adaptivePerformanceForSubject(materia);
+    const answered = entries.filter((entry) => Number(entry.questoes) > 0);
+    const recent = answered.slice(-6);
+    const recentAccuracy = accuracyFromEntries(recent);
+    const highDifficulty = entries.slice(-6).filter((entry) => entry.dificuldade === "Alta").length;
+    const reprograms = entries.filter((entry) => normalizeStatus(entry.status) === "Reprogramar").length;
+    const adaptive = adaptivePriorityAdjustment({ materia });
+    const trend = splitPerformanceGroups(answered);
+
+    if (recentAccuracy !== null && (recentAccuracy < 0.6 || highDifficulty > 0 || adaptive.adjustment >= 0.18)) {
+      const details = [];
+      if (recentAccuracy !== null) details.push(`${Math.round(recentAccuracy * 100)}% de acerto recente`);
+      if (highDifficulty > 0) details.push("dificuldade alta");
+      addInsight({
+        type: "reinforcement",
+        rank: 90 + (adaptive.adjustment * 100),
+        title: `${materia} precisa de refor\u00e7o`,
+        detail: `${details.join(" e ")}.`,
+        subject: materia,
+      });
+    }
+
+    if (trend && trend.recentAccuracy - trend.previousAccuracy >= 0.12 && trend.recentAccuracy >= 0.75) {
+      addInsight({
+        type: "evolving",
+        rank: 74 + ((trend.recentAccuracy - trend.previousAccuracy) * 100),
+        title: `${materia} est\u00e1 evoluindo`,
+        detail: `Seu acerto passou de ${Math.round(trend.previousAccuracy * 100)}% para ${Math.round(trend.recentAccuracy * 100)}%.`,
+        subject: materia,
+      });
+    }
+
+    if (recentAccuracy !== null && recentAccuracy >= 0.75 && recent.length >= 3 && !recentPerformanceDrop(entries)) {
+      addInsight({
+        type: "stable",
+        rank: 40 + recentAccuracy * 10,
+        title: `${materia} est\u00e1 est\u00e1vel`,
+        detail: `${Math.round(recentAccuracy * 100)}% de acerto recente.`,
+        subject: materia,
+      });
+    }
+
+    if (reprograms >= 2) {
+      const topicCounts = new Map();
+      entries
+        .filter((entry) => normalizeStatus(entry.status) === "Reprogramar" && entry.assunto)
+        .forEach((entry) => topicCounts.set(entry.assunto, (topicCounts.get(entry.assunto) || 0) + 1));
+      const [topic, count] = [...topicCounts.entries()].sort((a, b) => b[1] - a[1])[0] || [materia, reprograms];
+      addInsight({
+        type: "reprogrammed",
+        rank: 82 + count,
+        title: `${themeTitle(topic)} est\u00e1 dif\u00edcil de encaixar`,
+        detail: `O tema foi reprogramado ${count} vezes.`,
+        subject: materia,
+        topic,
+      });
+    }
+  });
+
+  return insights
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, 4);
+}
+
+function continueReviewItems() {
+  return reviewScheduleRows("all")
+    .filter((item) => item.status !== "Conclu\u00edda")
+    .slice(0, 2);
+}
+
+function renderContinuePanel() {
+  if (!els.continuePanel) return;
+  if (!state.generatedBlocks.length) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card">
+        <div>
+          <span class="section-kicker">Continue seu ciclo</span>
+          <h3>Seu pr\u00f3ximo ciclo ainda n\u00e3o foi gerado.</h3>
+          <p>Defina as prioridades e gere um ciclo para receber uma sugest\u00e3o de pr\u00f3ximo estudo.</p>
+        </div>
+        <button class="primary-button" type="button" data-continue-generate><i data-lucide="calendar-plus"></i><span>Gerar ciclo</span></button>
+      </section>
+    `;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+
+  const pending = rankedContinueEntries();
+  const total = state.generatedBlocks.length;
+  const completed = total - pending.length;
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+  if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
+  const suggested = pending.length ? pending[continueSuggestionOffset % pending.length] : null;
+  const suggestionReason = suggested?.suggestion?.adaptive?.reason || suggested?.block?.adaptiveReason || "";
+  const performanceInsights = buildPerformanceInsights(suggestionReason);
+  const reviews = continueReviewItems();
+  const pendingReviewCount = reviewScheduleRows("all").filter((item) => item.status !== "Conclu\u00edda").length;
+  const reviewCountText = pendingReviewCount === 1 ? "1 revis\u00e3o pendente" : `${pendingReviewCount} revis\u00f5es pendentes`;
+
+  els.continuePanel.innerHTML = `
+    <section class="continue-main-card">
+      <div class="continue-card-header">
+        <div>
+          <span class="section-kicker">Pr\u00f3ximo passo sugerido</span>
+          <h3>${suggested ? escapeHtml(suggested.block.materia) : "Ciclo conclu\u00eddo"}</h3>
+          <p>${suggested ? escapeHtml(shortText(suggested.block.assunto, 150)) : "Todas as metas deste ciclo foram conclu\u00eddas."}</p>
+          ${suggestionReason ? `<span class="continue-adaptive-reason">${escapeHtml(suggestionReason)}</span>` : ""}
+        </div>
+        ${suggested ? `<span class="continue-duration">${formatDuration(suggested.block.duracao)}</span>` : ""}
+      </div>
+      ${suggested ? `
+        <div class="continue-meta-grid">
+          <div>
+            <span>Mat\u00e9ria</span>
+            <strong>${escapeHtml(suggested.block.materia)}</strong>
+          </div>
+          <div>
+            <span>Dura\u00e7\u00e3o</span>
+            <strong>${formatDuration(suggested.block.duracao)}</strong>
+          </div>
+          <div>
+            <span>Prioridade</span>
+            ${priorityDots(suggested.block.prioridade)}
+          </div>
+        </div>
+        <div class="continue-actions">
+          <button class="primary-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>Iniciar estudo</span></button>
+          <button class="ghost-button" type="button" data-next-continue ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Ver outra meta</span></button>
+          <button class="text-action" type="button" data-open-cycle-goals>Escolher outra meta do ciclo</button>
+        </div>
+      ` : `
+        <div class="continue-actions">
+          <button class="primary-button" type="button" data-open-cycle-goals><i data-lucide="check-circle-2"></i><span>Ver metas do ciclo</span></button>
+        </div>
+      `}
+    </section>
+
+    <section class="continue-insights-card">
+      <div class="continue-card-header compact">
+        <div>
+          <h3>Leitura do seu desempenho</h3>
+          <p>Uma leitura curta dos sinais mais recentes do seu estudo.</p>
+        </div>
+      </div>
+      <div class="continue-insight-list">
+        ${performanceInsights.length ? performanceInsights.map((insight) => `
+          <article class="continue-insight ${escapeHtml(insight.type)}">
+            <span>${escapeHtml(insight.title)}</span>
+            <strong>${escapeHtml(insight.detail)}</strong>
+          </article>
+        `).join("") : `<p class="muted-note">Registre quest\u00f5es, dificuldade e revis\u00f5es para gerar uma leitura mais precisa.</p>`}
+      </div>
+      <button class="text-action" type="button" data-open-evolution>Ver an\u00e1lise completa</button>
+    </section>
+
+    <section class="continue-side-card">
+      <div class="continue-card-header compact">
+        <div>
+          <h3>Revis\u00f5es que merecem aten\u00e7\u00e3o</h3>
+          <p>${reviewCountText}</p>
+        </div>
+      </div>
+      <div class="continue-review-list">
+        ${reviews.length ? reviews.map((item) => `
+          <article>
+            <strong>${escapeHtml(item.materia)}</strong>
+            <span>${escapeHtml(shortText(item.assunto, 82))}</span>
+            <em>${escapeHtml(item.intervalLabel || item.intervalKey)} &middot; ${escapeHtml(item.dataPrevista || "")}</em>
+          </article>
+        `).join("") : `<p class="muted-note">Nenhuma revis\u00e3o pendente no momento.</p>`}
+      </div>
+      <button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas</span></button>
+    </section>
+
+    <section class="continue-progress-card">
+      <div>
+        <span class="section-kicker">Progresso do ciclo</span>
+        <h3>${completed} / ${total} metas conclu\u00eddas</h3>
+        <p>Continue no seu ritmo.</p>
+      </div>
+      <div class="continue-progress">
+        <div class="continue-progress-track"><span style="width: ${progress}%"></span></div>
+        <strong>${progress}%</strong>
+      </div>
+    </section>
+  `;
+  if (window.lucide) window.lucide.createIcons();
+}
+
 function shortText(value, maxLength = 90) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
@@ -2050,10 +2655,19 @@ function normalizeStatus(status) {
     .replace(/\s+/g, " ");
   if (raw === "N\u00e3o realizado" || raw === "Revisar novamente") return "Reprogramar";
   if (STATUS_OPTIONS.includes(raw)) return raw;
-  if (comparable.includes("conclu") || raw.includes("Conclu")) return "ConcluÃ­do";
+  if (comparable.includes("conclu") || raw.includes("Conclu")) return "Conclu\u00eddo";
   if (comparable.includes("andamento")) return "Em andamento";
   if (comparable.includes("reprogramar")) return "Reprogramar";
   return "N\u00e3o iniciado";
+}
+
+function normalizeReviewStatus(status) {
+  const raw = String(status || "").trim();
+  const comparable = normalizeForMatch(raw)
+    .replace(/[?]+/g, "i")
+    .replace(/\s+/g, " ");
+  if (comparable.includes("conclu") || raw.includes("Conclu")) return "Conclu\u00edda";
+  return raw || "Pendente";
 }
 
 function isPendingBlock(block) {
@@ -2412,7 +3026,7 @@ function renderCycleClosureSummary() {
   }
   const summary = cycleSummary();
   const subjectList = (items, emptyText) => items.length ? items.map((item) => `
-    <li><strong>${escapeHtml(item.materia)}</strong><span>${formatPercent(item.percentual)} de acerto Â· ${item.questoes} quest\u00f5es</span></li>
+    <li><strong>${escapeHtml(item.materia)}</strong><span>${formatPercent(item.percentual)} de acerto &middot; ${item.questoes} quest\u00f5es</span></li>
   `).join("") : `<li><span>${emptyText}</span></li>`;
 
   els.cycleClosurePanel.hidden = false;
@@ -2506,7 +3120,7 @@ function aggregateHistoricalSubjects(results = state.cycleResults) {
 
 function liveCycleHasProgress() {
   return state.generatedBlocks.some((block) =>
-    normalizeStatus(block.status) === "ConcluÃ­do" ||
+    normalizeStatus(block.status) === "Conclu\u00eddo" ||
     Number(block.questoes) > 0 ||
     Number(block.acertos) > 0 ||
     reviewCyclesFromBlock(block).length > 0
@@ -2603,7 +3217,7 @@ function renderEvolution() {
   const hasResults = results.length > 0;
   if (els.evolutionEmpty) {
     els.evolutionEmpty.hidden = hasResults;
-    els.evolutionEmpty.textContent = "Conclua uma meta ou finalize o primeiro ciclo para visualizar sua evoluÃ§Ã£o.";
+    els.evolutionEmpty.textContent = "Conclua uma meta ou finalize o primeiro ciclo para visualizar sua evolu\u00e7\u00e3o.";
   }
   if (els.evolutionSections) els.evolutionSections.hidden = !hasResults;
 
@@ -2667,7 +3281,7 @@ function renderEvolution() {
     els.attentionSubjects.innerHTML = attention.length ? attention.map((item) => `
       <article>
         <strong>${escapeHtml(item.materia)}</strong>
-        <span>${formatPercent(item.percentual)} de acerto Â· ${difficultyLabelFromScore(item.dificuldadeMedia)} dificuldade Â· ${item.reprogramadas} reprograma\u00e7\u00f5es</span>
+        <span>${formatPercent(item.percentual)} de acerto &middot; ${difficultyLabelFromScore(item.dificuldadeMedia)} dificuldade &middot; ${item.reprogramadas} reprograma\u00e7\u00f5es</span>
       </article>
     `).join("") : `<div class="empty-panel">Nenhuma mat\u00e9ria de aten\u00e7\u00e3o no hist\u00f3rico finalizado.</div>`;
   }
@@ -2706,7 +3320,7 @@ function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
 
 function completedEntries() {
   const byTopic = new Map();
-  [...state.completedHistory, ...state.generatedBlocks.filter((block) => block.status === "Conclu\u00eddo").map((block) => completedEntryFromBlock(block))]
+  [...state.completedHistory, ...state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").map((block) => completedEntryFromBlock(block))]
     .forEach((item) => {
       const key = topicKey(item.materia, item.assunto);
       if (!byTopic.has(key)) {
@@ -2727,7 +3341,7 @@ function archiveCompletedFromCurrentWeek() {
   const weekLabel = els.referenceWeek.value;
   const existing = new Map(state.completedHistory.map((item) => [topicKey(item.materia, item.assunto), item]));
   state.generatedBlocks
-    .filter((block) => block.status === "Conclu\u00eddo")
+    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo")
     .forEach((block) => {
       if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
       const entry = completedEntryFromBlock(block, weekLabel);
@@ -2736,11 +3350,11 @@ function archiveCompletedFromCurrentWeek() {
       syncReviewSource(entry, true);
     });
   state.completedHistory = Array.from(existing.values());
-  return state.generatedBlocks.filter((block) => block.status === "Conclu\u00eddo").length;
+  return state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").length;
 }
 
 function syncCompletedHistoryForBlock(block) {
-  if (!block || normalizeStatus(block.status) !== "ConcluÃ­do") return;
+  if (!block || normalizeStatus(block.status) !== "Conclu\u00eddo") return;
   const weekLabel = els.referenceWeek.value;
   if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
   const entry = completedEntryFromBlock(block, weekLabel);
@@ -2820,9 +3434,15 @@ function restorePreviousCycle() {
   const previous = state.cycleHistory.pop();
   els.referenceWeek.value = previous.referenceWeek || els.referenceWeek.value;
   state.distribution = Array.isArray(previous.distribution) ? previous.distribution : [];
-  state.generatedBlocks = Array.isArray(previous.generatedBlocks) ? previous.generatedBlocks : [];
-  state.completedHistory = Array.isArray(previous.completedHistory) ? previous.completedHistory : [];
-  state.reviews = Array.isArray(previous.reviews) ? previous.reviews : state.reviews;
+  state.generatedBlocks = Array.isArray(previous.generatedBlocks)
+    ? previous.generatedBlocks.map((block) => ({ ...block, status: normalizeStatus(block.status) }))
+    : [];
+  state.completedHistory = Array.isArray(previous.completedHistory)
+    ? previous.completedHistory.map((block) => ({ ...block, status: normalizeStatus(block.status || "Conclu\u00eddo") }))
+    : [];
+  state.reviews = Array.isArray(previous.reviews)
+    ? previous.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }))
+    : state.reviews;
   if (state.generatedBlocks.length) setTabEnabled("cronograma", true);
   updateContestSummary();
   renderGeneratedSchedule();
@@ -2881,6 +3501,7 @@ function reviewRecordId(item, intervalKey) {
 
 function ensureReviewsArray() {
   if (!Array.isArray(state.reviews)) state.reviews = [];
+  state.reviews = state.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }));
 }
 
 function removePendingReviewRecords(sourceKey, selectedCycles = []) {
@@ -2902,7 +3523,7 @@ function hasCompletedReviewSource(sourceKey, currentItem) {
   return state.generatedBlocks.some((block) =>
     block !== currentItem &&
     reviewSourceKey(block) === sourceKey &&
-    normalizeStatus(block.status) === "Concluído" &&
+    normalizeStatus(block.status) === "Conclu\u00eddo" &&
     reviewCyclesFromBlock(block).length > 0
   );
 }
@@ -2962,7 +3583,8 @@ function syncAllReviewRecords() {
 }
 
 function reviewStatusInfo(record) {
-  if (record.status === "Conclu\u00edda") {
+  const normalizedStatus = normalizeReviewStatus(record.status);
+  if (normalizedStatus === "Conclu\u00edda") {
     return { label: "Conclu\u00edda", remaining: 0, group: "done" };
   }
   const dueDate = parseBrazilianDate(record.dataPrevista) || new Date();
@@ -3201,8 +3823,8 @@ function applyNotebookClass(className) {
   rememberNotebookHistory();
   const selectedText = range.toString();
 
-  // Coleta os nÃ³s de texto que intersectam a seleÃ§Ã£o, sem extrair blocos
-  // inteiros (evita quebrar/duplicar parÃ¡grafos, que causava espaÃ§amento).
+  // Coleta os nos de texto que intersectam a selecao, sem extrair blocos
+  // inteiros (evita quebrar/duplicar paragrafos, que causava espacamento).
   const textNodes = [];
   const walker = document.createTreeWalker(els.notebookText, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -3219,7 +3841,7 @@ function applyNotebookClass(className) {
   if (textNodes.length) {
     textNodes.forEach((node) => {
       let target = node;
-      // Recorta as bordas da seleÃ§Ã£o no primeiro/Ãºltimo nÃ³
+      // Recorta as bordas da selecao no primeiro/ultimo no
       if (node === range.endContainer && range.endOffset < node.textContent.length) {
         target.splitText(range.endOffset);
       }
@@ -3229,7 +3851,7 @@ function applyNotebookClass(className) {
       applyClassToTextNode(target, className);
     });
   } else {
-    // SeleÃ§Ã£o dentro de um Ãºnico nÃ³
+    // Selecao dentro de um unico no
     const span = document.createElement("span");
     span.className = className;
     span.appendChild(range.extractContents());
@@ -3567,7 +4189,7 @@ function escapeHtml(value) {
 }
 
 function getActiveTabName() {
-  return document.querySelector(".tab-button.active")?.dataset.tabTarget || "concurso";
+  return document.querySelector(".tab-button.active")?.dataset.tabTarget || "continuar";
 }
 
 function planStorageKey(planId) {
@@ -3582,6 +4204,10 @@ function createPlanMeta(name = "Novo concurso") {
 function planDisplayName(snapshot = captureAppState()) {
   const form = snapshot.form || {};
   return form.contestName?.trim() || form.jobRole?.trim() || "Concurso sem nome";
+}
+
+function planVisibleName(plan = {}) {
+  return plan.customName || plan.name || "Novo concurso";
 }
 
 function readPlansIndex() {
@@ -3599,7 +4225,7 @@ function writePlansIndex(plans = state.plans) {
 
 function renderPlanSelect() {
   if (!els.planSelect) return;
-  els.planSelect.innerHTML = state.plans.map((plan) => `<option value="${plan.id}" ${plan.id === state.currentPlanId ? "selected" : ""}>${escapeHtml(plan.name)}</option>`).join("");
+  els.planSelect.innerHTML = state.plans.map((plan) => `<option value="${plan.id}" ${plan.id === state.currentPlanId ? "selected" : ""}>${escapeHtml(planVisibleName(plan))}</option>`).join("");
 }
 
 function formState() {
@@ -3692,10 +4318,25 @@ function applyAppSnapshot(saved = {}) {
   state.generatedBlocks = Array.isArray(saved.generatedBlocks)
     ? saved.generatedBlocks.map((block) => ({ ...block, status: normalizeStatus(block.status) }))
     : [];
-  state.completedHistory = Array.isArray(saved.completedHistory) ? saved.completedHistory : [];
-  state.cycleHistory = Array.isArray(saved.cycleHistory) ? saved.cycleHistory : [];
+  state.completedHistory = Array.isArray(saved.completedHistory)
+    ? saved.completedHistory.map((block) => ({ ...block, status: normalizeStatus(block.status || "Conclu\u00eddo") }))
+    : [];
+  state.cycleHistory = Array.isArray(saved.cycleHistory)
+    ? saved.cycleHistory.map((cycle) => ({
+      ...cycle,
+      generatedBlocks: Array.isArray(cycle.generatedBlocks)
+        ? cycle.generatedBlocks.map((block) => ({ ...block, status: normalizeStatus(block.status) }))
+        : [],
+      completedHistory: Array.isArray(cycle.completedHistory)
+        ? cycle.completedHistory.map((block) => ({ ...block, status: normalizeStatus(block.status || "Conclu\u00eddo") }))
+        : [],
+      reviews: Array.isArray(cycle.reviews)
+        ? cycle.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }))
+        : [],
+    }))
+    : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
-  state.reviews = Array.isArray(saved.reviews) ? saved.reviews : [];
+  state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) })) : [];
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   state.locked = Boolean(saved.locked);
@@ -3716,13 +4357,63 @@ function applyAppSnapshot(saved = {}) {
   updateContentFlowSteps();
   renderGeneratedSchedule();
   applyLockState();
-  const restoredTab = saved.activeTab === "disponibilidade" || saved.activeTab === "gerar" ? "pesos" : saved.activeTab === "resultado" ? "evolucao" : saved.activeTab || "concurso";
-  switchTab(restoredTab);
+  switchTab("continuar");
   isRestoring = false;
 }
 
 function setSaveStatus(text) {
   if (els.saveStatus) els.saveStatus.textContent = text;
+}
+
+function readBackupMeta() {
+  try {
+    const raw = localStorage.getItem(BACKUP_META_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function backupMetaDate(meta) {
+  if (!meta) return null;
+  const date = meta.exportedAt ? new Date(meta.exportedAt) : new Date(`${meta.date || ""}T${meta.time || "00:00"}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function renderBackupReminder() {
+  if (!els.backupReminderStatus) return;
+  const meta = readBackupMeta();
+  const date = backupMetaDate(meta);
+  if (!date) {
+    els.backupReminderStatus.textContent = "Nenhum backup registrado neste navegador.";
+    if (els.backupReminderNotice) {
+      els.backupReminderNotice.hidden = true;
+      els.backupReminderNotice.textContent = "";
+    }
+    return;
+  }
+  const formattedDate = date.toLocaleDateString("pt-BR");
+  const formattedTime = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  els.backupReminderStatus.textContent = `\u00daltimo backup: ${formattedDate} \u00e0s ${formattedTime}`;
+  const isOutdated = Date.now() - date.getTime() > BACKUP_REMINDER_DAYS * 24 * 60 * 60 * 1000;
+  if (els.backupReminderNotice) {
+    els.backupReminderNotice.hidden = !isOutdated;
+    els.backupReminderNotice.textContent = isOutdated ? "Recomendamos realizar um novo backup dos seus dados." : "";
+  }
+}
+
+function rememberBackupExport(version = 1) {
+  const now = new Date();
+  const meta = {
+    date: now.toISOString().slice(0, 10),
+    time: now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+    version,
+    exportedAt: now.toISOString(),
+  };
+  try {
+    localStorage.setItem(BACKUP_META_KEY, JSON.stringify(meta));
+  } catch {}
+  renderBackupReminder();
 }
 
 function saveAppStateNow(label = "Salvo") {
@@ -3732,7 +4423,7 @@ function saveAppStateNow(label = "Salvo") {
   localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
   localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
   const name = planDisplayName(snapshot);
-  state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name, updatedAt: new Date().toISOString() } : plan);
+  state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name: plan.customName || name, updatedAt: new Date().toISOString() } : plan);
   writePlansIndex();
   renderPlanSelect();
   setSaveStatus(`${label} ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`);
@@ -3847,7 +4538,7 @@ function captureDriveDataSnapshot() {
   const now = new Date().toISOString();
   const plans = state.plans.map((plan) => {
     if (plan.id !== state.currentPlanId || !currentSnapshot) return plan;
-    return { ...plan, name: planDisplayName(currentSnapshot), updatedAt: now };
+    return { ...plan, name: plan.customName || planDisplayName(currentSnapshot), updatedAt: now };
   });
   const planSnapshots = {};
   plans.forEach((plan) => {
@@ -4015,13 +4706,15 @@ async function restoreRememberedDataFile() {
 
 function exportBackup() {
   saveAppStateNow("Salvo");
-  const blob = new Blob([JSON.stringify(captureAppState(), null, 2)], { type: "application/json" });
+  const snapshot = captureAppState();
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = `planeja-concursos-backup-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
+  rememberBackupExport(snapshot.version || 1);
 }
 
 async function importBackup(file) {
@@ -4043,7 +4736,7 @@ function blankAppSnapshot(name = "") {
   return {
     version: 2,
     savedAt: new Date().toISOString(),
-    activeTab: "concurso",
+    activeTab: "continuar",
     form: {
       contestName: name,
       weeklyHours: "24",
@@ -4086,6 +4779,7 @@ function createNewPlan() {
   const name = prompt("Nome do novo concurso:", "Novo concurso");
   if (name === null) return;
   const plan = createPlanMeta(name.trim() || "Novo concurso");
+  plan.customName = plan.name;
   state.plans.push(plan);
   state.currentPlanId = plan.id;
   writePlansIndex();
@@ -4096,7 +4790,147 @@ function createNewPlan() {
   switchTab("concurso");
 }
 
+function activePlan() {
+  return state.plans.find((plan) => plan.id === state.currentPlanId) || null;
+}
+
+function closePlanMenu() {
+  if (!els.planMenu) return;
+  els.planMenu.hidden = true;
+  els.planMenuButton?.setAttribute("aria-expanded", "false");
+}
+
+function togglePlanMenu() {
+  if (!els.planMenu) return;
+  const willOpen = els.planMenu.hidden;
+  els.planMenu.hidden = !willOpen;
+  els.planMenuButton?.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+
+function renameCurrentPlan() {
+  const plan = activePlan();
+  if (!plan) return;
+  closePlanMenu();
+  const currentName = planVisibleName(plan);
+  const nextName = prompt("Novo nome do concurso:", currentName);
+  if (nextName === null) return;
+  const cleanName = nextName.trim();
+  if (!cleanName || cleanName === currentName) return;
+  state.plans = state.plans.map((item) => item.id === plan.id ? { ...item, name: cleanName, customName: cleanName, updatedAt: new Date().toISOString() } : item);
+  writePlansIndex();
+  renderPlanSelect();
+  saveConnectedDataFileSoon();
+  showToast("Planejamento renomeado.");
+}
+
+function openDeletePlanModal() {
+  const plan = activePlan();
+  if (!plan || !els.deletePlanModal) return;
+  closePlanMenu();
+  if (els.deletePlanQuestion) {
+    els.deletePlanQuestion.textContent = `Excluir o planejamento '${planVisibleName(plan)}'?`;
+  }
+  els.deletePlanModal.hidden = false;
+  els.confirmDeletePlanButton?.focus();
+}
+
+function closeDeletePlanModal() {
+  if (!els.deletePlanModal) return;
+  els.deletePlanModal.hidden = true;
+}
+
+function newestPlan(plans = []) {
+  return [...plans].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
+}
+
+function deleteCurrentPlan() {
+  const plan = activePlan();
+  if (!plan) return;
+  const deletedId = plan.id;
+  localStorage.removeItem(planStorageKey(deletedId));
+  let remaining = state.plans.filter((item) => item.id !== deletedId);
+  let nextPlan = newestPlan(remaining);
+
+  if (!nextPlan) {
+    nextPlan = createPlanMeta("Novo concurso");
+    nextPlan.customName = nextPlan.name;
+    remaining = [nextPlan];
+    localStorage.setItem(planStorageKey(nextPlan.id), JSON.stringify(blankAppSnapshot(nextPlan.name)));
+  }
+
+  state.plans = remaining;
+  state.currentPlanId = nextPlan.id;
+  writePlansIndex();
+  localStorage.setItem(ACTIVE_PLAN_KEY, nextPlan.id);
+  renderPlanSelect();
+  const raw = localStorage.getItem(planStorageKey(nextPlan.id));
+  closeDeletePlanModal();
+  applyAppSnapshot(raw ? JSON.parse(raw) : blankAppSnapshot(planVisibleName(nextPlan)));
+  saveAppStateNow("Planejamento exclu\u00eddo");
+  showToast("Planejamento exclu\u00eddo.");
+  switchTab("continuar");
+}
+
 els.tabs.forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tabTarget, button)));
+els.planMenuButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  togglePlanMenu();
+});
+els.planMenu?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-rename-plan]")) {
+    renameCurrentPlan();
+    return;
+  }
+  if (event.target.closest("[data-delete-plan]")) {
+    openDeletePlanModal();
+  }
+});
+els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
+els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
+els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
+els.continuePanel?.addEventListener("click", (event) => {
+  const startButton = event.target.closest("[data-start-continue]");
+  if (startButton) {
+    const index = Number(startButton.dataset.startContinue);
+    const block = state.generatedBlocks[index];
+    if (!block) return;
+    startBlockTimer(block);
+    unitDetailIndex = index;
+    performanceEditIndex = -1;
+    renderGeneratedSchedule();
+    switchTab("cronograma");
+    saveAppStateNow("Estudo iniciado");
+    return;
+  }
+
+  if (event.target.closest("[data-next-continue]")) {
+    const pending = rankedContinueEntries();
+    if (pending.length > 1) {
+      continueSuggestionOffset = (continueSuggestionOffset + 1) % pending.length;
+      renderContinuePanel();
+    }
+    return;
+  }
+
+  if (event.target.closest("[data-open-cycle-goals]")) {
+    switchTab("cronograma");
+    return;
+  }
+
+  if (event.target.closest("[data-open-reviews]")) {
+    switchTab("revisoes");
+    return;
+  }
+
+  if (event.target.closest("[data-open-evolution]")) {
+    switchTab("evolucao");
+    return;
+  }
+
+  if (event.target.closest("[data-continue-generate]")) {
+    switchTab("pesos");
+  }
+});
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
 els.newPlanButton?.addEventListener("click", createNewPlan);
 if (els.fileInput) els.fileInput.addEventListener("change", async () => {
@@ -4374,8 +5208,7 @@ els.scheduleWrap.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-close-performance]")) {
-    performanceEditIndex = -1;
-    renderGeneratedSchedule();
+    closePerformancePanelAnimated();
     return;
   }
 
@@ -4383,19 +5216,19 @@ els.scheduleWrap.addEventListener("click", (event) => {
     if (performanceEditIndex >= 0) {
       const block = state.generatedBlocks[performanceEditIndex];
       if (block) {
-        if (normalizeStatus(block.status) === "Concluído" && !block.concluidoEm) {
+        if (normalizeStatus(block.status) === "Conclu\u00eddo" && !block.concluidoEm) {
           block.concluidoEm = new Date().toLocaleDateString("pt-BR");
         }
         syncCompletedHistoryForBlock(block);
         syncBlockReviewRecords(block);
       }
     }
-    performanceEditIndex = -1;
-    renderGeneratedSchedule();
-    renderCompleted();
-    renderReviews();
-    renderEvolution();
-    saveAppStateNow("Desempenho salvo");
+    closePerformancePanelAnimated(() => {
+      renderCompleted();
+      renderReviews();
+      renderEvolution();
+      saveAppStateNow("Desempenho salvo");
+    });
     return;
   }
 
@@ -4438,6 +5271,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
   if (event.target.matches("[data-status-index]")) {
     const index = Number(event.target.dataset.statusIndex);
     const block = state.generatedBlocks[index];
+    const previousStatus = normalizeStatus(block.status);
     block.status = normalizeStatus(event.target.value);
     event.target.closest("tr")?.classList.toggle("is-completed", block.status === "Conclu\u00eddo");
     if (block.status === "Conclu\u00eddo" && !block.concluidoEm) {
@@ -4454,6 +5288,9 @@ els.scheduleWrap.addEventListener("change", (event) => {
     updateDeadlineDisplays();
     performanceEditIndex = index;
     renderGeneratedSchedule();
+    if (previousStatus !== "Conclu\u00eddo" && block.status === "Conclu\u00eddo") {
+      showToast("Meta conclu\u00edda. Pr\u00f3ximo passo dispon\u00edvel.");
+    }
   }
   if (event.target.matches("[data-review-index]")) {
     const index = Number(event.target.dataset.reviewIndex);
@@ -4600,6 +5437,7 @@ els.reviewsBody?.addEventListener("click", (event) => {
   record.status = record.status === "Conclu\u00edda" ? "Pendente" : "Conclu\u00edda";
   record.completedAt = record.status === "Conclu\u00edda" ? new Date().toISOString() : "";
   renderReviews();
+  renderContinuePanel();
   renderEvolution();
   saveAppStateNow("Revis\u00e3o atualizada");
 });
@@ -4639,6 +5477,7 @@ els.pendingOnlyToggle?.addEventListener("click", () => {
 els.restoreCycleButton?.addEventListener("click", restorePreviousCycle);
 els.resetCyclesButton?.addEventListener("click", resetCycles);
 els.exportBackupButton?.addEventListener("click", exportBackup);
+els.backupNowButton?.addEventListener("click", exportBackup);
 els.importBackupInput?.addEventListener("change", async () => {
   try {
     await importBackup(els.importBackupInput.files[0]);
@@ -4663,13 +5502,19 @@ document.addEventListener("input", scheduleAutoSave);
 document.addEventListener("change", scheduleAutoSave);
 document.addEventListener("click", (event) => {
   if (!event.target.closest("#settingsMenu, #settingsToggleButton")) closeSettingsMenu();
+  if (!event.target.closest("#planMenu, #planMenuButton")) closePlanMenu();
   if (event.target.closest("button, .tab-button, [data-tab-target]")) {
     scheduleAutoSave();
   }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeSettingsMenu();
+  if (event.key === "Escape") {
+    closeSettingsMenu();
+    closePlanMenu();
+    closeDeletePlanModal();
+  }
 });
+window.addEventListener("resize", () => updateSidebarActiveIndicator());
 window.addEventListener("beforeunload", () => {
   if (!isRestoring && state.currentPlanId) {
     const snapshot = captureAppState();
@@ -4688,8 +5533,13 @@ if (!restoreAppState()) {
   renderGeneratedSchedule();
 }
 restoreRememberedDataFile();
+renderBackupReminder();
 ensureGoalTimerInterval();
 if (window.lucide) window.lucide.createIcons();
+requestAnimationFrame(() => {
+  updateSidebarActiveIndicator();
+  animatePanelNumbers(getActiveTabName());
+});
 
 
 

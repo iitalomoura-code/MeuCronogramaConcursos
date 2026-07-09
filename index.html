@@ -10,7 +10,7 @@
     <script>
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260708-auditoria-final-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260709-gerenciar-planejamento" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -35,6 +35,11 @@
               <button id="saveNowButton" class="backup-button" type="button"><i data-lucide="save"></i><span>Salvar</span></button>
               <button id="saveDataFileButton" class="backup-button" type="button"><i data-lucide="cloud-upload"></i><span>Salvar no Drive</span></button>
               <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Backup</span></button>
+              <div class="backup-reminder" role="status" aria-live="polite">
+                <span id="backupReminderStatus" class="backup-reminder-text">Nenhum backup registrado neste navegador.</span>
+                <span id="backupReminderNotice" class="backup-reminder-notice" hidden></span>
+                <button id="backupNowButton" class="backup-button backup-now-button" type="button"><i data-lucide="shield-check"></i><span>Fazer backup agora</span></button>
+              </div>
               <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar</span></label>
               <input id="importBackupInput" type="file" accept="application/json,.json" />
               <button id="loadDataFileButton" class="backup-button" type="button"><i data-lucide="folder-sync"></i><span>Carregar dados</span></button>
@@ -50,11 +55,21 @@
           <label for="planSelect">Planejamento atual</label>
           <div class="plan-context-card">
             <select id="planSelect"></select>
-            <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo concurso</span></button>
+            <div class="plan-actions-row">
+              <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo concurso</span></button>
+              <div class="plan-menu-wrap">
+                <button id="planMenuButton" class="plan-menu-button" type="button" aria-label="Abrir op&ccedil;&otilde;es do planejamento" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
+                <div id="planMenu" class="plan-menu" hidden>
+                  <button type="button" data-rename-plan>Renomear concurso</button>
+                  <button type="button" class="danger" data-delete-plan>Excluir concurso</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <nav class="tabs sidebar-flow" aria-label="Se&ccedil;&otilde;es do planejamento">
-          <button class="tab-button active" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span></button>
+          <button class="tab-button active" type="button" data-tab-target="continuar"><i data-lucide="play-circle"></i><span>Continuar</span></button>
+          <button class="tab-button" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span></button>
           <button class="tab-button" type="button" data-tab-target="conteudo"><i data-lucide="file-text"></i><span>Conte&uacute;do Program&aacute;tico</span></button>
           <button class="tab-button locked" type="button" data-tab-target="pesos" disabled><i data-lucide="sliders-horizontal"></i><span>Prioridade das Mat&eacute;rias</span></button>
           <button class="tab-button locked" type="button" data-tab-target="cronograma" disabled><i data-lucide="calendar-range"></i><span>Metas do Ciclo</span></button>
@@ -68,7 +83,18 @@
       </aside>
 
       <section class="content-area">
-        <section class="tab-panel active" id="tab-concurso">
+        <section class="tab-panel active" id="tab-continuar">
+          <div class="panel-heading continue-heading">
+            <div>
+              <span class="section-kicker">Continue seu ciclo</span>
+              <h2>Continuar</h2>
+              <p>Continue no seu ritmo, com uma dire&ccedil;&atilde;o clara para o pr&oacute;ximo estudo.</p>
+            </div>
+          </div>
+          <div class="continue-layout" id="continuePanel"></div>
+        </section>
+
+        <section class="tab-panel" id="tab-concurso">
           <div class="panel-heading hero-heading">
             <div>
               <span class="section-kicker">Dados iniciais</span>
@@ -462,7 +488,23 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </tr>
     </template>
 
-    <script src="./app.js?v=20260708-auditoria-final-2"></script>
+    <div id="deletePlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="deletePlanTitle">
+      <button id="cancelDeletePlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Cancelar exclus&atilde;o"></button>
+      <section class="plan-delete-dialog">
+        <div>
+          <span class="section-kicker">Excluir planejamento</span>
+          <h2 id="deletePlanTitle">Excluir planejamento?</h2>
+          <p id="deletePlanQuestion">Excluir o planejamento?</p>
+          <p>Esta a&ccedil;&atilde;o excluir&aacute; deste navegador os dados do concurso, conte&uacute;do program&aacute;tico, prioridades, ciclos, metas, revis&otilde;es, caderno e hist&oacute;rico de evolu&ccedil;&atilde;o.</p>
+        </div>
+        <div class="plan-delete-actions">
+          <button id="cancelDeletePlanButton" class="ghost-button" type="button">Cancelar</button>
+          <button id="confirmDeletePlanButton" class="primary-button danger-button" type="button">Excluir planejamento</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./app.js?v=20260709-gerenciar-planejamento"></script>
   </body>
 </html>
 
