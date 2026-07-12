@@ -119,7 +119,9 @@ const els = {
   goContentButton: document.querySelector("#goContentButton"),
   programText: document.querySelector("#programText"),
   fileInput: document.querySelector("#fileInput"),
+  assistedFileInput: document.querySelector("#assistedFileInput"),
   fileName: document.querySelector("#fileName"),
+  assistedImportButton: document.querySelector("#assistedImportButton"),
   processButton: document.querySelector("#processButton"),
   clearButton: document.querySelector("#clearButton"),
   contentSummary: document.querySelector("#contentSummary"),
@@ -605,7 +607,7 @@ function availableStudyUnits(item, analysis) {
 function reviewAttentionUnitsForSubject(materia = "") {
   ensureReviewsArray();
   return state.reviews
-    .filter((record) => record.status !== "Conclu\u00edda" && normalizeForMatch(record.materia || "") === normalizeForMatch(materia))
+    .filter((record) => !["Concluída", "Cancelada"].includes(record.status) && normalizeForMatch(record.materia || "") === normalizeForMatch(materia))
     .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }))
     .filter((record) => record.statusInfo.group === "overdue" || record.statusInfo.group === "today")
     .sort((a, b) => a.statusInfo.remaining - b.statusInfo.remaining)
@@ -912,6 +914,14 @@ function rowFromInputs(container) {
   }
   row.ordem = Number(row.ordem) || 0;
   row.blocosSugeridos = Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto);
+  const origin = container.dataset.editalOrigin;
+  if (origin) {
+    try {
+      row.origemEdital = JSON.parse(decodeURIComponent(origin));
+    } catch {
+      row.origemEdital = null;
+    }
+  }
   return enrichThemeRow(row);
 }
 
@@ -1119,7 +1129,7 @@ function renderRows() {
           const feedbackClass = topicFeedbackClass(row);
           const splitSuggestion = topicSplitSuggestion(row);
           return `
-          <article class="topic-item theme-card${feedbackClass}">
+          <article class="topic-item theme-card${feedbackClass}"${row.origemEdital ? ` data-edital-origin="${escapeHtml(encodeURIComponent(JSON.stringify(row.origemEdital)))}"` : ""}>
             <input data-field="materia" type="hidden" value="${escapeHtml(group.materia)}" />
             <label class="topic-study-check" title="Incluir este tema no ciclo">
               <input class="row-check" data-field="estudar" type="checkbox" ${row.estudar === "Nao" ? "" : "checked"} aria-label="Incluir tema no ciclo" />
@@ -1215,6 +1225,36 @@ function clearImportedContent() {
   renderRows();
   renderContentSummary();
   notifyContent("Edital importado limpo.");
+}
+
+function importedTopicKey(row) {
+  return `${normalizeForMatch(row?.materia || "")}::${normalizeForMatch(row?.assunto || "")}`;
+}
+
+function applyAssistedImportRows(importedRows, context = {}) {
+  const incoming = (importedRows || [])
+    .filter((row) => row?.materia && row?.assunto)
+    .map((row) => enrichThemeRow({ ...row, estudar: row.estudar || "Sim" }));
+  const existing = context.mode === "replace" ? [] : state.rows.map((row) => enrichThemeRow({ ...row }));
+  const seen = new Set(existing.map(importedTopicKey));
+  const added = incoming.filter((row) => {
+    const key = importedTopicKey(row);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (!added.length) {
+    notifyContent("Nenhum tema novo foi adicionado. Itens iguais já estavam na prévia.", "warning");
+    return;
+  }
+
+  state.rows = [...existing, ...added].map((row, index) => enrichThemeRow({ ...row, ordem: Number(row.ordem) || index + 1 }));
+  els.fileName.textContent = context.fileName ? `${context.fileName} · revisão assistida` : "Edital revisado";
+  markUnconfirmed();
+  renderRows();
+  scheduleAutoSave();
+  notifyContent(`${added.length} tema${added.length === 1 ? "" : "s"} importado${added.length === 1 ? "" : "s"} para conferência. Confirme o conteúdo quando terminar a revisão.`);
 }
 
 function markUnconfirmed() {
@@ -1844,7 +1884,7 @@ function recentPerformanceDrop(entries = []) {
 function reviewAttentionFor(materia = "", assunto = "") {
   ensureReviewsArray();
   const related = state.reviews
-    .filter((record) => record.status !== "Conclu\u00edda" && topicMatches(record, materia, assunto))
+    .filter((record) => !["Concluída", "Cancelada"].includes(record.status) && topicMatches(record, materia, assunto))
     .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }));
   const overdue = related.filter((record) => record.statusInfo.group === "overdue");
   const today = related.filter((record) => record.statusInfo.group === "today");
@@ -1853,6 +1893,43 @@ function reviewAttentionFor(materia = "", assunto = "") {
 
 function adaptivePerformanceForSubject(materia = "") {
   return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia));
+}
+
+function isAdaptiveReview(record = {}) {
+  return record.tipo === "adaptativa";
+}
+
+function normalizeAdaptiveReviewRecord(record = {}) {
+  if (!isAdaptiveReview(record)) return { ...record, status: normalizeReviewStatus(record.status) };
+  const available = record.disponivelEm || record.availableAt || "";
+  const dueDate = record.dataPrevista || (available ? formatDateBR(new Date(available)) : "");
+  return {
+    ...record,
+    tipo: "adaptativa",
+    status: normalizeReviewStatus(record.status),
+    intensidade: record.intensidade || "curta",
+    tentativas: Array.isArray(record.tentativas) ? record.tentativas : [],
+    motivo: record.motivo && typeof record.motivo === "object" ? record.motivo : {},
+    dataPrevista: dueDate,
+    disponivelEm: available || "",
+    questoesSugeridas: Math.max(1, Number(record.questoesSugeridas) || 6),
+    sugestao: record.sugestao || "Revise as questões erradas e consulte suas anotações.",
+  };
+}
+
+function adaptiveReviewFor(materia = "", assunto = "") {
+  ensureReviewsArray();
+  const records = state.reviews
+    .filter((record) => isAdaptiveReview(record) && !["Concluída", "Cancelada"].includes(record.status) && topicMatches(record, materia, assunto))
+    .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }))
+    .sort((a, b) => new Date(b.atualizadaEm || b.criadaEm || 0) - new Date(a.atualizadaEm || a.criadaEm || 0));
+  const record = records[0] || null;
+  const engine = window.AdaptiveReviewEngine;
+  return {
+    record,
+    records,
+    impact: record && engine ? engine.priorityImpact(record.intensidade) : 0,
+  };
 }
 
 function adaptivePerformanceForTopic(materia = "", assunto = "") {
@@ -1870,6 +1947,11 @@ function adaptivePriorityAdjustment(target = {}) {
   const highDifficulty = entries.slice(-6).filter((entry) => entry.dificuldade === "Alta").length;
   const reprograms = entries.filter((entry) => normalizeStatus(entry.status) === "Reprogramar").length;
   const reviewAttention = reviewAttentionFor(materia, assunto);
+  const standardReviewAttention = {
+    overdue: reviewAttention.overdue.filter((record) => !isAdaptiveReview(record)),
+    today: reviewAttention.today.filter((record) => !isAdaptiveReview(record)),
+  };
+  const adaptiveReview = adaptiveReviewFor(materia, assunto);
   let adjustment = 0;
   const reasons = [];
 
@@ -1893,12 +1975,17 @@ function adaptivePriorityAdjustment(target = {}) {
     reasons.push("duas ou mais reprograma\u00e7\u00f5es");
   }
 
-  if (reviewAttention.overdue.length) {
+  if (standardReviewAttention.overdue.length) {
     adjustment += 0.12;
-    reasons.unshift("revis\u00e3o merece aten\u00e7\u00e3o");
-  } else if (reviewAttention.today.length) {
+    reasons.unshift("revisão merece atenção");
+  } else if (standardReviewAttention.today.length) {
     adjustment += 0.07;
-    reasons.unshift("revis\u00e3o merece aten\u00e7\u00e3o");
+    reasons.unshift("revisão merece atenção");
+  }
+
+  if (adaptiveReview.record) {
+    adjustment += adaptiveReview.impact;
+    reasons.unshift("revisão adaptativa " + String(adaptiveReview.record.intensidade || "").replace("prioritaria", "prioritária"));
   }
 
   if (recentPerformanceDrop(entries)) {
@@ -1912,12 +1999,18 @@ function adaptivePriorityAdjustment(target = {}) {
     reasons: [...new Set(reasons)],
     accuracy: recentAccuracy,
     reviewAttention,
+    adaptiveReview,
     basis: entries === topicEntries ? "topic" : "subject",
   };
 }
 
 function adaptivePriorityReason(target = {}) {
   const data = adaptivePriorityAdjustment(target);
+  if (data.adaptiveReview?.record) {
+    return data.adaptiveReview.record.statusInfo?.group === "upcoming"
+      ? data.adaptiveReview.record.disponibilidade || "Revisão adaptativa planejada para este tema."
+      : "Revisão adaptativa merece atenção antes de avançar.";
+  }
   if (data.reviewAttention.overdue.length || data.reviewAttention.today.length) {
     return "Revis\u00e3o merece aten\u00e7\u00e3o antes de avan\u00e7ar.";
   }
@@ -2802,6 +2895,7 @@ function performancePanel(block, index) {
               <div class="review-field">
                 <span>Agendar revis\u00e3o</span>
                 ${reviewOptionsMarkup(block, index)}
+                ${adaptiveReviewManualActionMarkup(block, index)}
               </div>
             </div>
           </section>
@@ -3441,7 +3535,7 @@ function restorePreviousCycle() {
     ? previous.completedHistory.map((block) => ({ ...block, status: normalizeStatus(block.status || "Conclu\u00eddo") }))
     : [];
   state.reviews = Array.isArray(previous.reviews)
-    ? previous.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }))
+    ? previous.reviews.map((record) => normalizeAdaptiveReviewRecord(record))
     : state.reviews;
   if (state.generatedBlocks.length) setTabEnabled("cronograma", true);
   updateContestSummary();
@@ -3501,7 +3595,39 @@ function reviewRecordId(item, intervalKey) {
 
 function ensureReviewsArray() {
   if (!Array.isArray(state.reviews)) state.reviews = [];
-  state.reviews = state.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }));
+  state.reviews = state.reviews.map((record) => normalizeAdaptiveReviewRecord(record));
+}
+
+function adaptiveReviewSourceKey(item = {}) {
+  return "adaptive::" + (state.currentPlanId || "plan") + "::" + topicKey(item.materia, item.assunto);
+}
+
+function syncAdaptiveReviewForBlock(block, options = {}) {
+  const engine = window.AdaptiveReviewEngine;
+  if (!engine || !block?.materia?.trim() || !block?.assunto?.trim()) return null;
+  const totalQuestoes = Math.max(0, Number(block.questoes) || 0);
+  const acertos = Math.min(Math.max(0, Number(block.acertos) || 0), totalQuestoes);
+  const sourceKey = adaptiveReviewSourceKey(block);
+  const existing = state.reviews.find((record) => record.id === sourceKey);
+  const outcome = engine.mergeReview(existing, {
+    id: sourceKey,
+    sourceKey,
+    concursoId: state.currentPlanId || "",
+    materia: block.materia,
+    assunto: block.assunto,
+    ciclo: block.ciclo || currentCycleLabel(),
+  }, {
+    percentual: totalQuestoes ? acertos / totalQuestoes : 0,
+    acertos,
+    totalQuestoes,
+    dificuldade: block.dificuldade || "",
+  }, new Date(), Boolean(options.manual));
+
+  if (!outcome.record) return outcome;
+  const index = state.reviews.findIndex((record) => record.id === sourceKey);
+  if (index >= 0) state.reviews[index] = normalizeAdaptiveReviewRecord(outcome.record);
+  else state.reviews.push(normalizeAdaptiveReviewRecord(outcome.record));
+  return outcome;
 }
 
 function removePendingReviewRecords(sourceKey, selectedCycles = []) {
@@ -3584,7 +3710,26 @@ function syncAllReviewRecords() {
 
 function reviewStatusInfo(record) {
   const normalizedStatus = normalizeReviewStatus(record.status);
-  if (normalizedStatus === "Conclu\u00edda") {
+  if (normalizedStatus === "Cancelada") {
+    return { label: "Cancelada", remaining: 0, group: "cancelled" };
+  }
+  if (isAdaptiveReview(record)) {
+    if (normalizedStatus === "Concluída") {
+      return { label: "Concluída", remaining: 0, group: "done" };
+    }
+    if (normalizedStatus === "Em revisão") {
+      return { label: "Em revisão", remaining: 0, group: "today" };
+    }
+    const dueDate = parseBrazilianDate(record.dataPrevista) || new Date(record.disponivelEm || Date.now());
+    const remaining = daysUntil(dueDate);
+    if (remaining <= 0) return { label: "Disponível para revisão", remaining, group: "today" };
+    return {
+      label: record.disponibilidade || "Revisão disponível a partir de " + formatDateBR(dueDate),
+      remaining,
+      group: "upcoming",
+    };
+  }
+  if (normalizedStatus === "Concluída") {
     return { label: "Conclu\u00edda", remaining: 0, group: "done" };
   }
   const dueDate = parseBrazilianDate(record.dataPrevista) || new Date();
@@ -3606,12 +3751,113 @@ function reviewScheduleRows(filterValue = "") {
       return { ...record, dueDate, statusInfo: reviewStatusInfo(record) };
     })
     .filter((record) => {
-      if (selected === "done") return record.status === "Conclu\u00edda";
-      if (record.status === "Conclu\u00edda") return false;
+      if (selected === "done") return record.status === "Concluída";
+      if (["Concluída", "Cancelada"].includes(record.status)) return false;
       if (selected === "all") return true;
       return record.statusInfo.group === selected;
     })
     .sort((a, b) => a.dueDate - b.dueDate || a.materia.localeCompare(b.materia));
+}
+
+function adaptiveReviewManualActionMarkup(block, index) {
+  if (!window.AdaptiveReviewEngine || !block?.materia || !block?.assunto) return "";
+  const total = Number(block.questoes) || 0;
+  const message = total < 10
+    ? "Amostra menor que 10 questões: você pode criar uma revisão manualmente."
+    : "A revisão adaptativa será atualizada ao salvar o desempenho.";
+  return '<div class="adaptive-review-inline"><span>' + escapeHtml(message) + '</span><button class="ghost-button compact-button" type="button" data-create-adaptive-review="' + index + '">Criar revisão manual</button></div>';
+}
+
+function adaptiveReviewDetailsElement(record) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "adaptive-review-details";
+  const motive = record.motivo || {};
+  const headline = document.createElement("p");
+  headline.textContent = (record.intervalLabel || "Revisão adaptativa") + " · " + formatPercent(motive.percentual || 0) + " em " + (Number(motive.totalQuestoes) || 0) + " questões";
+  wrapper.append(headline);
+  const availability = document.createElement("p");
+  availability.textContent = record.disponibilidade || "Revisão disponível a partir de " + (record.dataPrevista || "");
+  wrapper.append(availability);
+  const suggestion = document.createElement("p");
+  suggestion.textContent = record.sugestao || "";
+  wrapper.append(suggestion);
+  const history = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = "Histórico de tentativas (" + (record.tentativas || []).length + ")";
+  history.append(summary);
+  const list = document.createElement("ul");
+  (record.tentativas || []).slice(-6).reverse().forEach((attempt) => {
+    const item = document.createElement("li");
+    item.textContent = formatPercent(attempt.percentual || 0) + " · " + (Number(attempt.acertos) || 0) + "/" + (Number(attempt.totalQuestoes) || 0) + " questões";
+    list.append(item);
+  });
+  history.append(list);
+  wrapper.append(history);
+  return wrapper;
+}
+
+function adaptiveReviewActionButton(label, action, id) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = action === "cancel" ? "ghost-button compact-button danger-button" : "ghost-button compact-button";
+  button.dataset.adaptiveReviewAction = action;
+  button.dataset.adaptiveReviewId = id;
+  button.textContent = label;
+  return button;
+}
+
+function renderAdaptiveReviewControls(reviewRows) {
+  const tableRows = Array.from(els.reviewsBody?.querySelectorAll("tr") || []);
+  reviewRows.forEach((record, index) => {
+    if (!isAdaptiveReview(record)) return;
+    const row = tableRows[index];
+    const statusCell = row?.lastElementChild;
+    if (!statusCell) return;
+    statusCell.querySelector("[data-toggle-review-status]")?.setAttribute("hidden", "");
+    statusCell.append(adaptiveReviewDetailsElement(record));
+    const actions = document.createElement("div");
+    actions.className = "adaptive-review-actions";
+    if (record.status !== "Concluída" && record.status !== "Cancelada") {
+      if (record.status !== "Em revisão") actions.append(adaptiveReviewActionButton("Iniciar", "start", record.id));
+      actions.append(adaptiveReviewActionButton("Adiar", "postpone", record.id));
+      actions.append(adaptiveReviewActionButton("Concluir", "complete", record.id));
+      actions.append(adaptiveReviewActionButton("Questões", "questions", record.id));
+      actions.append(adaptiveReviewActionButton("Cancelar", "cancel", record.id));
+    }
+    statusCell.append(actions);
+  });
+}
+
+function updateAdaptiveReviewAction(id, action) {
+  ensureReviewsArray();
+  const record = state.reviews.find((item) => item.id === id && isAdaptiveReview(item));
+  if (!record) return;
+  if (action === "start") record.status = "Em revisão";
+  if (action === "complete") {
+    record.status = "Concluída";
+    record.concluidaEm = new Date().toISOString();
+  }
+  if (action === "cancel") {
+    record.status = "Cancelada";
+    record.canceladaEm = new Date().toISOString();
+  }
+  if (action === "postpone") {
+    const base = parseBrazilianDate(record.dataPrevista) || new Date();
+    const next = addDays(base, 2);
+    record.status = "Pendente";
+    record.disponivelEm = next.toISOString();
+    record.dataPrevista = formatDateBR(next);
+    record.disponibilidade = "Revisão disponível a partir de " + record.dataPrevista;
+  }
+  if (action === "questions") {
+    const value = Number(globalThis.prompt("Quantidade sugerida de questões para esta revisão:", String(record.questoesSugeridas || 6)));
+    if (Number.isFinite(value) && value > 0) record.questoesSugeridas = Math.round(value);
+  }
+  record.atualizadaEm = new Date().toISOString();
+  renderReviews();
+  renderContinuePanel();
+  renderEvolution();
+  saveAppStateNow("Revisão adaptativa atualizada");
 }
 
 function renderReviews() {
@@ -3634,6 +3880,7 @@ function renderReviews() {
       </tr>
     `;
   }).join("") : `<tr><td colspan="7">Nenhum tema para ${selected}.</td></tr>`;
+  renderAdaptiveReviewControls(reviewRows);
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -4331,12 +4578,12 @@ function applyAppSnapshot(saved = {}) {
         ? cycle.completedHistory.map((block) => ({ ...block, status: normalizeStatus(block.status || "Conclu\u00eddo") }))
         : [],
       reviews: Array.isArray(cycle.reviews)
-        ? cycle.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) }))
+        ? cycle.reviews.map((record) => normalizeAdaptiveReviewRecord(record))
         : [],
     }))
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
-  state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => ({ ...record, status: normalizeReviewStatus(record.status) })) : [];
+  state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   state.locked = Boolean(saved.locked);
@@ -4933,6 +5180,19 @@ els.continuePanel?.addEventListener("click", (event) => {
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
 els.newPlanButton?.addEventListener("click", createNewPlan);
+if (window.EditalImportUI) {
+  window.EditalImportUI.configure({
+    hasExistingRows: () => state.rows.length > 0,
+    onConfirm: applyAssistedImportRows,
+  });
+}
+els.assistedImportButton?.addEventListener("click", () => els.assistedFileInput?.click());
+els.assistedFileInput?.addEventListener("change", async () => {
+  const file = els.assistedFileInput.files?.[0];
+  if (!file || !window.EditalImportUI) return;
+  await window.EditalImportUI.start(file);
+  els.assistedFileInput.value = "";
+});
 if (els.fileInput) els.fileInput.addEventListener("change", async () => {
   const file = els.fileInput.files[0];
   if (!file) return;
@@ -5213,14 +5473,16 @@ els.scheduleWrap.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-save-performance]")) {
+    let adaptiveOutcome = null;
     if (performanceEditIndex >= 0) {
       const block = state.generatedBlocks[performanceEditIndex];
       if (block) {
-        if (normalizeStatus(block.status) === "Conclu\u00eddo" && !block.concluidoEm) {
+        if (normalizeStatus(block.status) === "Concluído" && !block.concluidoEm) {
           block.concluidoEm = new Date().toLocaleDateString("pt-BR");
         }
         syncCompletedHistoryForBlock(block);
         syncBlockReviewRecords(block);
+        adaptiveOutcome = syncAdaptiveReviewForBlock(block);
       }
     }
     closePerformancePanelAnimated(() => {
@@ -5228,7 +5490,31 @@ els.scheduleWrap.addEventListener("click", (event) => {
       renderReviews();
       renderEvolution();
       saveAppStateNow("Desempenho salvo");
+      if (adaptiveOutcome?.record?.status === "Concluída") {
+        showToast("Bom resultado: a revisão adaptativa deste tema foi concluída.");
+      } else if (adaptiveOutcome?.record) {
+        showToast(adaptiveOutcome.record.disponibilidade || "Revisão adaptativa atualizada.");
+      } else if (adaptiveOutcome?.insufficient) {
+        showToast("Desempenho registrado. A amostra ainda é insuficiente para criar uma revisão automática.");
+      }
     });
+    return;
+  }
+
+  const manualAdaptiveButton = event.target.closest("[data-create-adaptive-review]");
+  if (manualAdaptiveButton) {
+    const index = Number(manualAdaptiveButton.dataset.createAdaptiveReview);
+    const block = state.generatedBlocks[index];
+    const outcome = block ? syncAdaptiveReviewForBlock(block, { manual: true }) : null;
+    if (outcome?.record) {
+      renderReviews();
+      renderContinuePanel();
+      renderEvolution();
+      performanceEditIndex = index;
+      renderGeneratedSchedule();
+      saveAppStateNow("Revisão adaptativa criada");
+      showToast(outcome.record.disponibilidade || "Revisão adaptativa criada.");
+    }
     return;
   }
 
@@ -5429,6 +5715,11 @@ els.reviewFilter?.addEventListener("change", () => {
   saveAppStateNow("Filtro salvo");
 });
 els.reviewsBody?.addEventListener("click", (event) => {
+  const adaptiveButton = event.target.closest("[data-adaptive-review-action]");
+  if (adaptiveButton) {
+    updateAdaptiveReviewAction(adaptiveButton.dataset.adaptiveReviewId, adaptiveButton.dataset.adaptiveReviewAction);
+    return;
+  }
   const button = event.target.closest("[data-toggle-review-status]");
   if (!button) return;
   ensureReviewsArray();

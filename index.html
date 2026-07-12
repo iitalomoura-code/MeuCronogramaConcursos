@@ -10,7 +10,7 @@
     <script>
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260709-continuar-cards-uniformes" />
+    <link rel="stylesheet" href="./styles.css?v=20260711-revisao-adaptativa" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -174,6 +174,7 @@
                 <p>Importe o arquivo completo ou cole somente a parte de conhecimentos/conte&uacute;do program&aacute;tico.</p>
               </div>
               <div class="import-actions">
+                <button id="assistedImportButton" class="primary-button" type="button"><i data-lucide="file-search"></i><span>Importar edital</span></button>
                 <button id="processButton" class="primary-button" type="button"><i data-lucide="sparkles"></i><span>Organizar conte&uacute;do</span></button>
               </div>
             </div>
@@ -184,8 +185,9 @@
                   <span>PDF ou Word com o conte&uacute;do do concurso.</span>
                 </div>
                 <div class="import-box">
-                  <label class="file-button" for="fileInput"><i data-lucide="file-up"></i><span>Escolher arquivo</span></label>
+                  <label class="file-button" for="fileInput"><i data-lucide="file-up"></i><span>Usar organiza&ccedil;&atilde;o local</span></label>
                   <input id="fileInput" type="file" accept=".txt,.docx,.pdf,text/plain,application/pdf" />
+                  <input id="assistedFileInput" type="file" accept=".txt,.docx,.pdf,text/plain,application/pdf" />
                   <span id="fileName" class="file-name">Nenhum arquivo selecionado</span>
                   <button id="clearButton" class="ghost-button compact-button" type="button"><i data-lucide="x"></i><span>Limpar</span></button>
                 </div>
@@ -504,7 +506,28 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./app.js?v=20260709-continuar-cards-uniformes"></script>
+    <script src="./js/edital-importer/document-importer.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/text-normalizer.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/pdf-extractor.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/docx-extractor.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/layout-analyzer.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/cargo-detector.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/content-detector.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/subject-parser.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/confidence-calculator.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/content-resolver.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-importer/import-validator.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/generic.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/fgv.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/fcc.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/cebraspe.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/vunesp.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/aocp.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/ibfc.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-profiles/cesgranrio.js?v=20260711-edital-assistido"></script>
+    <script src="./js/edital-import-ui.js?v=20260711-edital-assistido"></script>
+    <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
+    <script src="./app.js?v=20260711-revisao-adaptativa"></script>
   </body>
 </html>
 
