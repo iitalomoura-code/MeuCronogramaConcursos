@@ -10,7 +10,8 @@
     <script>
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260712-resumos-persistencia" />
+    <link rel="stylesheet" href="./vendor/quill.snow.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260712-quill-editor" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -394,44 +395,47 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
             </div>
             <div class="notebook-editor">
               <div id="notebookEditorHeader" class="notebook-editor-header"></div>
-              <div class="notebook-toolbar" aria-label="Ferramentas de formata&ccedil;&atilde;o do resumo">
-                <button type="button" data-notebook-command="undo"><i data-lucide="undo-2"></i><span>Desfazer</span></button>
-                <button type="button" data-notebook-command="bold"><strong>B</strong><span>Negrito</span></button>
-                <button type="button" data-notebook-command="italic"><em>I</em><span>It&aacute;lico</span></button>
-                <button type="button" data-notebook-command="bullet"><i data-lucide="list"></i><span>Lista</span></button>
-                <button type="button" data-notebook-command="image"><i data-lucide="image"></i><span>Imagem</span></button>
-                <button type="button" data-notebook-command="table"><i data-lucide="table"></i><span>Tabela</span></button>
-                <button type="button" data-notebook-command="clear"><i data-lucide="eraser"></i><span>Limpar estilo</span></button>
-                <details class="notebook-tool-menu notebook-size-menu">
-                  <summary><i data-lucide="type"></i><span>Tamanho</span><i data-lucide="chevron-down"></i></summary>
-                  <div class="notebook-tool-panel">
-                    <button type="button" data-notebook-class="note-size-small"><span class="size-sample small">Aa</span><span>Menor</span></button>
-                    <button type="button" data-notebook-class="note-size-normal"><span>Aa</span><span>Normal</span></button>
-                    <button type="button" data-notebook-class="note-size-large"><span class="size-sample large">Aa</span><span>Maior</span></button>
-                    <button type="button" data-notebook-class="note-size-xlarge"><span class="size-sample xlarge">Aa</span><span>Bem maior</span></button>
-                  </div>
-                </details>
-                <details class="notebook-tool-menu notebook-align-menu">
-                  <summary><i data-lucide="align-left"></i><span>Alinhar</span><i data-lucide="chevron-down"></i></summary>
-                  <div class="notebook-tool-panel">
-                    <button type="button" data-notebook-align="left"><i data-lucide="align-left"></i><span>À esquerda</span></button>
-                    <button type="button" data-notebook-align="center"><i data-lucide="align-center"></i><span>Centralizado</span></button>
-                    <button type="button" data-notebook-align="right"><i data-lucide="align-right"></i><span>À direita</span></button>
-                    <button type="button" data-notebook-align="justify"><i data-lucide="align-justify"></i><span>Justificado</span></button>
-                  </div>
-                </details>
-                <details class="notebook-tool-menu notebook-color-menu">
-                  <summary><i data-lucide="palette"></i><span>Cores</span><i data-lucide="chevron-down"></i></summary>
-                  <div class="notebook-tool-panel notebook-color-panel">
-                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-black"><span class="color-dot black"></span><span>Preto</span></button>
-                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-muted"><span class="color-dot muted"></span><span>Cinza</span></button>
-                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-blue"><span class="color-dot blue"></span><span>Azul</span></button>
-                    <button type="button" class="notebook-color-button" data-notebook-class="note-color-red"><span class="color-dot red"></span><span>Vermelho</span></button>
-                    <button type="button" class="notebook-color-button" data-notebook-class="note-highlight"><span class="color-dot highlight"></span><span>Destaque</span></button>
-                  </div>
-                </details>
+              <div id="notebookToolbar">
+                <span class="ql-formats">
+                  <select class="ql-header">
+                    <option value="2"></option>
+                    <option value="3"></option>
+                    <option selected></option>
+                  </select>
+                  <select class="ql-size">
+                    <option value="small"></option>
+                    <option selected></option>
+                    <option value="large"></option>
+                    <option value="huge"></option>
+                  </select>
+                </span>
+                <span class="ql-formats">
+                  <button class="ql-bold"></button>
+                  <button class="ql-italic"></button>
+                  <button class="ql-underline"></button>
+                </span>
+                <span class="ql-formats">
+                  <select class="ql-color"></select>
+                  <select class="ql-background"></select>
+                </span>
+                <span class="ql-formats">
+                  <button class="ql-list" value="bullet"></button>
+                  <button class="ql-list" value="ordered"></button>
+                  <button class="ql-align" value=""></button>
+                  <button class="ql-align" value="center"></button>
+                  <button class="ql-align" value="right"></button>
+                </span>
+                <span class="ql-formats">
+                  <button class="ql-link"></button>
+                  <button class="ql-image"></button>
+                  <button class="ql-blockquote"></button>
+                  <button class="ql-code-block"></button>
+                </span>
+                <span class="ql-formats">
+                  <button class="ql-clean"></button>
+                </span>
               </div>
-              <div id="notebookText" class="notebook-rich-editor" contenteditable="false" role="textbox" aria-multiline="true" data-placeholder="Escreva ou cole aqui o resumo deste tema: conceitos-chave, macetes, artigos importantes, tudo que ajudar na revis&atilde;o."></div>
+              <div id="notebookText" class="notebook-rich-editor"></div>
               <div id="notebookStatus" class="notebook-status"></div>
             </div>
           </div>
@@ -536,7 +540,8 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./js/edital-profiles/cesgranrio.js?v=20260711-edital-assistido"></script>
     <script src="./js/edital-import-ui.js?v=20260711-edital-assistido"></script>
     <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
-    <script src="./app.js?v=20260712-resumos-persistencia"></script>
+    <script src="./vendor/quill.js"></script>
+    <script src="./app.js?v=20260712-quill-editor"></script>
   </body>
 </html>
 

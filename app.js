@@ -70,6 +70,8 @@ let notebookSelection = { materia: "", assunto: "" };
 let notebookSavedRange = null;
 let notebookHistory = [];
 let isUndoingNotebook = false;
+let quillEditor = null;
+let isLoadingNotebook = false;
 
 let isRestoring = false;
 let saveTimer = 0;
@@ -3938,55 +3940,40 @@ function notebookSafeImageSrc(node) {
 }
 
 function sanitizeNotebookHtml(value) {
-  const raw = String(value || "");
-  const source = /<\/?(p|br|strong|b|em|i|h[1-4]|ul|ol|li|div|span|mark|img|table|thead|tbody|tr|th|td)\b/i.test(raw) ? raw : plainTextToNotebookHtml(raw);
-  const template = document.createElement("template");
-  template.innerHTML = source;
-  const allowed = new Set(["P", "BR", "STRONG", "B", "EM", "I", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "SPAN", "MARK", "IMG", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
-  const walk = (node) => {
-    if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || "");
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
-    if (node.tagName === "IMG") {
-      const src = notebookSafeImageSrc(node);
-      return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(node.getAttribute("alt") || "")}" loading="lazy">` : "";
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  // Texto puro (sem tags) vira paragrafos
+  if (!/<[a-z][\s\S]*>/i.test(raw)) return plainTextToNotebookHtml(raw);
+
+  const box = document.createElement("div");
+  box.innerHTML = raw;
+
+  // Remove elementos perigosos
+  box.querySelectorAll("script, style, iframe, object, embed, form, input, button, link, meta").forEach((el) => el.remove());
+
+  box.querySelectorAll("*").forEach((el) => {
+    // Remove atributos de evento (onclick etc) e URLs perigosas
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const val = String(attr.value || "").toLowerCase();
+      if (name.startsWith("on")) el.removeAttribute(attr.name);
+      if ((name === "href" || name === "src") && !/^(https?:|mailto:|#|\/)/i.test(val.trim())) {
+        el.removeAttribute(attr.name);
+      }
+    });
+    if (el.tagName === "IMG") {
+      const src = el.getAttribute("src") || "";
+      // Bloqueia imagens embutidas (base64) para nao inchar o arquivo de dados
+      if (!/^https?:\/\//i.test(src)) el.remove();
+      else el.setAttribute("loading", "lazy");
     }
-    if (!allowed.has(node.tagName)) return [...node.childNodes].map(walk).join("");
-    const children = [...node.childNodes].map(walk).join("");
-    if (node.tagName === "BR") return "<br>";
-    if (["B", "STRONG"].includes(node.tagName)) return `<strong>${children}</strong>`;
-    if (["I", "EM"].includes(node.tagName)) return `<em>${children}</em>`;
-    if (["H1", "H2", "H3", "H4"].includes(node.tagName)) return `<h3${notebookClassAttribute(node)}>${children}</h3>`;
-    if (node.tagName === "UL") return `<ul>${children}</ul>`;
-    if (node.tagName === "OL") return `<ul>${children}</ul>`;
-    if (node.tagName === "LI") return `<li${notebookClassAttribute(node)}>${children}</li>`;
-    if (node.tagName === "MARK") return `<span class="note-highlight">${children}</span>`;
-    if (node.tagName === "TABLE") return `<table>${children}</table>`;
-    if (node.tagName === "THEAD") return `<thead>${children}</thead>`;
-    if (node.tagName === "TBODY") return `<tbody>${children}</tbody>`;
-    if (node.tagName === "TR") return `<tr>${children}</tr>`;
-    if (node.tagName === "TH") return `<th>${children || "<br>"}</th>`;
-    if (node.tagName === "TD") return `<td>${children || "<br>"}</td>`;
-    if (node.tagName === "SPAN") {
-      const style = (node.getAttribute("style") || "").toLowerCase();
-      const weight = style.match(/font-weight:\s*(\d+|bold)/);
-      const isBold = Boolean(weight && (weight[1] === "bold" || Number(weight[1]) >= 600));
-      const isItalic = /font-style:\s*italic/.test(style);
-      const isNormalWeight = /font-weight:\s*(normal|[1-5]00)\b/.test(style);
-      const isNormalItalic = /font-style:\s*normal\b/.test(style);
-      const classes = notebookSafeClassName(node).split(" ").filter(Boolean);
-      if (isNormalWeight && !classes.includes("note-weight-normal")) classes.push("note-weight-normal");
-      if (isNormalItalic && !classes.includes("note-italic-normal")) classes.push("note-italic-normal");
-      const className = classes.join(" ");
-      let inner = children;
-      if (className) inner = `<span class="${className}">${inner}</span>`;
-      if (isItalic) inner = `<em>${inner}</em>`;
-      if (isBold) inner = `<strong>${inner}</strong>`;
-      return inner;
+    if (el.tagName === "A") {
+      el.setAttribute("target", "_blank");
+      el.setAttribute("rel", "noopener noreferrer");
     }
-    return `<p${notebookClassAttribute(node)}>${children || "<br>"}</p>`;
-  };
-  const rendered = [...template.content.childNodes].map(walk).join("").trim();
-  return cleanNotebookStructure(rendered);
+  });
+
+  return box.innerHTML.trim();
 }
 
 function cleanNotebookStructure(html) {
@@ -4042,15 +4029,18 @@ function notebookHasContent(value) {
 }
 
 function setNotebookEditorEnabled(enabled) {
-  if (!els.notebookText) return;
-  els.notebookText.contentEditable = enabled ? "true" : "false";
-  els.notebookText.classList.toggle("is-disabled", !enabled);
+  if (quillEditor) quillEditor.enable(enabled);
+  const toolbar = document.querySelector("#notebookToolbar");
+  if (toolbar) toolbar.classList.toggle("is-disabled", !enabled);
+  if (els.notebookText) els.notebookText.classList.toggle("is-disabled", !enabled);
 }
 
 function saveNotebookEditor() {
-  if (!notebookSelection.assunto) return;
+  if (!notebookSelection.assunto || !quillEditor) return;
   const key = notebookKey(notebookSelection.materia, notebookSelection.assunto);
-  state.notebook[key] = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  const html = quillEditor.getSemanticHTML ? quillEditor.getSemanticHTML() : quillEditor.root.innerHTML;
+  const isEmpty = !quillEditor.getText().trim() && !quillEditor.root.querySelector("img");
+  state.notebook[key] = isEmpty ? "" : sanitizeNotebookHtml(html);
   els.notebookStatus.textContent = "Salvo automaticamente";
   scheduleAutoSave();
 }
@@ -4391,8 +4381,12 @@ function renderErrors() {
 function renderNotebookEditor() {
   if (!notebookSelection.assunto) {
     els.notebookEditorHeader.innerHTML = `<span class="notebook-hint">Selecione um tema para escrever o resumo.</span>`;
-    els.notebookText.innerHTML = "";
     setNotebookEditorEnabled(false);
+    if (quillEditor) {
+      isLoadingNotebook = true;
+      quillEditor.setContents([]);
+      isLoadingNotebook = false;
+    }
     els.notebookStatus.textContent = "";
     return;
   }
@@ -4403,9 +4397,13 @@ function renderNotebookEditor() {
     ${details ? `<span>${escapeHtml(shortText(details, 160))}</span>` : ""}
   `;
   setNotebookEditorEnabled(true);
-  els.notebookText.innerHTML = sanitizeNotebookHtml(state.notebook[notebookKey(notebookSelection.materia, notebookSelection.assunto)] || "");
-  notebookHistory = [sanitizeNotebookHtml(els.notebookText.innerHTML)];
-  notebookSavedRange = null;
+  const saved = state.notebook[notebookKey(notebookSelection.materia, notebookSelection.assunto)] || "";
+  if (quillEditor) {
+    isLoadingNotebook = true;
+    quillEditor.setContents(quillEditor.clipboard.convert({ html: sanitizeNotebookHtml(saved) }), "silent");
+    quillEditor.history.clear();
+    isLoadingNotebook = false;
+  }
   els.notebookStatus.textContent = "";
 }
 
@@ -5798,79 +5796,24 @@ els.notebookThemes?.addEventListener("click", (event) => {
   notebookSelection.assunto = button.dataset.notebookTheme;
   renderErrors();
 });
-els.notebookText?.addEventListener("input", () => {
-  rememberNotebookSelection();
-  saveNotebookEditor();
-  rememberNotebookHistory();
-});
-els.notebookText?.addEventListener("mouseup", rememberNotebookSelection);
-els.notebookText?.addEventListener("keyup", rememberNotebookSelection);
-document.addEventListener("selectionchange", rememberNotebookSelection);
-els.notebookText?.addEventListener("paste", (event) => {
-  if (!notebookSelection.assunto) return;
-  event.preventDefault();
-  const html = event.clipboardData?.getData("text/html");
-  const text = event.clipboardData?.getData("text/plain") || "";
-  rememberNotebookHistory();
-  document.execCommand("insertHTML", false, sanitizeNotebookHtml(html || text));
-  saveNotebookEditor();
-  rememberNotebookHistory();
-});
-document.querySelector(".notebook-toolbar")?.addEventListener("mousedown", (event) => {
-  if (event.target.closest("button") || event.target.closest("summary")) event.preventDefault();
-});
-document.querySelector(".notebook-toolbar")?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-notebook-command]");
-  const colorButton = event.target.closest("[data-notebook-class]");
-  const alignButton = event.target.closest("[data-notebook-align]");
-  if ((!button && !colorButton && !alignButton) || !notebookSelection.assunto) return;
-  els.notebookText.focus();
-  restoreNotebookSelection();
-  if (colorButton) {
-    applyNotebookClass(colorButton.dataset.notebookClass);
-    colorButton.closest(".notebook-tool-menu")?.removeAttribute("open");
-    return;
-  }
-  if (alignButton) {
-    applyNotebookAlignment(alignButton.dataset.notebookAlign);
-    alignButton.closest(".notebook-tool-menu")?.removeAttribute("open");
-    return;
-  }
-  const command = button.dataset.notebookCommand;
-  if (command === "undo") {
-    undoNotebookChange();
-    return;
-  }
-  restoreNotebookSelection();
-  rememberNotebookHistory();
-  if (command === "bold") {
-    toggleNotebookInlineStyle("bold");
-    return;
-  }
-  if (command === "italic") {
-    toggleNotebookInlineStyle("italic");
-    return;
-  }
-  if (command === "bullet") {
-    insertNotebookBulletForSelection();
-    return;
-  }
-  if (command === "image") {
-    insertNotebookImage();
-    return;
-  }
-  if (command === "table") {
-    insertNotebookTable();
-    return;
-  }
-  if (command === "clear") {
-    cleanNotebookSelectionStyle();
-    return;
-  }
-  saveNotebookEditor();
-  rememberNotebookSelection();
-  rememberNotebookHistory();
-});
+function initQuillEditor() {
+  if (quillEditor || typeof Quill === "undefined" || !els.notebookText) return;
+  quillEditor = new Quill("#notebookText", {
+    theme: "snow",
+    placeholder: "Escreva ou cole aqui o resumo deste tema: conceitos-chave, macetes, artigos importantes, tudo que ajudar na revis\u00e3o.",
+    modules: {
+      toolbar: "#notebookToolbar",
+      history: { delay: 500, maxStack: 200, userOnly: true },
+    },
+  });
+  quillEditor.enable(false);
+  quillEditor.on("text-change", (delta, oldDelta, source) => {
+    if (isLoadingNotebook || source !== "user") return;
+    saveNotebookEditor();
+  });
+}
+initQuillEditor();
+
 els.reviewFilter?.addEventListener("change", () => {
   renderReviews();
   saveAppStateNow("Filtro salvo");

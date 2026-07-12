@@ -4958,3 +4958,80 @@ details[open] > :not(summary),
     padding: 14px 20px;
   }
 }
+
+/* ===== Editor Quill (Caderno de Resumos) ===== */
+#notebookToolbar.ql-toolbar {
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: var(--soft);
+  padding: 8px 10px;
+  font-family: Inter, sans-serif;
+}
+
+#notebookToolbar.ql-toolbar.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+#notebookText.ql-container {
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  background: #FFFFFF;
+  font-family: Inter, sans-serif;
+  font-size: 14px;
+  min-height: 340px;
+}
+
+#notebookText .ql-editor {
+  min-height: 340px;
+  line-height: 1.65;
+  color: var(--text);
+  padding: 16px 18px;
+}
+
+#notebookText .ql-editor.ql-blank::before {
+  color: var(--muted);
+  font-style: normal;
+  left: 18px;
+  right: 18px;
+}
+
+#notebookText .ql-editor h2,
+#notebookText .ql-editor h3 {
+  font-family: Quicksand, Inter, sans-serif;
+  font-weight: 700;
+  color: var(--text);
+  margin: 14px 0 8px;
+}
+
+#notebookText .ql-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+#notebookText .ql-editor blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+/* Cor de destaque nos botões ativos da barra */
+.ql-toolbar.ql-snow .ql-picker-label:hover,
+.ql-toolbar.ql-snow button:hover,
+.ql-toolbar.ql-snow button.ql-active,
+.ql-toolbar.ql-snow .ql-picker-item.ql-selected {
+  color: var(--primary) !important;
+}
+
+.ql-toolbar.ql-snow button:hover .ql-stroke,
+.ql-toolbar.ql-snow button.ql-active .ql-stroke,
+.ql-toolbar.ql-snow .ql-picker-label:hover .ql-stroke {
+  stroke: var(--primary) !important;
+}
+
+.ql-toolbar.ql-snow button:hover .ql-fill,
+.ql-toolbar.ql-snow button.ql-active .ql-fill {
+  fill: var(--primary) !important;
+}
