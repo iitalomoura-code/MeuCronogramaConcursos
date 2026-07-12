@@ -4407,6 +4407,26 @@ function renderNotebookEditor() {
   els.notebookStatus.textContent = "";
 }
 
+const NOTEBOOK_PASTE_STYLE_ATTRIBUTES = ["color", "background", "font", "size"];
+
+function removeNotebookPasteStyleAttributes(delta) {
+  if (isLoadingNotebook || !Array.isArray(delta?.ops)) return delta;
+  delta.ops.forEach((operation) => {
+    if (!operation.attributes) return;
+    NOTEBOOK_PASTE_STYLE_ATTRIBUTES.forEach((attribute) => delete operation.attributes[attribute]);
+    if (!Object.keys(operation.attributes).length) delete operation.attributes;
+  });
+  return delta;
+}
+
+function clearNotebookQuillFormats(editor) {
+  const range = editor.getSelection(true);
+  if (!range) return;
+  if (range.length) editor.removeFormat(range.index, range.length, "user");
+  editor.format("color", false, "user");
+  editor.format("background", false, "user");
+}
+
 function downloadJson() {
   if (!state.planningBase) return;
   syncPlanningSliders();
@@ -5802,10 +5822,21 @@ function initQuillEditor() {
     theme: "snow",
     placeholder: "Escreva ou cole aqui o resumo deste tema: conceitos-chave, macetes, artigos importantes, tudo que ajudar na revis\u00e3o.",
     modules: {
-      toolbar: "#notebookToolbar",
+      toolbar: {
+        container: "#notebookToolbar",
+        handlers: {
+          color(value) {
+            this.quill.format("color", value || "#000000", "user");
+          },
+          clean() {
+            clearNotebookQuillFormats(this.quill);
+          },
+        },
+      },
       history: { delay: 500, maxStack: 200, userOnly: true },
     },
   });
+  quillEditor.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => removeNotebookPasteStyleAttributes(delta));
   quillEditor.enable(false);
   quillEditor.on("text-change", (delta, oldDelta, source) => {
     if (isLoadingNotebook || source !== "user") return;
