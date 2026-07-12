@@ -4099,6 +4099,11 @@ details[open] > :not(summary),
   text-align: justify;
 }
 
+.notebook-rich-editor .note-bullet {
+  color: var(--primary);
+  font-weight: 800;
+}
+
 .notebook-rich-editor::-webkit-scrollbar,
 .notebook-list::-webkit-scrollbar {
   width: 9px;

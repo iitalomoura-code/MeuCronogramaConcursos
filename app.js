@@ -3911,6 +3911,7 @@ const NOTEBOOK_SAFE_CLASSES = new Set([
   "note-align-center",
   "note-align-right",
   "note-align-justify",
+  "note-bullet",
 ]);
 
 const NOTEBOOK_STYLE_GROUPS = [
@@ -4110,6 +4111,33 @@ function applyNotebookClass(className) {
   const range = notebookSelectionRange();
   if (!range || !NOTEBOOK_SAFE_CLASSES.has(className)) return;
   rememberNotebookHistory();
+  const extracted = range.extractContents();
+  extracted.querySelectorAll?.("*").forEach((element) => {
+    NOTEBOOK_STYLE_GROUPS.forEach((group) => {
+      if (group.includes(className)) element.classList?.remove(...group);
+    });
+  });
+  const hasBlocks = Boolean(extracted.querySelector?.("p, li, h1, h2, h3, h4, div, table"));
+  if (hasBlocks) {
+    extracted.querySelectorAll("p, li, h1, h2, h3, h4, div").forEach((element) => {
+      NOTEBOOK_STYLE_GROUPS.forEach((group) => {
+        if (group.includes(className)) element.classList.remove(...group.filter((name) => name !== className));
+      });
+      element.classList.add(className);
+    });
+    range.insertNode(extracted);
+  } else {
+    const wrapper = document.createElement("span");
+    wrapper.className = className;
+    wrapper.appendChild(extracted);
+    range.insertNode(wrapper);
+  }
+  els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  notebookSavedRange = null;
+  saveNotebookEditor();
+  rememberNotebookHistory();
+  return;
+
   const selectedText = range.toString();
 
   // Coleta os nos de texto que intersectam a selecao, sem extrair blocos
@@ -4211,8 +4239,8 @@ function cleanNotebookSelectionStyle() {
   let range = notebookSelectionRange();
   rememberNotebookHistory();
   if (!range) {
-    range = document.createRange();
-    range.selectNodeContents(els.notebookText);
+    els.notebookStatus.textContent = "Selecione um trecho para limpar o estilo.";
+    return;
   }
   const fragment = range.extractContents();
   fragment.querySelectorAll?.("*").forEach((node) => {
@@ -4230,6 +4258,23 @@ function cleanNotebookSelectionStyle() {
   }
   const selection = window.getSelection();
   selection.removeAllRanges();
+  els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  notebookSavedRange = null;
+  saveNotebookEditor();
+  rememberNotebookHistory();
+}
+
+function insertNotebookBulletForSelection() {
+  const range = notebookSelectionRange();
+  if (!range) {
+    els.notebookStatus.textContent = "Selecione um trecho para adicionar o marcador.";
+    return;
+  }
+  rememberNotebookHistory();
+  const marker = document.createElement("span");
+  marker.className = "note-bullet";
+  marker.textContent = "• ";
+  range.insertNode(marker);
   els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
   notebookSavedRange = null;
   saveNotebookEditor();
@@ -5708,6 +5753,7 @@ els.notebookText?.addEventListener("input", () => {
 });
 els.notebookText?.addEventListener("mouseup", rememberNotebookSelection);
 els.notebookText?.addEventListener("keyup", rememberNotebookSelection);
+document.addEventListener("selectionchange", rememberNotebookSelection);
 els.notebookText?.addEventListener("paste", (event) => {
   if (!notebookSelection.assunto) return;
   event.preventDefault();
@@ -5747,7 +5793,10 @@ document.querySelector(".notebook-toolbar")?.addEventListener("click", (event) =
   rememberNotebookHistory();
   if (command === "bold") document.execCommand("bold");
   if (command === "italic") document.execCommand("italic");
-  if (command === "bullet") document.execCommand("insertUnorderedList");
+  if (command === "bullet") {
+    insertNotebookBulletForSelection();
+    return;
+  }
   if (command === "image") {
     insertNotebookImage();
     return;
