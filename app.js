@@ -1121,7 +1121,7 @@ function renderRows() {
               <button class="more-menu-item" type="button" data-edit-subject="${escapeHtml(group.materia)}">Editar mat\u00e9ria</button>
             </div>
           </details>
-          <span class="chevron" aria-hidden="true">âŒ„</span>
+          <span class="chevron" aria-hidden="true">&#8964;</span>
         </div>
       </summary>
       <div class="topic-list">
