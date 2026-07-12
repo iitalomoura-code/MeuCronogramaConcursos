@@ -3907,6 +3907,8 @@ const NOTEBOOK_SAFE_CLASSES = new Set([
   "note-size-normal",
   "note-size-large",
   "note-size-xlarge",
+  "note-weight-normal",
+  "note-italic-normal",
   "note-align-left",
   "note-align-center",
   "note-align-right",
@@ -3969,7 +3971,12 @@ function sanitizeNotebookHtml(value) {
       const weight = style.match(/font-weight:\s*(\d+|bold)/);
       const isBold = Boolean(weight && (weight[1] === "bold" || Number(weight[1]) >= 600));
       const isItalic = /font-style:\s*italic/.test(style);
-      const className = notebookSafeClassName(node);
+      const isNormalWeight = /font-weight:\s*(normal|[1-5]00)\b/.test(style);
+      const isNormalItalic = /font-style:\s*normal\b/.test(style);
+      const classes = notebookSafeClassName(node).split(" ").filter(Boolean);
+      if (isNormalWeight && !classes.includes("note-weight-normal")) classes.push("note-weight-normal");
+      if (isNormalItalic && !classes.includes("note-italic-normal")) classes.push("note-italic-normal");
+      const className = classes.join(" ");
       let inner = children;
       if (className) inner = `<span class="${className}">${inner}</span>`;
       if (isItalic) inner = `<em>${inner}</em>`;
@@ -4058,8 +4065,7 @@ function rememberNotebookHistory() {
 
 function undoNotebookChange() {
   if (!els.notebookText || notebookHistory.length < 2) {
-    document.execCommand("undo");
-    saveNotebookEditor();
+    els.notebookStatus.textContent = "Nenhuma altera\u00e7\u00e3o para desfazer.";
     return;
   }
   notebookHistory.pop();
@@ -4179,6 +4185,53 @@ function applyNotebookClass(className) {
     wrapper.appendChild(extracted);
     range.insertNode(wrapper);
   }
+  els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  notebookSavedRange = null;
+  saveNotebookEditor();
+  rememberNotebookHistory();
+}
+
+function selectedNotebookTextNodes(range) {
+  const nodes = [];
+  const walker = document.createTreeWalker(els.notebookText, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent?.trim()) return NodeFilter.FILTER_SKIP;
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    },
+  });
+  let current = walker.nextNode();
+  while (current) {
+    nodes.push(current);
+    current = walker.nextNode();
+  }
+  return nodes;
+}
+
+function selectionUsesNotebookStyle(range, styleName) {
+  const nodes = selectedNotebookTextNodes(range);
+  if (!nodes.length) return false;
+  return nodes.every((node) => {
+    const style = window.getComputedStyle(node.parentElement);
+    if (styleName === "bold") {
+      return style.fontWeight === "bold" || Number(style.fontWeight) >= 600;
+    }
+    return style.fontStyle === "italic";
+  });
+}
+
+function toggleNotebookInlineStyle(styleName) {
+  const range = notebookSelectionRange();
+  if (!range) {
+    els.notebookStatus.textContent = "Selecione um trecho para formatar.";
+    return;
+  }
+  const removeStyle = selectionUsesNotebookStyle(range, styleName);
+  rememberNotebookHistory();
+  const fragment = range.extractContents();
+  const wrapper = document.createElement(removeStyle ? "span" : (styleName === "bold" ? "strong" : "em"));
+  if (removeStyle) wrapper.className = styleName === "bold" ? "note-weight-normal" : "note-italic-normal";
+  wrapper.appendChild(fragment);
+  range.insertNode(wrapper);
   els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
   notebookSavedRange = null;
   saveNotebookEditor();
@@ -5790,8 +5843,14 @@ document.querySelector(".notebook-toolbar")?.addEventListener("click", (event) =
   }
   restoreNotebookSelection();
   rememberNotebookHistory();
-  if (command === "bold") document.execCommand("bold");
-  if (command === "italic") document.execCommand("italic");
+  if (command === "bold") {
+    toggleNotebookInlineStyle("bold");
+    return;
+  }
+  if (command === "italic") {
+    toggleNotebookInlineStyle("italic");
+    return;
+  }
   if (command === "bullet") {
     insertNotebookBulletForSelection();
     return;

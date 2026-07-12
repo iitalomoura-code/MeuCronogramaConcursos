@@ -4071,6 +4071,14 @@ details[open] > :not(summary),
   font-size: 1.32em;
 }
 
+.notebook-rich-editor .note-weight-normal {
+  font-weight: 400;
+}
+
+.notebook-rich-editor .note-italic-normal {
+  font-style: normal;
+}
+
 .notebook-rich-editor .note-highlight {
   border-radius: 5px;
   background: rgba(253, 230, 138, 0.65);
@@ -4078,9 +4086,11 @@ details[open] > :not(summary),
 }
 
 .notebook-rich-editor .note-clear-style {
-  color: var(--text) !important;
-  background: transparent !important;
-  font-size: 14px !important;
+  color: var(--text);
+  background: transparent;
+  font-size: 1em;
+  font-weight: 400;
+  font-style: normal;
 }
 
 .notebook-rich-editor .note-align-left {
