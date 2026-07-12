@@ -3978,7 +3978,54 @@ function sanitizeNotebookHtml(value) {
     }
     return `<p${notebookClassAttribute(node)}>${children || "<br>"}</p>`;
   };
-  return [...template.content.childNodes].map(walk).join("").trim();
+  const rendered = [...template.content.childNodes].map(walk).join("").trim();
+  return cleanNotebookStructure(rendered);
+}
+
+function cleanNotebookStructure(html) {
+  const box = document.createElement("div");
+  box.innerHTML = String(html || "");
+
+  const isEmptyNode = (el) => {
+    if (el.querySelector("img, br, table")) return false;
+    return !el.textContent.replace(/\u00a0/g, " ").trim();
+  };
+
+  // 1. Desfaz aninhamento redundante: <span class="X"><span class="X">...
+  box.querySelectorAll("span[class]").forEach((span) => {
+    const parent = span.parentElement;
+    if (parent && parent.tagName === "SPAN" && parent.className === span.className) {
+      while (span.firstChild) parent.insertBefore(span.firstChild, span);
+      span.remove();
+    }
+  });
+
+  // 2. Remove blocos (h3/p/li) que ficaram presos DENTRO de spans (HTML invalido)
+  box.querySelectorAll("span h1, span h2, span h3, span h4, span p, span li").forEach((block) => {
+    const span = block.closest("span");
+    if (span && span.parentElement) span.parentElement.insertBefore(block, span);
+  });
+
+  // 3. Remove spans totalmente vazios (o lixo que se acumulava a cada clique)
+  let removed = true;
+  let guard = 0;
+  while (removed && guard < 12) {
+    removed = false;
+    guard += 1;
+    box.querySelectorAll("span, strong, em").forEach((el) => {
+      if (isEmptyNode(el)) {
+        el.remove();
+        removed = true;
+      }
+    });
+  }
+
+  // 4. Remove titulos vazios e paragrafos duplicados sem conteudo
+  box.querySelectorAll("h1, h2, h3, h4").forEach((el) => {
+    if (isEmptyNode(el)) el.remove();
+  });
+
+  return box.innerHTML.trim();
 }
 
 function notebookHasContent(value) {
@@ -4133,54 +4180,6 @@ function applyNotebookClass(className) {
     range.insertNode(wrapper);
   }
   els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
-  notebookSavedRange = null;
-  saveNotebookEditor();
-  rememberNotebookHistory();
-  return;
-
-  const selectedText = range.toString();
-
-  // Coleta os nos de texto que intersectam a selecao, sem extrair blocos
-  // inteiros (evita quebrar/duplicar paragrafos, que causava espacamento).
-  const textNodes = [];
-  const walker = document.createTreeWalker(els.notebookText, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.textContent) return NodeFilter.FILTER_REJECT;
-      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-    },
-  });
-  let current = walker.nextNode();
-  while (current) {
-    textNodes.push(current);
-    current = walker.nextNode();
-  }
-
-  if (textNodes.length) {
-    textNodes.forEach((node) => {
-      let target = node;
-      // Recorta as bordas da selecao no primeiro/ultimo no
-      if (node === range.endContainer && range.endOffset < node.textContent.length) {
-        target.splitText(range.endOffset);
-      }
-      if (node === range.startContainer && range.startOffset > 0) {
-        target = node.splitText(range.startOffset);
-      }
-      applyClassToTextNode(target, className);
-    });
-  } else {
-    // Selecao dentro de um unico no
-    const span = document.createElement("span");
-    span.className = className;
-    span.appendChild(range.extractContents());
-    range.insertNode(span);
-  }
-
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
-  if (!els.notebookText.textContent.trim() && selectedText.trim()) {
-    els.notebookText.innerHTML = `<p><span class="${className}">${escapeHtml(selectedText)}</span></p>`;
-  }
   notebookSavedRange = null;
   saveNotebookEditor();
   rememberNotebookHistory();
