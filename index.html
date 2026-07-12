@@ -10,7 +10,7 @@
     <script>
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
-    <link rel="stylesheet" href="./styles.css?v=20260711-revisao-adaptativa" />
+    <link rel="stylesheet" href="./styles.css?v=20260712-resumos-formatacao" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -398,7 +398,6 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
                 <button type="button" data-notebook-command="undo"><i data-lucide="undo-2"></i><span>Desfazer</span></button>
                 <button type="button" data-notebook-command="bold"><strong>B</strong><span>Negrito</span></button>
                 <button type="button" data-notebook-command="italic"><em>I</em><span>It&aacute;lico</span></button>
-                <button type="button" data-notebook-command="heading"><i data-lucide="heading-3"></i><span>Subt&iacute;tulo</span></button>
                 <button type="button" data-notebook-command="bullet"><i data-lucide="list"></i><span>Lista</span></button>
                 <button type="button" data-notebook-command="image"><i data-lucide="image"></i><span>Imagem</span></button>
                 <button type="button" data-notebook-command="table"><i data-lucide="table"></i><span>Tabela</span></button>
@@ -406,9 +405,19 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
                 <details class="notebook-tool-menu notebook-size-menu">
                   <summary><i data-lucide="type"></i><span>Tamanho</span><i data-lucide="chevron-down"></i></summary>
                   <div class="notebook-tool-panel">
+                    <button type="button" data-notebook-class="note-size-small"><span class="size-sample small">Aa</span><span>Menor</span></button>
                     <button type="button" data-notebook-class="note-size-normal"><span>Aa</span><span>Normal</span></button>
                     <button type="button" data-notebook-class="note-size-large"><span class="size-sample large">Aa</span><span>Maior</span></button>
                     <button type="button" data-notebook-class="note-size-xlarge"><span class="size-sample xlarge">Aa</span><span>Bem maior</span></button>
+                  </div>
+                </details>
+                <details class="notebook-tool-menu notebook-align-menu">
+                  <summary><i data-lucide="align-left"></i><span>Alinhar</span><i data-lucide="chevron-down"></i></summary>
+                  <div class="notebook-tool-panel">
+                    <button type="button" data-notebook-align="left"><i data-lucide="align-left"></i><span>À esquerda</span></button>
+                    <button type="button" data-notebook-align="center"><i data-lucide="align-center"></i><span>Centralizado</span></button>
+                    <button type="button" data-notebook-align="right"><i data-lucide="align-right"></i><span>À direita</span></button>
+                    <button type="button" data-notebook-align="justify"><i data-lucide="align-justify"></i><span>Justificado</span></button>
                   </div>
                 </details>
                 <details class="notebook-tool-menu notebook-color-menu">
@@ -527,7 +536,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./js/edital-profiles/cesgranrio.js?v=20260711-edital-assistido"></script>
     <script src="./js/edital-import-ui.js?v=20260711-edital-assistido"></script>
     <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
-    <script src="./app.js?v=20260711-corrige-chevron"></script>
+    <script src="./app.js?v=20260712-resumos-formatacao"></script>
   </body>
 </html>
 

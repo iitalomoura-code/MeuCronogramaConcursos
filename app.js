@@ -3902,10 +3902,21 @@ const NOTEBOOK_SAFE_CLASSES = new Set([
   "note-color-blue",
   "note-color-red",
   "note-highlight",
+  "note-clear-style",
+  "note-size-small",
   "note-size-normal",
   "note-size-large",
   "note-size-xlarge",
+  "note-align-left",
+  "note-align-center",
+  "note-align-right",
+  "note-align-justify",
 ]);
+
+const NOTEBOOK_STYLE_GROUPS = [
+  ["note-color-black", "note-color-muted", "note-color-blue", "note-color-red", "note-clear-style"],
+  ["note-size-small", "note-size-normal", "note-size-large", "note-size-xlarge", "note-clear-style"],
+];
 
 function notebookSafeClassName(node) {
   if (!node?.classList) return "";
@@ -4054,6 +4065,9 @@ function applyClassToTextNode(node, className) {
   if (!node.textContent) return null;
   const parent = node.parentElement;
   if (parent?.tagName === "SPAN") {
+    NOTEBOOK_STYLE_GROUPS.forEach((group) => {
+      if (group.includes(className)) parent.classList.remove(...group.filter((name) => name !== className));
+    });
     parent.classList.add(className);
     return parent;
   }
@@ -4062,6 +4076,34 @@ function applyClassToTextNode(node, className) {
   node.replaceWith(span);
   span.appendChild(node);
   return span;
+}
+
+function applyNotebookAlignment(alignment) {
+  const className = "note-align-" + alignment;
+  if (!NOTEBOOK_SAFE_CLASSES.has(className)) return;
+  const range = notebookSelectionRange();
+  if (!range) return;
+  rememberNotebookHistory();
+  const blocks = [];
+  const walker = document.createTreeWalker(els.notebookText, NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      if (!node.matches?.("p, li, h1, h2, h3, h4, div")) return NodeFilter.FILTER_SKIP;
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    },
+  });
+  let current = walker.nextNode();
+  while (current) {
+    blocks.push(current);
+    current = walker.nextNode();
+  }
+  blocks.forEach((block) => {
+    block.classList.remove("note-align-left", "note-align-center", "note-align-right", "note-align-justify");
+    block.classList.add(className);
+  });
+  els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  notebookSavedRange = null;
+  saveNotebookEditor();
+  rememberNotebookHistory();
 }
 
 function applyNotebookClass(className) {
@@ -4166,25 +4208,32 @@ function insertNotebookTable() {
 }
 
 function cleanNotebookSelectionStyle() {
-  const range = notebookSelectionRange();
+  let range = notebookSelectionRange();
   rememberNotebookHistory();
   if (!range) {
-    els.notebookText.innerHTML = plainTextToNotebookHtml(els.notebookText.innerText || els.notebookText.textContent || "");
-    saveNotebookEditor();
-    return;
+    range = document.createRange();
+    range.selectNodeContents(els.notebookText);
   }
-  const text = range.toString();
-  range.deleteContents();
-  const textNode = document.createTextNode(text);
-  range.insertNode(textNode);
+  const fragment = range.extractContents();
+  fragment.querySelectorAll?.("*").forEach((node) => {
+    node.removeAttribute("style");
+    node.classList?.remove(...NOTEBOOK_SAFE_CLASSES);
+  });
+  const hasBlock = Boolean(fragment.querySelector?.("p, li, h1, h2, h3, h4, div, table"));
+  if (hasBlock) {
+    range.insertNode(fragment);
+  } else {
+    const clean = document.createElement("span");
+    clean.className = "note-clear-style";
+    clean.appendChild(fragment);
+    range.insertNode(clean);
+  }
   const selection = window.getSelection();
   selection.removeAllRanges();
-  const nextRange = document.createRange();
-  nextRange.setStartAfter(textNode);
-  nextRange.collapse(true);
-  selection.addRange(nextRange);
   els.notebookText.innerHTML = sanitizeNotebookHtml(els.notebookText.innerHTML);
+  notebookSavedRange = null;
   saveNotebookEditor();
+  rememberNotebookHistory();
 }
 
 function notebookSubjectGroups() {
@@ -5675,12 +5724,18 @@ document.querySelector(".notebook-toolbar")?.addEventListener("mousedown", (even
 document.querySelector(".notebook-toolbar")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-notebook-command]");
   const colorButton = event.target.closest("[data-notebook-class]");
-  if ((!button && !colorButton) || !notebookSelection.assunto) return;
+  const alignButton = event.target.closest("[data-notebook-align]");
+  if ((!button && !colorButton && !alignButton) || !notebookSelection.assunto) return;
   els.notebookText.focus();
   restoreNotebookSelection();
   if (colorButton) {
     applyNotebookClass(colorButton.dataset.notebookClass);
     colorButton.closest(".notebook-tool-menu")?.removeAttribute("open");
+    return;
+  }
+  if (alignButton) {
+    applyNotebookAlignment(alignButton.dataset.notebookAlign);
+    alignButton.closest(".notebook-tool-menu")?.removeAttribute("open");
     return;
   }
   const command = button.dataset.notebookCommand;
@@ -5692,7 +5747,6 @@ document.querySelector(".notebook-toolbar")?.addEventListener("click", (event) =
   rememberNotebookHistory();
   if (command === "bold") document.execCommand("bold");
   if (command === "italic") document.execCommand("italic");
-  if (command === "heading") document.execCommand("formatBlock", false, "h3");
   if (command === "bullet") document.execCommand("insertUnorderedList");
   if (command === "image") {
     insertNotebookImage();

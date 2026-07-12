@@ -3988,6 +3988,10 @@ details[open] > :not(summary),
   font-size: 15px;
 }
 
+.size-sample.small {
+  font-size: 11px;
+}
+
 .size-sample.xlarge {
   font-size: 17px;
 }
@@ -4055,6 +4059,10 @@ details[open] > :not(summary),
   font-size: 1em;
 }
 
+.notebook-rich-editor .note-size-small {
+  font-size: 0.86em;
+}
+
 .notebook-rich-editor .note-size-large {
   font-size: 1.16em;
 }
@@ -4067,6 +4075,28 @@ details[open] > :not(summary),
   border-radius: 5px;
   background: rgba(253, 230, 138, 0.65);
   padding: 0 0.16em;
+}
+
+.notebook-rich-editor .note-clear-style {
+  color: var(--text) !important;
+  background: transparent !important;
+  font-size: 14px !important;
+}
+
+.notebook-rich-editor .note-align-left {
+  text-align: left;
+}
+
+.notebook-rich-editor .note-align-center {
+  text-align: center;
+}
+
+.notebook-rich-editor .note-align-right {
+  text-align: right;
+}
+
+.notebook-rich-editor .note-align-justify {
+  text-align: justify;
 }
 
 .notebook-rich-editor::-webkit-scrollbar,
