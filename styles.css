@@ -4977,7 +4977,7 @@ details[open] > :not(summary),
 #notebookText.ql-container {
   border: 1px solid var(--border);
   border-radius: 0 0 var(--radius-control) var(--radius-control);
-  background: #FFFFFF;
+  background: var(--card);
   font-family: Inter, sans-serif;
   font-size: 14px;
   min-height: 340px;
@@ -5015,6 +5015,48 @@ details[open] > :not(summary),
   border-left: 3px solid var(--primary);
   padding-left: 12px;
   color: var(--muted);
+}
+
+/* O tema do Quill tambem acompanha o modo noite. */
+:root[data-theme="night"] #notebookText.ql-container,
+:root[data-theme="night"] #notebookText .ql-editor {
+  background: var(--card);
+  color: var(--text);
+}
+
+:root[data-theme="night"] #notebookToolbar.ql-toolbar .ql-picker,
+:root[data-theme="night"] #notebookToolbar.ql-toolbar .ql-picker-label,
+:root[data-theme="night"] #notebookToolbar.ql-toolbar button {
+  color: var(--muted);
+}
+
+:root[data-theme="night"] #notebookToolbar.ql-toolbar .ql-stroke {
+  stroke: var(--muted);
+}
+
+:root[data-theme="night"] #notebookToolbar.ql-toolbar .ql-fill {
+  fill: var(--muted);
+}
+
+:root[data-theme="night"] #notebookToolbar.ql-toolbar .ql-picker-options {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Preto e tons neutros salvos no modo claro precisam permanecer legiveis no escuro. */
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(0, 0, 0)"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color:#000000"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: #000000"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(17, 24, 39)"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(19, 26, 43)"] {
+  color: var(--text) !important;
+}
+
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(101, 113, 138)"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(102, 119, 125)"],
+:root[data-theme="night"] #notebookText .ql-editor [style*="color: rgb(107, 114, 128)"] {
+  color: var(--muted) !important;
 }
 
 /* Cor de destaque nos botões ativos da barra */
