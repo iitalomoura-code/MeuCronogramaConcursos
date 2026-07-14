@@ -5979,7 +5979,7 @@ els.planMenu?.addEventListener("click", (event) => {
 els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
 els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
 els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
-els.continuePanel?.addEventListener("click", (event) => {
+document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-focused]")) {
     closeFocusedStudy();
     return;
@@ -6096,14 +6096,14 @@ els.continuePanel?.addEventListener("click", (event) => {
     switchTab("pesos");
   }
 });
-els.continuePanel?.addEventListener("input", (event) => {
+document.addEventListener("input", (event) => {
   const field = event.target.closest("[data-focused-field]");
   if (!field || focusedStudyIndex < 0) return;
   const draft = focusedDraftFor(focusedStudyIndex);
   if (field.type === "checkbox") draft[field.dataset.focusedField] = field.checked;
   else draft[field.dataset.focusedField] = field.value;
 });
-els.continuePanel?.addEventListener("change", (event) => {
+document.addEventListener("change", (event) => {
   const field = event.target.closest("[data-focused-field]");
   if (!field || focusedStudyIndex < 0) return;
   const draft = focusedDraftFor(focusedStudyIndex);
