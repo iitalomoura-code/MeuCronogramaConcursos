@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260713-quill-modo-noite" />
+    <link rel="stylesheet" href="./styles.css?v=20260714-conteudo-local" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -156,13 +156,13 @@
         <section class="tab-panel" id="tab-conteudo">
           <div class="panel-heading">
             <div>
-              <h2>Adicionar edital</h2>
-              <p>Envie o edital em PDF ou Word. O sistema identifica as mat&eacute;rias, organiza os assuntos e mostra uma pr&eacute;via antes de confirmar.</p>
+              <h2>Adicionar conte&uacute;do program&aacute;tico</h2>
+              <p>Selecione um arquivo ou cole a parte de conhecimentos do edital. Revise o texto extra&iacute;do e organize as mat&eacute;rias e os temas antes de confirmar.</p>
             </div>
           </div>
 
-          <div class="content-flow-steps" aria-label="Etapas da leitura do edital">
-            <span data-content-step="1" class="is-active"><strong>1</strong> Enviar edital</span>
+          <div class="content-flow-steps" aria-label="Etapas do conte&uacute;do program&aacute;tico">
+            <span data-content-step="1" class="is-active"><strong>1</strong> Adicionar conte&uacute;do</span>
             <span data-content-step="2"><strong>2</strong> Conferir mat&eacute;rias</span>
             <span data-content-step="3"><strong>3</strong> Confirmar conte&uacute;do</span>
           </div>
@@ -171,24 +171,22 @@
             <div class="import-card-header">
               <div>
                 <span class="step-label">Passo 1</span>
-                <h3>Envie o edital</h3>
-                <p>Importe o arquivo completo ou cole somente a parte de conhecimentos/conte&uacute;do program&aacute;tico.</p>
+                <h3>Selecione o conte&uacute;do program&aacute;tico</h3>
+                <p>Escolha um arquivo ou cole somente a parte de conhecimentos que deseja organizar.</p>
               </div>
               <div class="import-actions">
-                <button id="assistedImportButton" class="primary-button" type="button"><i data-lucide="file-search"></i><span>Importar edital</span></button>
                 <button id="processButton" class="primary-button" type="button"><i data-lucide="sparkles"></i><span>Organizar conte&uacute;do</span></button>
               </div>
             </div>
             <div class="import-choice-grid">
               <div class="import-choice-card">
                 <div>
-                  <strong>Arquivo do edital</strong>
-                  <span>PDF ou Word com o conte&uacute;do do concurso.</span>
+                  <strong>Arquivo do conte&uacute;do</strong>
+                  <span>PDF, Word ou TXT com a parte program&aacute;tica do concurso.</span>
                 </div>
                 <div class="import-box">
-                  <label class="file-button" for="fileInput"><i data-lucide="file-up"></i><span>Usar organiza&ccedil;&atilde;o local</span></label>
+                  <label class="file-button" for="fileInput"><i data-lucide="file-up"></i><span>Selecionar arquivo</span></label>
                   <input id="fileInput" type="file" accept=".txt,.docx,.pdf,text/plain,application/pdf" />
-                  <input id="assistedFileInput" type="file" accept=".txt,.docx,.pdf,text/plain,application/pdf" />
                   <span id="fileName" class="file-name">Nenhum arquivo selecionado</span>
                   <button id="clearButton" class="ghost-button compact-button" type="button"><i data-lucide="x"></i><span>Limpar</span></button>
                 </div>
@@ -206,11 +204,11 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
                 </details>
               </div>
             </div>
-            <details class="manual-content-panel advanced-content-options">
-              <summary>Op&ccedil;&otilde;es avan&ccedil;adas</summary>
+            <details class="manual-content-panel advanced-content-options" open>
+              <summary>Texto extra&iacute;do ou colado</summary>
               <div class="manual-content-intro">
-                <strong>Colar conte&uacute;do manualmente</strong>
-                <span>Use esta op&ccedil;&atilde;o se preferir inserir o trecho do edital sem importar arquivo.</span>
+                <strong>Revise o texto antes de organizar</strong>
+                <span>O arquivo selecionado aparece aqui. Voc&ecirc; tamb&eacute;m pode colar ou corrigir o trecho manualmente.</span>
               </div>
               <textarea id="programText" spellcheck="true" placeholder="Portugu&ecirc;s&#10;Interpreta&ccedil;&atilde;o de texto; coes&atilde;o; coer&ecirc;ncia.&#10;&#10;Direito Administrativo&#10;Princ&iacute;pios; atos administrativos; licita&ccedil;&otilde;es."></textarea>
             </details>
@@ -525,29 +523,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./js/edital-importer/document-importer.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/text-normalizer.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/pdf-extractor.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/docx-extractor.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/layout-analyzer.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/cargo-detector.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/content-detector.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/subject-parser.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/confidence-calculator.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/content-resolver.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-importer/import-validator.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/generic.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/fgv.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/fcc.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/cebraspe.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/vunesp.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/aocp.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/ibfc.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-profiles/cesgranrio.js?v=20260711-edital-assistido"></script>
-    <script src="./js/edital-import-ui.js?v=20260711-edital-assistido"></script>
     <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260712-quill-colagem"></script>
+    <script src="./app.js?v=20260714-conteudo-local"></script>
   </body>
 </html>
 

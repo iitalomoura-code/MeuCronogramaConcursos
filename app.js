@@ -86,6 +86,7 @@ let showPendingOnly = false;
 let continueSuggestionOffset = 0;
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
+let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
 const DATA_FILE_STORE = "handles";
@@ -121,9 +122,7 @@ const els = {
   goContentButton: document.querySelector("#goContentButton"),
   programText: document.querySelector("#programText"),
   fileInput: document.querySelector("#fileInput"),
-  assistedFileInput: document.querySelector("#assistedFileInput"),
   fileName: document.querySelector("#fileName"),
-  assistedImportButton: document.querySelector("#assistedImportButton"),
   processButton: document.querySelector("#processButton"),
   clearButton: document.querySelector("#clearButton"),
   contentSummary: document.querySelector("#contentSummary"),
@@ -334,28 +333,6 @@ function hierarchicalTopics(lines) {
     }
     return rest.length ? `${title}: ${rest.join("; ")}` : title;
   }).filter(Boolean);
-}
-
-function sentenceAwareParts(text) {
-  return cleanText(text)
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+/)
-    .map((item) => normalizeTopic(stripEnumerator(item)))
-    .filter(Boolean);
-}
-
-function splitTopics(text) {
-  if (text.includes("\n")) {
-    return text.split(/\n+/).map((item) => parseThemeLine(item) || normalizeTopic(stripEnumerator(item))).filter(Boolean);
-  }
-  const themeLine = parseThemeLine(text);
-  if (themeLine) return [themeLine];
-  return sentenceAwareParts(text).flatMap((sentence) => {
-    const parsedTheme = parseThemeLine(sentence);
-    if (parsedTheme) return [parsedTheme];
-    if (sentence.includes(":")) return [sentence];
-    return sentence.split(/\s*;\s*|\n+/).map((item) => normalizeTopic(stripEnumerator(item))).filter(Boolean);
-  });
 }
 
 function wordCount(value) {
@@ -624,11 +601,16 @@ function uppercaseRatio(value) {
   return uppercase.length / letters.length;
 }
 
+function isGenericProgramLabel(value) {
+  const normalized = normalizeForMatch(stripEnumerator(String(value || "").replace(/[:;.]+$/, "").trim()));
+  return /^(assunto|tema|conteudo|programa)(\s+\d+)?$/.test(normalized);
+}
+
 function isExplicitSubjectText(value) {
   const clean = stripEnumerator(value).replace(/[:;.]$/, "").trim();
-  if (!clean || clean.includes(";")) return false;
+  if (!clean || clean.includes(";") || isGenericProgramLabel(clean)) return false;
   const words = clean.split(/\s+/).filter(Boolean);
-  return words.length <= 14 && uppercaseRatio(clean) > 0.72;
+  return words.length <= 10 && uppercaseRatio(clean) > 0.72;
 }
 
 function isIgnoredProgramModule(line) {
@@ -636,169 +618,133 @@ function isIgnoredProgramModule(line) {
   return /^(modulo|modulo\s+[ivxlcdm]+|conhecimentos gerais|conhecimentos especificos|conhecimentos basicos|prova objetiva|conteudo programatico|programa|anexo|parte\s+[ivxlcdm]+|grupo\s+\d+)$/i.test(normalized);
 }
 
-function looksLikeSubjectLine(line) {
-  const clean = stripEnumerator(line).replace(/[:;.]$/, "").trim();
-  if (!clean || clean.includes(";") || clean.includes(":")) return false;
-  if (isIgnoredProgramModule(clean)) return false;
-  const words = clean.split(/\s+/).filter(Boolean);
-  if (words.length > 14) return false;
+function splitInlineSubject(line) {
+  const clean = stripEnumerator(line).trim();
+  const match = clean.match(/^(?:mat[ée]ria|disciplina)\s*:\s*(.+)$/i);
+  if (!match) return null;
+  const subject = normalizeTopic(match[1]);
+  return subject && !isGenericProgramLabel(subject) ? { subject } : null;
+}
 
+function splitNamedThemeLine(line) {
+  const clean = stripEnumerator(line).trim();
+  const colonIndex = clean.indexOf(":");
+  if (colonIndex < 3 || colonIndex > 100) return null;
+  const title = normalizeTopic(clean.slice(0, colonIndex));
+  const contents = normalizeTopic(clean.slice(colonIndex + 1));
+  if (!contents) return null;
+  return { title, contents };
+}
+
+function looksLikeSubjectLine(line, hasOpenSubject = false) {
+  const clean = stripEnumerator(line).replace(/[:;.]$/, "").trim();
+  if (!clean || clean.includes(";") || clean.includes(":") || hasOpenSubject) return false;
+  if (isIgnoredProgramModule(clean) || isGenericProgramLabel(clean)) return false;
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length > 10) return false;
   const normalized = normalizeForMatch(clean);
   const knownSubject =
     /\b(portugues|lingua portuguesa|direito|administracao|constitucional|administrativo|controle externo|contabilidade|matematica|raciocinio|informatica|tecnologia|tecnologia da informacao|legislacao|etica|auditoria|orcamento|financas|economia|estatistica|governanca|licitacoes|contratos|discursiva|recursos|logistica)\b/.test(normalized);
-
-  return knownSubject || isExplicitSubjectText(clean);
-}
-
-function splitInlineSubject(line) {
-  const clean = stripEnumerator(line).trim();
-  const colonIndex = clean.indexOf(":");
-  if (colonIndex < 3 || colonIndex > 55) return null;
-
-  const subject = clean.slice(0, colonIndex).replace(/[:;.]$/, "").trim();
-  const topic = clean.slice(colonIndex + 1).trim();
-  if (!subject || !topic) return null;
-  if (subject.split(/\s+/).length > 8) return null;
-  return { subject, topic };
+  return knownSubject && (isExplicitSubjectText(clean) || words.length <= 5);
 }
 
 function tidyProgramLine(value) {
-  const raw = String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (parseNumberedLine(raw)) return raw;
-  const cleaned = stripEnumerator(raw)
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
     .replace(/\s+([:;,.])/g, "$1")
     .replace(/([:;,.])(?=\S)/g, "$1 ")
     .trim();
-  return parseThemeLine(cleaned) || cleaned;
 }
 
 function formatImportedProgramText(rawText) {
-  const lines = cleanText(rawText)
-    .replace(/\r\n/g, "\n")
+  return String(rawText || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
     .split("\n")
     .map(tidyProgramLine)
-    .filter(Boolean);
-  if (!lines.length) return "";
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
-  const sections = [];
-  let currentSubject = "";
-  let topicBuffer = [];
-
-  const flushSection = () => {
-    if (!currentSubject && !topicBuffer.length) return;
-    const subject = (currentSubject || "Conte\u00fado program\u00e1tico").replace(/[:;.]$/, "").trim();
-    const groupedTopics = hasHierarchicalNumbering(topicBuffer)
-      ? topicBuffer.map(tidyProgramLine).filter(Boolean)
-      : chunkSequentialTopics(topicBuffer, { maxAtoms: 6, maxWords: 44 });
-    sections.push([
-      subject.toLocaleUpperCase("pt-BR"),
-      ...groupedTopics,
-    ].filter(Boolean).join("\n"));
-    topicBuffer = [];
-  };
-
-  lines.forEach((line) => {
-    const numbered = parseNumberedLine(line);
-    if (isIgnoredProgramModule(line)) return;
-
-    const inline = splitInlineSubject(line);
-    if (inline && isExplicitSubjectText(inline.subject)) {
-      flushSection();
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    if (!currentSubject && inline) {
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    if (!numbered && looksLikeSubjectLine(line)) {
-      flushSection();
-      currentSubject = line.replace(/[:;.]$/, "").trim();
-      return;
-    }
-
-    if (!currentSubject && inline) {
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    topicBuffer.push(line);
-  });
-
-  flushSection();
-  return sections.join("\n\n");
+function splitTopics(text) {
+  return String(text || "")
+    .split(/\n+/)
+    .flatMap((line) => {
+      const clean = normalizeTopic(stripEnumerator(line));
+      if (!clean) return [];
+      if (splitNamedThemeLine(clean)) return [clean];
+      return clean.split(/\s*;\s*/).map(normalizeTopic).filter(Boolean);
+    });
 }
 
 function parseProgramContent(rawText) {
-  const normalized = cleanText(rawText).replace(/\r\n/g, "\n");
-  if (!normalized) return [];
-
-  const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
-  const rows = [];
-  let currentSubject = "";
-  let topicBuffer = [];
-
-  const flushTopics = () => {
-    if (!currentSubject || !topicBuffer.length) return;
-    const topics = hasHierarchicalNumbering(topicBuffer) ? hierarchicalTopics(topicBuffer) : splitTopics(topicBuffer.join("\n"));
-    const start = rows.filter((row) => row.materia === currentSubject).length;
-    topics.forEach((assunto, index) => {
-      rows.push(enrichThemeRow({ materia: currentSubject, assunto, ordem: start + index + 1, estudar: "Sim", observacoes: "" }));
-    });
-    topicBuffer = [];
-  };
-
-  lines.forEach((line) => {
-    const numbered = parseNumberedLine(line);
-    const clean = numbered ? line : stripEnumerator(line);
-    if (!clean) return;
-    if (isIgnoredProgramModule(clean)) return;
-
-    const inline = splitInlineSubject(clean);
-    if (inline && isExplicitSubjectText(inline.subject)) {
-      flushTopics();
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    if (!currentSubject && inline) {
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    if (!numbered && looksLikeSubjectLine(clean)) {
-      flushTopics();
-      currentSubject = clean.replace(/[:;.]$/, "").trim();
-      return;
-    }
-
-    if (!currentSubject && inline) {
-      currentSubject = inline.subject;
-      topicBuffer.push(inline.topic);
-      return;
-    }
-
-    if (!currentSubject) {
-      currentSubject = "Conte\u00fado program\u00e1tico";
-    }
-    topicBuffer.push(clean);
-  });
-
-  flushTopics();
-
-  if (!rows.length && currentSubject) {
-    rows.push(enrichThemeRow({ materia: currentSubject, assunto: "", ordem: 1, estudar: "Sim", observacoes: "Inclua os assuntos desta mat\u00e9ria." }));
+  const normalized = formatImportedProgramText(rawText);
+  if (!normalized) {
+    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
+    return [];
   }
 
+  const rows = [];
+  const subjectNames = new Map();
+  const looseTopics = [];
+  let currentSubject = "";
+
+  const registerSubject = (subject) => {
+    currentSubject = normalizeTopic(subject);
+    if (!currentSubject) return;
+    subjectNames.set(normalizeForMatch(currentSubject), currentSubject);
+  };
+  const appendTopic = (materia, assunto, explicit = false) => {
+    const topic = normalizeTopic(assunto);
+    if (!topic || isGenericProgramLabel(topic)) return;
+    const order = rows.filter((row) => normalizeForMatch(row.materia || "") === normalizeForMatch(materia || "")).length + 1;
+    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit }));
+  };
+  const flushLooseTopics = () => {
+    if (!looseTopics.length) return;
+    const topics = splitTopics(looseTopics.splice(0).join("\n"));
+    topics.forEach((topic) => appendTopic(currentSubject, topic, false));
+  };
+
+  normalized.split("\n").map(tidyProgramLine).filter(Boolean).forEach((line) => {
+    if (isIgnoredProgramModule(line)) return;
+    const explicitSubject = splitInlineSubject(line);
+    if (explicitSubject) {
+      flushLooseTopics();
+      registerSubject(explicitSubject.subject);
+      return;
+    }
+
+    if (!currentSubject && looksLikeSubjectLine(line)) {
+      flushLooseTopics();
+      registerSubject(stripEnumerator(line).replace(/[:;.]$/, ""));
+      return;
+    }
+
+    const namedTheme = splitNamedThemeLine(line);
+    if (namedTheme) {
+      flushLooseTopics();
+      const topic = isGenericProgramLabel(namedTheme.title)
+        ? namedTheme.contents
+        : `${namedTheme.title}: ${namedTheme.contents}`;
+      appendTopic(currentSubject, topic, !isGenericProgramLabel(namedTheme.title));
+      return;
+    }
+
+    const loose = normalizeTopic(stripEnumerator(line));
+    if (loose && !isGenericProgramLabel(loose)) looseTopics.push(loose);
+  });
+
+  flushLooseTopics();
+  const subjectsWithTopics = new Set(rows.filter((row) => row.materia && row.assunto).map((row) => normalizeForMatch(row.materia)));
+  lastProgramParseMeta = {
+    subjects: [...subjectNames.values()],
+    subjectsWithoutTopics: [...subjectNames.entries()]
+      .filter(([key]) => !subjectsWithTopics.has(key))
+      .map(([, subject]) => subject),
+  };
   return rows;
 }
 
@@ -1021,6 +967,46 @@ function notifyContent(message, type = "success") {
   }, 3600);
 }
 
+function programParserWarnings(rows) {
+  const topics = rows.filter((row) => row?.assunto);
+  const subjects = [...new Set(topics.map((row) => row.materia).filter(Boolean))];
+  const warnings = [];
+  if (subjects.length > 30) warnings.push(`Foram encontradas ${subjects.length} matérias. Revise se títulos internos foram lidos como matéria.`);
+  const genericSubjects = subjects.filter(isGenericProgramLabel);
+  if (genericSubjects.length) warnings.push(`Revise as matérias genéricas: ${genericSubjects.join(", ")}.`);
+  const missingSubject = topics.filter((row) => !row.materia);
+  if (missingSubject.length) warnings.push(`${missingSubject.length} tema${missingSubject.length === 1 ? "" : "s"} ficou${missingSubject.length === 1 ? "" : "ram"} sem matéria.`);
+  if (lastProgramParseMeta.subjectsWithoutTopics.length) warnings.push(`Matéria${lastProgramParseMeta.subjectsWithoutTopics.length === 1 ? "" : "s"} sem tema: ${lastProgramParseMeta.subjectsWithoutTopics.join(", ")}.`);
+  const titles = topics.map((row) => normalizeForMatch(themeTitle(row.assunto))).filter(Boolean);
+  const repeated = titles.filter((title, index) => titles.indexOf(title) !== index).length;
+  if (titles.length && repeated / titles.length > 0.2) warnings.push("Mais de 20% dos temas têm nome repetido. Revise a divisão dos conteúdos.");
+  if (topics.length > 500 || (subjects.length && topics.length > subjects.length * 60)) warnings.push(`Foram encontrados ${topics.length} temas, uma quantidade incomum para esta importação.`);
+  return warnings;
+}
+
+function showContentParserWarnings(warnings) {
+  let panel = document.querySelector("#contentParserWarnings");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "contentParserWarnings";
+    panel.className = "content-parser-warnings";
+    els.contentSummary?.insertAdjacentElement("beforebegin", panel);
+  }
+  if (!panel) return;
+  panel.replaceChildren();
+  panel.hidden = !warnings.length;
+  if (!warnings.length) return;
+  const title = document.createElement("strong");
+  title.textContent = "Revise estes pontos antes de confirmar:";
+  const list = document.createElement("ul");
+  warnings.forEach((warning) => {
+    const item = document.createElement("li");
+    item.textContent = warning;
+    list.appendChild(item);
+  });
+  panel.append(title, list);
+}
+
 function updateContentFlowSteps() {
   const steps = [...document.querySelectorAll("[data-content-step]")];
   if (!steps.length) return;
@@ -1223,40 +1209,12 @@ function clearImportedContent() {
   els.fileInput.value = "";
   els.fileName.textContent = "Nenhum arquivo selecionado";
   state.rows = [];
+  lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
+  showContentParserWarnings([]);
   markUnconfirmed();
   renderRows();
   renderContentSummary();
-  notifyContent("Edital importado limpo.");
-}
-
-function importedTopicKey(row) {
-  return `${normalizeForMatch(row?.materia || "")}::${normalizeForMatch(row?.assunto || "")}`;
-}
-
-function applyAssistedImportRows(importedRows, context = {}) {
-  const incoming = (importedRows || [])
-    .filter((row) => row?.materia && row?.assunto)
-    .map((row) => enrichThemeRow({ ...row, estudar: row.estudar || "Sim" }));
-  const existing = context.mode === "replace" ? [] : state.rows.map((row) => enrichThemeRow({ ...row }));
-  const seen = new Set(existing.map(importedTopicKey));
-  const added = incoming.filter((row) => {
-    const key = importedTopicKey(row);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  if (!added.length) {
-    notifyContent("Nenhum tema novo foi adicionado. Itens iguais já estavam na prévia.", "warning");
-    return;
-  }
-
-  state.rows = [...existing, ...added].map((row, index) => enrichThemeRow({ ...row, ordem: Number(row.ordem) || index + 1 }));
-  els.fileName.textContent = context.fileName ? `${context.fileName} · revisão assistida` : "Edital revisado";
-  markUnconfirmed();
-  renderRows();
-  scheduleAutoSave();
-  notifyContent(`${added.length} tema${added.length === 1 ? "" : "s"} importado${added.length === 1 ? "" : "s"} para conferência. Confirme o conteúdo quando terminar a revisão.`);
+  notifyContent("Conteúdo programático limpo.");
 }
 
 function markUnconfirmed() {
@@ -1347,18 +1305,21 @@ function organizeRowsByTheme(rows) {
   subjects.forEach(({ materia, rows: subjectRows }) => {
     const studyRows = subjectRows.filter((row) => row.assunto && row.estudar !== "Nao");
     const otherRows = subjectRows.filter((row) => !row.assunto || row.estudar === "Nao");
-    const baseRow = studyRows[0] || subjectRows[0] || { materia, estudar: "Sim" };
-    const groupedTopics = groupTopicsByTheme(studyRows.map((row) => row.assunto), { status: "tight" }, { maxAtoms: 6, maxWords: 44, preserveOrder: true });
-
-    groupedTopics.forEach((assunto, index) => {
-      organized.push(enrichThemeRow({
-        materia,
-        assunto,
-        ordem: index + 1,
-        estudar: "Sim",
-        observacoes: "",
-      }));
-    });
+    const hasExplicitThemes = studyRows.some((row) => row.temaExplicito);
+    if (hasExplicitThemes) {
+      studyRows.forEach((row, index) => organized.push(enrichThemeRow({ ...row, ordem: index + 1 })));
+    } else {
+      const groupedTopics = groupTopicsByTheme(studyRows.map((row) => row.assunto), { status: "tight" }, { maxAtoms: 6, maxWords: 44, preserveOrder: true });
+      groupedTopics.forEach((assunto, index) => {
+        organized.push(enrichThemeRow({
+          materia,
+          assunto,
+          ordem: index + 1,
+          estudar: "Sim",
+          observacoes: "",
+        }));
+      });
+    }
 
     otherRows.forEach((row) => organized.push(enrichThemeRow({ ...row })));
   });
@@ -5344,19 +5305,6 @@ els.continuePanel?.addEventListener("click", (event) => {
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
 els.newPlanButton?.addEventListener("click", createNewPlan);
-if (window.EditalImportUI) {
-  window.EditalImportUI.configure({
-    hasExistingRows: () => state.rows.length > 0,
-    onConfirm: applyAssistedImportRows,
-  });
-}
-els.assistedImportButton?.addEventListener("click", () => els.assistedFileInput?.click());
-els.assistedFileInput?.addEventListener("change", async () => {
-  const file = els.assistedFileInput.files?.[0];
-  if (!file || !window.EditalImportUI) return;
-  await window.EditalImportUI.start(file);
-  els.assistedFileInput.value = "";
-});
 if (els.fileInput) els.fileInput.addEventListener("change", async () => {
   const file = els.fileInput.files[0];
   if (!file) return;
@@ -5379,9 +5327,12 @@ els.processButton.addEventListener("click", () => {
   }
   els.programText.value = text;
   addHistory("colagem manual", text);
-  state.rows = organizeRowsByTheme(parseProgramContent(text)).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  const parsedRows = parseProgramContent(text);
+  const warnings = programParserWarnings(parsedRows);
+  state.rows = organizeRowsByTheme(parsedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  showContentParserWarnings(warnings);
   renderRows();
-  notifyContent("Conte\u00fado organizado para confer\u00eancia.");
+  notifyContent(warnings.length ? "Conte\u00fado organizado. Revise os avisos antes de confirmar." : "Conte\u00fado organizado para confer\u00eancia.", warnings.length ? "warning" : "success");
 });
 
 if (els.clearButton) els.clearButton.addEventListener("click", clearImportedContent);
