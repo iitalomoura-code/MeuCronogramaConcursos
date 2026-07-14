@@ -821,6 +821,7 @@ function activateTab(tabName, activeButton = null) {
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
   if (tabName === "erros") renderErrors();
   if (tabName === "continuar") renderContinuePanel();
+  else removeFocusedStudyOverlay();
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator(document.querySelector(`[data-tab-target="${tabName}"]`));
     animatePanelNumbers(tabName);
@@ -3172,6 +3173,19 @@ function closeFocusedStudy(options = {}) {
   renderContinuePanel();
 }
 
+function removeFocusedStudyOverlay() {
+  document.querySelector(".focused-study-modal")?.remove();
+}
+
+function renderFocusedStudyOverlay() {
+  removeFocusedStudyOverlay();
+  if (focusedStudyIndex < 0 || !state.generatedBlocks[focusedStudyIndex] || !document.querySelector("#tab-continuar.active")) return;
+  const block = state.generatedBlocks[focusedStudyIndex];
+  document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex), explainStudySuggestion(block)));
+  if (window.lucide) window.lucide.createIcons();
+  document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
+}
+
 function focusedStudyMarkup(block, index, draft, suggestion) {
   const timer = focusedTimerSeconds();
   return `
@@ -3204,7 +3218,11 @@ function focusedStudyMarkup(block, index, draft, suggestion) {
         </div>
         <div class="focused-study-tools">
           <button class="ghost-button compact-button" type="button" data-open-notebook-focused><i data-lucide="notebook-pen"></i><span>Abrir caderno de resumos</span></button>
-          <label class="focused-check"><input type="checkbox" data-focused-field="pontosRevisar" ${draft.pontosRevisar ? "checked" : ""} /> Marcar pontos para revisar</label>
+          <label class="focused-review-toggle">
+            <input type="checkbox" data-focused-field="pontosRevisar" ${draft.pontosRevisar ? "checked" : ""} />
+            <span class="focused-review-toggle-box" aria-hidden="true"><i data-lucide="check"></i></span>
+            <span><strong>Ponto de atenção</strong><small>Registra este tema no resultado; não agenda revisão sozinho.</small></span>
+          </label>
         </div>
         <div class="focused-study-form">
           <div class="focused-study-form-grid">
@@ -3255,7 +3273,6 @@ function openFocusedStudy(index) {
   continueDetailsOpen = false;
   focusedStudyDraftFor(index);
   renderContinuePanel();
-  document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
   showToast("Estudo iniciado.");
 }
 
@@ -3319,6 +3336,7 @@ function saveFocusedStudy() {
 }
 
 function renderContinuePanel() {
+  removeFocusedStudyOverlay();
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -3390,9 +3408,9 @@ function renderContinuePanel() {
     <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
     <section class="continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Revisões disponíveis</span><h3>${reviews.length ? reviews.length + " para considerar agora" : "Nenhuma revisão pendente"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(item.intervalLabel || item.intervalKey) + " · " + escapeHtml(item.dataPrevista || "") + "</em><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
-    ${focusedStudyIndex >= 0 && state.generatedBlocks[focusedStudyIndex] ? focusedStudyMarkup(state.generatedBlocks[focusedStudyIndex], focusedStudyIndex, focusedDraftFor(focusedStudyIndex), suggestion) : ""}
   `;
   if (window.lucide) window.lucide.createIcons();
+  renderFocusedStudyOverlay();
 }
 
 function shortText(value, maxLength = 90) {
