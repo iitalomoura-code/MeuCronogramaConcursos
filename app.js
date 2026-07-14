@@ -87,6 +87,11 @@ let continueSuggestionOffset = 0;
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
 let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
+let contentSearchTerm = "";
+let contentFilter = "all";
+let contentUndoSnapshot = null;
+let contentSearchTimer = 0;
+let openSubjectKeys = new Set();
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
 const DATA_FILE_STORE = "handles";
@@ -132,6 +137,16 @@ const els = {
   rowTemplate: document.querySelector("#rowTemplate"),
   selectAll: document.querySelector("#selectAll"),
   selectAllTopicsButton: document.querySelector("#selectAllTopicsButton"),
+  expandAllSubjectsButton: document.querySelector("#expandAllSubjectsButton"),
+  collapseAllSubjectsButton: document.querySelector("#collapseAllSubjectsButton"),
+  contentSearch: document.querySelector("#contentSearch"),
+  clearContentSearch: document.querySelector("#clearContentSearch"),
+  contentProblemSummary: document.querySelector("#contentProblemSummary"),
+  contentProblemsModal: document.querySelector("#contentProblemsModal"),
+  contentMatterCount: document.querySelector("#contentMatterCount"),
+  contentThemeCount: document.querySelector("#contentThemeCount"),
+  contentSelectedCount: document.querySelector("#contentSelectedCount"),
+  contentProblemCount: document.querySelector("#contentProblemCount"),
   organizeThemesButton: document.querySelector("#organizeThemesButton"),
   addRowButton: document.querySelector("#addRowButton"),
   splitButton: document.querySelector("#splitButton"),
@@ -875,7 +890,20 @@ function rowFromInputs(container) {
 
 function syncRowsFromTable() {
   const items = [...els.topicsBody.querySelectorAll(".topic-item")];
-  state.rows = (items.length ? items : [...els.topicsBody.querySelectorAll("tr")]).map(rowFromInputs);
+  if (items.length) {
+    const nextRows = [...state.rows];
+    items.forEach((item) => {
+      const index = Number(item.dataset.rowIndex);
+      if (!Number.isInteger(index) || !state.rows[index]) return;
+      const next = rowFromInputs(item);
+      next.editadoManualmente = item.dataset.manual === "true" || state.rows[index].editadoManualmente === true;
+      nextRows[index] = next;
+    });
+    state.rows = nextRows.filter(Boolean);
+    return;
+  }
+  const legacyRows = [...els.topicsBody.querySelectorAll("tr")];
+  if (legacyRows.length) state.rows = legacyRows.map(rowFromInputs);
 }
 
 function subjectGroups(rows = state.rows) {
@@ -889,18 +917,110 @@ function subjectGroups(rows = state.rows) {
   return [...groups.values()];
 }
 
+function highlightContentText(value, term = contentSearchTerm) {
+  const text = String(value || "");
+  const needle = normalizeForMatch(String(term || "").trim());
+  if (!needle) return escapeHtml(text);
+  const normalizedParts = [];
+  const originalIndexes = [];
+  [...text].forEach((character, index) => {
+    [...normalizeForMatch(character)].forEach((part) => {
+      normalizedParts.push(part);
+      originalIndexes.push(index);
+    });
+  });
+  const start = normalizedParts.join("").indexOf(needle);
+  if (start < 0) return escapeHtml(text);
+  const end = start + needle.length - 1;
+  const originalStart = originalIndexes[start];
+  const originalEnd = originalIndexes[end] + 1;
+  return escapeHtml(text.slice(0, originalStart)) + "<mark>" + escapeHtml(text.slice(originalStart, originalEnd)) + "</mark>" + escapeHtml(text.slice(originalEnd));
+}
+
+function contentProblemAnalysis(rows = state.rows) {
+  const problems = [];
+  subjectGroups(rows).forEach((group) => {
+    const titles = group.rows.map((row) => normalizeForMatch(themeTitle(row.assunto || "")).trim()).filter(Boolean);
+    const titleCounts = titles.reduce((counts, title) => counts.set(title, (counts.get(title) || 0) + 1), new Map());
+    const repeatedCount = titles.filter((title) => (titleCounts.get(title) || 0) > 1).length;
+    group.rows.forEach((row) => {
+      const title = themeTitle(row.assunto || "").trim();
+      const details = themeDetails(row.assunto || "").trim();
+      const reasons = [];
+      const normalizedTitle = normalizeForMatch(title);
+      const normalizedSubject = normalizeForMatch(row.materia || "");
+      if (!title) reasons.push("tema sem nome");
+      if (!row.materia || normalizeForMatch(row.materia) === "sem materia") reasons.push("matéria não identificada");
+      if (["assunto", "tema", "conteudo"].includes(normalizedTitle)) reasons.push("nome genérico");
+      if (title && normalizedSubject && normalizedTitle === normalizedSubject) reasons.push("tema com o mesmo nome da matéria");
+      if (title && (titleCounts.get(normalizeForMatch(title)) || 0) > 1) reasons.push("tema repetido nesta matéria");
+      if (wordCount(details) > 44 || topicAtoms(details).length > 7) reasons.push("conteúdo extenso");
+      if (reasons.length) problems.push({ row, rowIndex: rows.indexOf(row), subject: group.materia, title, reasons });
+    });
+    if (group.rows.length === 1 && wordCount(themeDetails(group.rows[0].assunto || "")) > 44) {
+      const item = problems.find((problem) => problem.row === group.rows[0]);
+      const reason = "matéria com um único tema extenso";
+      if (item) item.reasons.push(reason);
+      else problems.push({ row: group.rows[0], rowIndex: rows.indexOf(group.rows[0]), subject: group.materia, title: themeTitle(group.rows[0].assunto), reasons: [reason] });
+    }
+    if (titles.length && repeatedCount / titles.length > 0.2) {
+      group.rows.forEach((row) => {
+        const item = problems.find((problem) => problem.row === row);
+        const reason = "mais de 20% dos temas têm nome repetido";
+        if (item && !item.reasons.includes(reason)) item.reasons.push(reason);
+        else if (!item) problems.push({ row, rowIndex: rows.indexOf(row), subject: group.materia, title: themeTitle(row.assunto), reasons: [reason] });
+      });
+    }
+  });
+  return problems;
+}
+
+function contentRowMatches(row, rowIndex, group, problemIndexes) {
+  const term = normalizeForMatch(contentSearchTerm.trim());
+  const matchesSearch = !term || [group.materia, themeTitle(row.assunto), themeDetails(row.assunto)]
+    .some((value) => normalizeForMatch(value || "").includes(term));
+  if (!matchesSearch) return false;
+  if (contentFilter === "selected" && row.estudar === "Nao") return false;
+  if (contentFilter === "unselected" && row.estudar !== "Nao") return false;
+  if (contentFilter === "edited" && row.editadoManualmente !== true) return false;
+  if (contentFilter === "problems" && !problemIndexes.has(rowIndex)) return false;
+  return true;
+}
+
+function visibleContentGroups() {
+  const problemIndexes = new Set(contentProblemAnalysis().map((problem) => problem.rowIndex));
+  return subjectGroups().map((group) => {
+    const subjectMatches = contentSearchTerm.trim() && normalizeForMatch(group.materia).includes(normalizeForMatch(contentSearchTerm.trim()));
+    const rows = group.rows.filter((row) => subjectMatches && contentSearchTerm.trim()
+      ? (contentFilter === "all" || contentRowMatches(row, state.rows.indexOf(row), group, problemIndexes))
+      : contentRowMatches(row, state.rows.indexOf(row), group, problemIndexes));
+    return { ...group, rows, problemIndexes };
+  }).filter((group) => group.rows.length);
+}
+
 function renderContentSummary() {
   if (!els.contentSummary) return;
   const total = state.rows.filter((row) => row.assunto).length;
-  const includedSubjects = state.rows.reduce((sum, row) => sum + topicAtoms(themeDetails(row.assunto)).length, 0);
-  const study = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
-  const ignored = state.rows.filter((row) => row.assunto && row.estudar === "Nao").length;
+  const contentItems = state.rows.reduce((sum, row) => sum + topicAtoms(themeDetails(row.assunto)).length, 0);
+  const selected = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
+  const problems = contentProblemAnalysis();
   els.contentSummary.innerHTML = state.rows.length ? summaryItems([
-    ["Mat\u00e9rias encontradas", subjectGroups().length],
-    ["Temas criados", total],
-    ["Assuntos inclu\u00eddos", includedSubjects],
-    ["Temas ignorados", ignored],
+    ["Mat\u00e9rias", subjectGroups().length],
+    ["Temas", total],
+    ["Itens identificados", contentItems],
+    ["Pontos para revisar", problems.length],
   ]) : "";
+  if (els.contentMatterCount) els.contentMatterCount.textContent = subjectGroups().length;
+  if (els.contentThemeCount) els.contentThemeCount.textContent = total;
+  if (els.contentSelectedCount) els.contentSelectedCount.textContent = selected;
+  if (els.contentProblemCount) els.contentProblemCount.textContent = problems.length;
+  if (els.contentProblemSummary) {
+    els.contentProblemSummary.hidden = !problems.length;
+    els.contentProblemSummary.innerHTML = problems.length
+      ? "<i data-lucide=\"triangle-alert\"></i><strong>" + problems.length + " ponto" + (problems.length === 1 ? "" : "s") + " para revisar</strong><button class=\"text-action\" type=\"button\" data-show-content-problems>Revisar problemas</button>"
+      : "";
+  }
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function updateSubjectStudyCounts() {
@@ -958,12 +1078,17 @@ function notifyContent(message, type = "success") {
     alert(message);
     return;
   }
-  feedback.textContent = message;
-  feedback.className = `content-feedback ${type}`;
+  if (contentUndoSnapshot && type === "success") {
+    feedback.innerHTML = "<span>" + escapeHtml(message) + "</span><button class=\"text-action\" type=\"button\" data-undo-content>Desfazer</button>";
+  } else {
+    feedback.textContent = message;
+  }
+  feedback.className = "content-feedback " + type;
   feedback.hidden = false;
   clearTimeout(notifyContent.timer);
   notifyContent.timer = setTimeout(() => {
     feedback.hidden = true;
+    contentUndoSnapshot = null;
   }, 3600);
 }
 
@@ -1082,7 +1207,7 @@ function topicFeedbackBadge(row) {
   return `<span class="topic-result-badge">${label}</span>`;
 }
 
-function renderRows() {
+function renderRowsLegacy() {
   els.topicsBody.innerHTML = "";
   subjectGroups().forEach((group, groupIndex) => {
     const subjectRows = group.rows.map(enrichThemeRow);
@@ -1204,6 +1329,164 @@ function renderRows() {
   markUnconfirmed();
 }
 
+function renderRows(options = {}) {
+  const allGroups = subjectGroups();
+  const visibleGroups = visibleContentGroups();
+  const problems = contentProblemAnalysis();
+  const problemByIndex = new Map(problems.map((problem) => [problem.rowIndex, problem]));
+  if (!openSubjectKeys.size && allGroups.length) openSubjectKeys.add(normalizeForMatch(allGroups[0].materia));
+  if (contentSearchTerm.trim()) {
+    visibleGroups.forEach((group) => openSubjectKeys.add(normalizeForMatch(group.materia)));
+  }
+
+  els.topicsBody.replaceChildren();
+  if (visibleGroups.length) {
+    const fragment = document.createDocumentFragment();
+    visibleGroups.forEach((group, groupIndex) => {
+      const subjectRows = group.rows.map((raw) => ({ raw, row: enrichThemeRow(raw) }));
+      const fullSubject = allGroups.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(group.materia)) || group;
+      const studyCount = fullSubject.rows.filter((row) => row.estudar !== "Nao").length;
+      const contentCount = fullSubject.rows.reduce((sum, row) => sum + Math.max(1, topicAtoms(themeDetails(row.assunto)).length), 0);
+      const key = normalizeForMatch(group.materia);
+      const details = document.createElement("details");
+      details.className = "subject-group";
+      details.open = openSubjectKeys.has(key);
+      details.dataset.subjectIndex = String(groupIndex);
+      details.dataset.subjectName = group.materia;
+      details.dataset.subjectKey = key;
+      details.innerHTML = `
+        <summary class="subject-group-header">
+          <div class="subject-heading">
+            <strong>${highlightContentText(group.materia)}</strong>
+            <span class="subject-study-count">${fullSubject.rows.length} tema${fullSubject.rows.length === 1 ? "" : "s"} &middot; ${contentCount} itens de conte\u00fado &middot; ${studyCount} selecionado${studyCount === 1 ? "" : "s"}</span>
+          </div>
+          <div class="subject-group-actions">
+            <div class="merge-action-group">
+              <button class="ghost-button compact-button" type="button" data-merge-selected disabled>Juntar temas</button>
+              <span data-merge-hint>Use o menu dos temas para selecionar o que deseja juntar</span>
+            </div>
+            <details class="more-actions subject-more">
+              <summary aria-label="A\u00e7\u00f5es da mat\u00e9ria"><i data-lucide="more-horizontal"></i></summary>
+              <div class="more-menu">
+                <button class="more-menu-item" type="button" data-edit-subject="${escapeHtml(group.materia)}">Renomear mat\u00e9ria</button>
+                <button class="more-menu-item" type="button" data-select-subject>Selecionar todos os temas</button>
+                <button class="more-menu-item" type="button" data-deselect-subject>Desmarcar todos os temas</button>
+                <button class="more-menu-item" type="button" data-add-subject-topic>Adicionar tema</button>
+                <button class="more-menu-item" type="button" data-merge-subject>Unir com outra mat\u00e9ria</button>
+                <button class="more-menu-item danger" type="button" data-delete-subject>Excluir mat\u00e9ria</button>
+              </div>
+            </details>
+            <span class="chevron" aria-hidden="true">&#8964;</span>
+          </div>
+        </summary>
+        <div class="topic-list"></div>
+      `;
+      const topicList = details.querySelector(".topic-list");
+      subjectRows.forEach(({ raw, row }) => {
+        const actualIndex = state.rows.indexOf(raw);
+        const problem = problemByIndex.get(actualIndex);
+        const feedbackClass = topicFeedbackClass(row);
+        const splitSuggestion = topicSplitSuggestion(row);
+        const article = document.createElement("article");
+        article.className = "topic-item theme-card" + feedbackClass + (problem ? " has-content-problem" : "");
+        article.dataset.rowIndex = String(actualIndex);
+        article.dataset.manual = row.editadoManualmente === true ? "true" : "false";
+        if (row.origemEdital) article.dataset.editalOrigin = escapeHtml(encodeURIComponent(JSON.stringify(row.origemEdital)));
+        article.innerHTML = `
+          <input data-field="materia" type="hidden" value="${escapeHtml(group.materia)}" />
+          <label class="topic-study-check" title="Incluir este tema no ciclo">
+            <input class="row-check" data-field="estudar" type="checkbox" ${row.estudar === "Nao" ? "" : "checked"} aria-label="Incluir tema no ciclo" />
+          </label>
+          <input class="topic-order" data-field="ordem" type="number" min="1" value="${Number(row.ordem) || 1}" aria-label="Ordem do tema" />
+          <div class="theme-card-main">
+            <div class="theme-card-heading">
+              <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
+              <div class="theme-card-badges">
+                ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
+                ${problem ? '<span class="content-badge problem" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> Revisar</span>' : ""}
+                ${topicFeedbackBadge(row)}
+              </div>
+            </div>
+            <p class="theme-details-text">${highlightContentText(shortText(themeDetails(row.assunto || ""), 220))}</p>
+            <div class="theme-meta">
+              <span>${escapeHtml(row.tamanhoEstimado || estimateThemeSize(row.assunto))}</span>
+              <span>${Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto)} bloco${Number(row.blocosSugeridos) === 1 ? "" : "s"}</span>
+              <span>Dificuldade ${escapeHtml(row.dificuldadeEstimada || estimateThemeDifficulty(row.assunto))}</span>
+            </div>
+          </div>
+          <details class="topic-actions-menu">
+            <summary aria-label="A\u00e7\u00f5es do tema">...</summary>
+            <div>
+              <button class="text-action" type="button" data-toggle-merge-select>Selecionar para juntar</button>
+              <button class="text-action" type="button" data-toggle-observation>Editar tema</button>
+              <button class="text-action" type="button" data-split-topic>Dividir tema</button>
+              <button class="text-action" type="button" data-move-topic>Mover para outra mat\u00e9ria</button>
+              <button class="text-action" type="button" data-promote-topic>Transformar em nova mat\u00e9ria</button>
+              <button class="text-action" type="button" data-duplicate-topic>Duplicar tema</button>
+              <button class="text-action danger" type="button" data-delete-topic>Excluir tema</button>
+            </div>
+          </details>
+          <div class="topic-observation theme-edit-panel" hidden>
+            <div class="theme-edit-fields">
+              <label>Nome do tema
+                <input class="topic-title-input theme-name-input" data-theme-title value="${escapeHtml(themeTitle(row.assunto || ""))}" aria-label="Nome do tema" />
+              </label>
+              <label>Conte\u00fado do tema
+                <textarea data-theme-details placeholder="Assuntos inclu\u00eddos neste tema">${escapeHtml(themeDetails(row.assunto || ""))}</textarea>
+              </label>
+              <label class="theme-notes-field">Observa\u00e7\u00f5es
+                <textarea data-field="observacoes" placeholder="Observa\u00e7\u00f5es sobre este tema">${escapeHtml(row.observacoes || "")}</textarea>
+              </label>
+            </div>
+            <div class="theme-edit-actions">
+              <button class="ghost-button compact-button" type="button" data-cancel-topic-edit>Cancelar</button>
+              <button class="primary-button compact-button" type="button" data-save-topic-edit>Salvar altera\u00e7\u00f5es</button>
+            </div>
+          </div>
+          <div class="topic-split-panel" hidden>
+            <div class="split-panel-header">
+              <div>
+                <strong>Separar este tema</strong>
+                <p>Revise a sugest\u00e3o abaixo. Cada linha confirmada vira um novo tema independente.</p>
+              </div>
+              <span data-split-preview>${escapeHtml(splitPreviewText(splitSuggestion))}</span>
+            </div>
+            <textarea data-split-input placeholder="Tema 1: Atos administrativos e requisitos&#10;Tema 2: Poderes administrativos e abuso de poder">${escapeHtml(splitSuggestion)}</textarea>
+            <div class="split-panel-actions">
+              <button class="ghost-button compact-button" type="button" data-cancel-split>Cancelar</button>
+              <button class="primary-button compact-button" type="button" data-confirm-split>Confirmar separa\u00e7\u00e3o</button>
+            </div>
+          </div>
+        `;
+        topicList.appendChild(article);
+      });
+      details.addEventListener("toggle", () => {
+        if (details.open) openSubjectKeys.add(key);
+        else openSubjectKeys.delete(key);
+      });
+      fragment.appendChild(details);
+      updateMergeSelectionState(details);
+    });
+    els.topicsBody.appendChild(fragment);
+  } else if (state.rows.length) {
+    const noResults = document.createElement("div");
+    noResults.className = "content-no-results";
+    noResults.innerHTML = "<i data-lucide=\"search-x\"></i><strong>Nenhum resultado encontrado</strong><span>Ajuste a pesquisa ou remova o filtro para revisar o conteúdo.</span>";
+    els.topicsBody.appendChild(noResults);
+  }
+
+  const hasRows = state.rows.length > 0;
+  els.emptyState.hidden = hasRows;
+  els.topicsBody.hidden = !hasRows;
+  els.topicsBody.closest(".content-organizer-card")?.toggleAttribute("hidden", !hasRows);
+  updateSelectAllControl();
+  renderContentSummary();
+  updateContentFlowSteps();
+  if (window.lucide) window.lucide.createIcons();
+  if (isRestoring || options.preserveState) return;
+  markUnconfirmed();
+}
+
 function clearImportedContent() {
   els.programText.value = "";
   els.fileInput.value = "";
@@ -1232,7 +1515,27 @@ function markUnconfirmed() {
 function selectedRows() {
   const active = document.activeElement?.closest?.(".topic-item");
   if (active) return [active];
-  return [...els.topicsBody.querySelectorAll("tr")].filter((tr) => tr.querySelector(".row-check")?.checked);
+  return [...els.topicsBody.querySelectorAll(".topic-item, tr")].filter((item) => item.querySelector(".row-check")?.checked);
+}
+
+function rememberContentUndo(message) {
+  contentUndoSnapshot = JSON.parse(JSON.stringify(state.rows));
+  const feedback = contentFeedbackElement();
+  feedback.innerHTML = "<span>" + escapeHtml(message) + "</span><button class=\"text-action\" type=\"button\" data-undo-content>Desfazer</button>";
+  feedback.className = "content-feedback success";
+  feedback.hidden = false;
+  clearTimeout(notifyContent.timer);
+  notifyContent.timer = setTimeout(() => {
+    feedback.hidden = true;
+  }, 5200);
+}
+
+function restoreContentUndo() {
+  if (!contentUndoSnapshot) return;
+  state.rows = JSON.parse(JSON.stringify(contentUndoSnapshot));
+  contentUndoSnapshot = null;
+  renderRows();
+  notifyContent("A última alteração foi desfeita.");
 }
 
 function renumberRows(options = {}) {
@@ -1253,9 +1556,8 @@ function mergeSelectedTopicItems(items) {
   }
 
   syncRowsFromTable();
-  const allItems = [...els.topicsBody.querySelectorAll(".topic-item")];
   const selectedIndexes = items
-    .map((item) => allItems.indexOf(item))
+    .map((item) => Number(item.dataset.rowIndex))
     .filter((index) => index >= 0)
     .sort((a, b) => a - b);
   const selectedRowsForMerge = selectedIndexes.map((index) => state.rows[index]).filter(Boolean);
@@ -1280,6 +1582,7 @@ function mergeSelectedTopicItems(items) {
     assunto: mergedDetails ? `${mergedTitle}: ${mergedDetails}` : mergedTitle,
     observacoes: notes.join("\n"),
   });
+  rememberContentUndo("Temas juntados.");
   state.rows[firstIndex] = mergedRow;
   selectedIndexes.slice(1).reverse().forEach((index) => state.rows.splice(index, 1));
   recentTopicFeedback = { type: "merged", keys: [topicKey(mergedRow.materia, mergedRow.assunto)] };
@@ -1560,12 +1863,41 @@ function uniqueSubjects(rows) {
   return [...map.values()];
 }
 
-function confirmRows() {
+function openContentProblemsModal(count = contentProblemAnalysis().length) {
+  if (!els.contentProblemsModal) return;
+  els.contentProblemsModal.innerHTML = `
+    <div class="content-problems-backdrop" data-close-content-problems></div>
+    <div class="content-problems-dialog" role="dialog" aria-modal="true" aria-labelledby="contentProblemsTitle">
+      <span class="content-problem-icon"><i data-lucide="triangle-alert"></i></span>
+      <h3 id="contentProblemsTitle">Confira o conteúdo antes de continuar</h3>
+      <p>Há ${count} ponto${count === 1 ? "" : "s"} que podem precisar de revisão. Você pode conferir agora ou confirmar mesmo assim.</p>
+      <div class="content-problems-dialog-actions">
+        <button class="ghost-button" type="button" data-close-content-problems>Cancelar</button>
+        <button class="ghost-button" type="button" data-review-content-problems>Conferir problemas</button>
+        <button class="primary-button" type="button" data-confirm-content-problems>Confirmar mesmo assim</button>
+      </div>
+    </div>
+  `;
+  els.contentProblemsModal.hidden = false;
+  if (window.lucide) window.lucide.createIcons();
+  els.contentProblemsModal.querySelector("[data-review-content-problems]")?.focus();
+}
+
+function closeContentProblemsModal() {
+  if (els.contentProblemsModal) els.contentProblemsModal.hidden = true;
+}
+
+function confirmRows(options = {}) {
   syncRowsFromTable();
   renumberRows();
   const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
   if (!validRows.length) {
     alert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
+    return;
+  }
+  const problems = contentProblemAnalysis();
+  if (problems.length && !options.force) {
+    openContentProblemsModal(problems.length);
     return;
   }
 
@@ -5353,12 +5685,11 @@ els.addRowButton?.addEventListener("click", () => {
 els.organizeThemesButton?.addEventListener("click", organizeThemesFromTable);
 
 els.selectAllTopicsButton?.addEventListener("click", () => {
-  const shouldSelect = !allTopicsSelected();
-  setAllTopicChecks(shouldSelect);
   syncRowsFromTable();
-  renderContentSummary();
-  updateSubjectStudyCounts();
-  markUnconfirmed();
+  const selectableRows = state.rows.filter((row) => row.assunto);
+  const shouldSelect = !selectableRows.length || !selectableRows.every((row) => row.estudar !== "Nao");
+  state.rows = state.rows.map((row) => row.assunto ? { ...row, estudar: shouldSelect ? "Sim" : "Nao" } : row);
+  renderRows();
   notifyContent(shouldSelect ? "Todos os temas foram selecionados para o ciclo." : "Todos os temas foram desmarcados.");
 });
 
@@ -5390,7 +5721,82 @@ els.selectAll?.addEventListener("change", () => {
   markUnconfirmed();
 });
 
+els.expandAllSubjectsButton?.addEventListener("click", () => {
+  subjectGroups().forEach((group) => openSubjectKeys.add(normalizeForMatch(group.materia)));
+  renderRows({ preserveState: true });
+});
+
+els.collapseAllSubjectsButton?.addEventListener("click", () => {
+  openSubjectKeys.clear();
+  renderRows({ preserveState: true });
+});
+
+els.contentSearch?.addEventListener("input", () => {
+  contentSearchTerm = els.contentSearch.value.trim();
+  clearTimeout(contentSearchTimer);
+  contentSearchTimer = setTimeout(() => renderRows({ preserveState: true }), 180);
+});
+
+els.clearContentSearch?.addEventListener("click", () => {
+  if (els.contentSearch) els.contentSearch.value = "";
+  contentSearchTerm = "";
+  renderRows({ preserveState: true });
+  els.contentSearch?.focus();
+});
+
+document.querySelectorAll("[data-content-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    contentFilter = button.dataset.contentFilter || "all";
+    document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
+    renderRows({ preserveState: true });
+  });
+});
+
+els.contentProblemSummary?.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-show-content-problems]")) return;
+  contentFilter = "problems";
+  document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item.dataset.contentFilter === "problems"));
+  renderRows({ preserveState: true });
+});
+
+function topicStateIndex(topic) {
+  const index = Number(topic?.dataset.rowIndex);
+  return Number.isInteger(index) ? index : -1;
+}
+
 els.topicsBody.addEventListener("click", (event) => {
+  if (event.target.closest("[data-undo-content]")) {
+    event.preventDefault();
+    restoreContentUndo();
+    return;
+  }
+
+  if (event.target.closest("[data-show-content-problems]")) {
+    contentFilter = "problems";
+    document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item.dataset.contentFilter === "problems"));
+    renderRows({ preserveState: true });
+    return;
+  }
+
+  if (event.target.closest("[data-close-content-problems]")) {
+    closeContentProblemsModal();
+    return;
+  }
+
+  if (event.target.closest("[data-review-content-problems]")) {
+    contentFilter = "problems";
+    document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item.dataset.contentFilter === "problems"));
+    closeContentProblemsModal();
+    renderRows({ preserveState: true });
+    return;
+  }
+
+  if (event.target.closest("[data-confirm-content-problems]")) {
+    closeContentProblemsModal();
+    confirmRows({ force: true });
+    return;
+  }
+
   const mergeSelected = event.target.closest("[data-merge-selected]");
   if (mergeSelected) {
     event.preventDefault();
@@ -5407,10 +5813,72 @@ els.topicsBody.addEventListener("click", (event) => {
     const oldName = group?.dataset.subjectName || "";
     const nextName = prompt("Editar nome da mat\u00e9ria:", oldName);
     if (nextName === null) return;
+    rememberContentUndo("Nome da mat\u00e9ria alterado.");
     syncRowsFromTable();
-    state.rows = state.rows.map((row) => row.materia === oldName ? { ...row, materia: nextName.trim() || oldName } : row);
+    const renamedSubject = nextName.trim() || oldName;
+    openSubjectKeys.delete(normalizeForMatch(oldName));
+    openSubjectKeys.add(normalizeForMatch(renamedSubject));
+    state.rows = state.rows.map((row) => row.materia === oldName ? { ...row, materia: renamedSubject } : row);
     renderRows();
     notifyContent("Mat\u00e9ria editada com sucesso.");
+    return;
+  }
+
+  const group = event.target.closest(".subject-group");
+  if (group && event.target.closest("[data-select-subject]")) {
+    rememberContentUndo("Sele\u00e7\u00e3o da mat\u00e9ria alterada.");
+    syncRowsFromTable();
+    const subject = group.dataset.subjectName;
+    state.rows = state.rows.map((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject) ? { ...row, estudar: "Sim" } : row);
+    renderRows();
+    return;
+  }
+
+  if (group && event.target.closest("[data-deselect-subject]")) {
+    rememberContentUndo("Sele\u00e7\u00e3o da mat\u00e9ria alterada.");
+    syncRowsFromTable();
+    const subject = group.dataset.subjectName;
+    state.rows = state.rows.map((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject) ? { ...row, estudar: "Nao" } : row);
+    renderRows();
+    return;
+  }
+
+  if (group && event.target.closest("[data-add-subject-topic]")) {
+    rememberContentUndo("Novo tema adicionado.");
+    syncRowsFromTable();
+    const subject = group.dataset.subjectName;
+    const count = state.rows.filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject)).length;
+    state.rows.push(enrichThemeRow({ materia: subject, assunto: "Novo tema", ordem: count + 1, estudar: "Sim", observacoes: "", editadoManualmente: true }));
+    openSubjectKeys.add(normalizeForMatch(subject));
+    renderRows();
+    return;
+  }
+
+  if (group && event.target.closest("[data-delete-subject]")) {
+    const subject = group.dataset.subjectName;
+    const count = state.rows.filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject)).length;
+    if (!confirm("Excluir a mat\u00e9ria " + subject + " e seus " + count + " temas?")) return;
+    rememberContentUndo("Mat\u00e9ria exclu\u00edda.");
+    syncRowsFromTable();
+    state.rows = state.rows.filter((row) => normalizeForMatch(row.materia) !== normalizeForMatch(subject));
+    renderRows();
+    return;
+  }
+
+  if (group && event.target.closest("[data-merge-subject]")) {
+    const subject = group.dataset.subjectName;
+    const targets = subjectGroups().filter((item) => normalizeForMatch(item.materia) !== normalizeForMatch(subject)).map((item) => item.materia);
+    if (!targets.length) {
+      notifyContent("Crie outra mat\u00e9ria antes de unir este grupo.", "warning");
+      return;
+    }
+    const target = prompt("Unir esta mat\u00e9ria com qual?\n\n" + targets.join("\n"), targets[0]);
+    if (!target || !targets.some((item) => normalizeForMatch(item) === normalizeForMatch(target))) return;
+    rememberContentUndo("Mat\u00e9ria unida.");
+    syncRowsFromTable();
+    const targetName = targets.find((item) => normalizeForMatch(item) === normalizeForMatch(target));
+    state.rows = state.rows.map((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject) ? { ...row, materia: targetName } : row);
+    renderRows();
     return;
   }
 
@@ -5438,6 +5906,25 @@ els.topicsBody.addEventListener("click", (event) => {
     const observation = topic.querySelector(".topic-observation");
     if (observation) observation.hidden = !observation.hidden;
     topic.querySelector(".topic-actions-menu")?.removeAttribute("open");
+    return;
+  }
+
+  if (event.target.closest("[data-save-topic-edit]")) {
+    event.preventDefault();
+    const index = topicStateIndex(topic);
+    if (index < 0) return;
+    rememberContentUndo("Edi\u00e7\u00e3o do tema realizada.");
+    syncRowsFromTable();
+    state.rows[index] = { ...state.rows[index], editadoManualmente: true };
+    renderRows();
+    notifyContent("Tema editado e marcado como altera\u00e7\u00e3o manual.");
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-topic-edit]")) {
+    event.preventDefault();
+    const panel = topic.querySelector(".topic-observation");
+    if (panel) panel.hidden = true;
     return;
   }
 
@@ -5473,8 +5960,9 @@ els.topicsBody.addEventListener("click", (event) => {
       notifyContent("Informe pelo menos dois temas para separar.", "warning");
       return;
     }
+    rememberContentUndo("Tema separado.");
     syncRowsFromTable();
-    const index = [...els.topicsBody.querySelectorAll(".topic-item")].indexOf(topic);
+    const index = topicStateIndex(topic);
     state.rows.splice(index, 1, ...parts);
     recentTopicFeedback = { type: "split", keys: parts.map((row) => topicKey(row.materia, row.assunto)) };
     renumberRows({ sync: false });
@@ -5485,12 +5973,12 @@ els.topicsBody.addEventListener("click", (event) => {
   if (event.target.closest("[data-merge-topic]")) {
     event.preventDefault();
     syncRowsFromTable();
-    const items = [...els.topicsBody.querySelectorAll(".topic-item")];
-    const index = items.indexOf(topic);
+    const index = topicStateIndex(topic);
     const row = state.rows[index];
     const previousIndex = state.rows.findLastIndex((item, itemIndex) => itemIndex < index && normalizeForMatch(item.materia) === normalizeForMatch(row.materia));
     if (previousIndex < 0) return;
     const previous = state.rows[previousIndex];
+    rememberContentUndo("Temas juntados.");
     state.rows[previousIndex] = enrichThemeRow({
       ...previous,
       assunto: `${themeTitle(previous.assunto)} + ${themeTitle(row.assunto)}: ${[themeDetails(previous.assunto), themeDetails(row.assunto)].filter(Boolean).join("; ")}`,
@@ -5502,11 +5990,80 @@ els.topicsBody.addEventListener("click", (event) => {
     return;
   }
 
+  if (event.target.closest("[data-move-topic]")) {
+    event.preventDefault();
+    const index = topicStateIndex(topic);
+    const row = state.rows[index];
+    if (!row) return;
+    const targets = subjectGroups().filter((item) => normalizeForMatch(item.materia) !== normalizeForMatch(row.materia)).map((item) => item.materia);
+    if (!targets.length) {
+      notifyContent("Crie outra mat\u00e9ria antes de mover este tema.", "warning");
+      return;
+    }
+    const target = prompt("Mover para qual mat\u00e9ria?\n\n" + targets.join("\n"), targets[0]);
+    if (!target) return;
+    const targetName = targets.find((item) => normalizeForMatch(item) === normalizeForMatch(target));
+    if (!targetName) return;
+    rememberContentUndo("Tema movido para " + targetName + ".");
+    syncRowsFromTable();
+    state.rows[index] = { ...state.rows[index], materia: targetName, ordem: state.rows.filter((item) => normalizeForMatch(item.materia) === normalizeForMatch(targetName)).length + 1 };
+    renderRows();
+    return;
+  }
+
+  if (event.target.closest("[data-promote-topic]")) {
+    event.preventDefault();
+    const index = topicStateIndex(topic);
+    const row = state.rows[index];
+    if (!row) return;
+    const newSubject = themeTitle(row.assunto || "").trim();
+    if (!newSubject || !confirm("Transformar este tema em uma nova mat\u00e9ria chamada " + newSubject + "?")) return;
+    rememberContentUndo("Tema transformado em mat\u00e9ria.");
+    syncRowsFromTable();
+    state.rows[index] = { ...state.rows[index], materia: newSubject, ordem: 1 };
+    renderRows();
+    return;
+  }
+
+  if (event.target.closest("[data-duplicate-topic]")) {
+    event.preventDefault();
+    const index = topicStateIndex(topic);
+    const row = state.rows[index];
+    if (!row) return;
+    rememberContentUndo("Tema duplicado.");
+    syncRowsFromTable();
+    state.rows.splice(index + 1, 0, enrichThemeRow({ ...row, assunto: themeTitle(row.assunto) + " (cópia): " + themeDetails(row.assunto), ordem: (Number(row.ordem) || 1) + 1, editadoManualmente: true }));
+    renderRows();
+    return;
+  }
+
   if (event.target.closest("[data-delete-topic]")) {
     event.preventDefault();
-    topic.remove();
-    renumberRows();
+    const index = topicStateIndex(topic);
+    if (index < 0) return;
+    rememberContentUndo("Tema exclu\u00eddo.");
+    syncRowsFromTable();
+    state.rows.splice(index, 1);
+    renumberRows({ sync: false });
     notifyContent("Tema exclu\u00eddo.");
+  }
+});
+
+els.contentProblemsModal?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-content-problems]")) {
+    closeContentProblemsModal();
+    return;
+  }
+  if (event.target.closest("[data-review-content-problems]")) {
+    contentFilter = "problems";
+    document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item.dataset.contentFilter === "problems"));
+    closeContentProblemsModal();
+    renderRows({ preserveState: true });
+    return;
+  }
+  if (event.target.closest("[data-confirm-content-problems]")) {
+    closeContentProblemsModal();
+    confirmRows({ force: true });
   }
 });
 

@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260714-conteudo-local" />
+    <link rel="stylesheet" href="./styles.css?v=20260714-conteudo-review" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -234,8 +234,25 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
               </div>
               <div class="table-actions">
                 <button id="selectAllTopicsButton" class="ghost-button compact-button" type="button"><i data-lucide="check-square"></i><span>Selecionar tudo</span></button>
+                <button id="expandAllSubjectsButton" class="ghost-button compact-button" type="button"><i data-lucide="chevrons-down"></i><span>Expandir todas</span></button>
+                <button id="collapseAllSubjectsButton" class="ghost-button compact-button" type="button"><i data-lucide="chevrons-up"></i><span>Recolher todas</span></button>
               </div>
             </div>
+            <div class="content-review-toolbar" aria-label="Ferramentas de revisão do conteúdo">
+              <div class="content-search-wrap">
+                <i data-lucide="search" aria-hidden="true"></i>
+                <input id="contentSearch" type="search" placeholder="Pesquisar mat&eacute;ria, tema ou conte&uacute;do" autocomplete="off" />
+                <button id="clearContentSearch" class="icon-button" type="button" aria-label="Limpar pesquisa" title="Limpar pesquisa"><i data-lucide="x"></i></button>
+              </div>
+              <div class="content-filter-group" role="group" aria-label="Filtros de conte&uacute;do">
+                <button class="content-filter is-active" type="button" data-content-filter="all">Todos</button>
+                <button class="content-filter" type="button" data-content-filter="selected">Selecionados</button>
+                <button class="content-filter" type="button" data-content-filter="unselected">N&atilde;o selecionados</button>
+                <button class="content-filter" type="button" data-content-filter="edited">Alterados manualmente</button>
+                <button class="content-filter" type="button" data-content-filter="problems">Poss&iacute;veis problemas</button>
+              </div>
+            </div>
+            <div id="contentProblemSummary" class="content-problem-summary" hidden></div>
             <input id="selectAll" class="visually-hidden" type="checkbox" aria-label="Selecionar todas" />
             <div id="topicsBody" class="subject-accordion"></div>
             <div id="emptyState" class="empty-state">
@@ -244,11 +261,18 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
             </div>
           </div>
 
-          <div class="content-actions">
+          <div class="content-actions content-sticky-actions">
+            <div class="content-action-counts" aria-live="polite">
+              <span><strong id="contentMatterCount">0</strong> mat&eacute;rias</span>
+              <span><strong id="contentThemeCount">0</strong> temas</span>
+              <span><strong id="contentSelectedCount">0</strong> selecionados</span>
+              <span><strong id="contentProblemCount">0</strong> pontos para revisar</span>
+            </div>
             <button id="backToContestButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
             <button id="saveContentButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar conte&uacute;do</span></button>
             <button id="confirmButton" class="primary-button" type="button"><i data-lucide="check-circle-2"></i><span>Est&aacute; certo, continuar</span></button>
           </div>
+          <div id="contentProblemsModal" class="content-problems-modal" hidden></div>
         </section>
 
         <section class="tab-panel" id="tab-pesos">
@@ -525,7 +549,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
 
     <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260714-conteudo-local"></script>
+    <script src="./app.js?v=20260714-conteudo-review"></script>
   </body>
 </html>
 
