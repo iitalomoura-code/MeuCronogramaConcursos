@@ -820,8 +820,11 @@ function activateTab(tabName, activeButton = null) {
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
   if (tabName === "erros") renderErrors();
-  if (tabName === "continuar") renderContinuePanel();
-  else removeFocusedStudyOverlay();
+  if (tabName === "continuar") {
+    renderContinuePanel();
+  } else {
+    removeFocusedStudyOverlay();
+  }
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator(document.querySelector(`[data-tab-target="${tabName}"]`));
     animatePanelNumbers(tabName);
@@ -3181,7 +3184,9 @@ function removeFocusedStudyOverlay() {
 
 function renderFocusedStudyOverlay() {
   removeFocusedStudyOverlay();
-  if (focusedStudyIndex < 0 || !state.generatedBlocks[focusedStudyIndex] || !document.querySelector("#tab-continuar.active")) return;
+  if (focusedStudyIndex < 0 || !state.generatedBlocks[focusedStudyIndex]) return;
+  const panel = document.querySelector("#tab-continuar");
+  if (!panel || !panel.classList.contains("active")) return;
   const block = state.generatedBlocks[focusedStudyIndex];
   document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex), explainStudySuggestion(block)));
   if (window.lucide) window.lucide.createIcons();
@@ -3275,6 +3280,13 @@ function openFocusedStudy(index) {
   continueDetailsOpen = false;
   focusedStudyDraftFor(index);
   renderContinuePanel();
+  // Garante que o overlay apareca mesmo se a re-renderizacao do painel
+  // (ou a transicao de tela) tiver desfeito a insercao acima.
+  requestAnimationFrame(() => {
+    if (focusedStudyIndex === index && !document.querySelector(".focused-study-modal")) {
+      renderFocusedStudyOverlay();
+    }
+  });
   showToast("Estudo iniciado.");
 }
 
