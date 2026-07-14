@@ -92,6 +92,13 @@ let contentFilter = "all";
 let contentUndoSnapshot = null;
 let contentSearchTimer = 0;
 let openSubjectKeys = new Set();
+let continueAlternativesOpen = false;
+let continueDetailsOpen = false;
+let focusedStudyIndex = -1;
+let focusedStudySession = null;
+let focusedStudyDrafts = new Map();
+let focusedStudyTimerInterval = null;
+let focusedStudySaving = false;
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
 const DATA_FILE_STORE = "handles";
@@ -2579,6 +2586,10 @@ function blockRow(number, duration, item, type) {
     acertos: 0,
     percentual: 0,
     dificuldade: "M\u00e9dia",
+    tipoAtividade: "",
+    tempoEstudado: 0,
+    pontosRevisar: false,
+    reprogramacoes: 0,
     reviewCycle: "",
     reviewCycles: [],
     concluidoEm: "",
@@ -2782,6 +2793,7 @@ function continueSuggestionScore(entry) {
   if (review.overdue.length) score += 120;
   else if (review.today.length) score += 90;
   if (status === "Em andamento") score += 45;
+  score -= Math.min(80, (Number(block.reprogramacoes) || 0) * 40);
   score += (adaptive.adjustment || 0) * 100;
   score += (Number(block.prioridade) || 0) * 30;
   return { score, adaptive, review };
@@ -2911,7 +2923,7 @@ function continueReviewItems() {
     .slice(0, 2);
 }
 
-function renderContinuePanel() {
+function renderContinuePanelLegacy() {
   if (!els.continuePanel) return;
   if (!state.generatedBlocks.length) {
     els.continuePanel.innerHTML = `
@@ -3026,6 +3038,359 @@ function renderContinuePanel() {
         <strong>${progress}%</strong>
       </div>
     </section>
+  `;
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function explainStudySuggestion(block, context = {}) {
+  if (!block) return { text: "", factors: [] };
+  const adaptive = context.adaptive || adaptivePriorityForTarget(block);
+  const review = context.review || reviewAttentionFor(block.materia, block.assunto);
+  const factors = [];
+  const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
+  if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
+  if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
+  if (adaptive.reasons?.length) {
+    adaptive.reasons.slice(0, 2).forEach((reason) => {
+      if (reason.includes("acerto recente")) factors.push("desempenho recente indica reforço");
+      else if (reason.includes("dificuldade")) factors.push("dificuldade informada alta");
+      else if (reason.includes("reprogram")) factors.push("tema reprogramado anteriormente");
+      else if (reason.includes("queda")) factors.push("queda de desempenho recente");
+    });
+  }
+  if (!factors.length && priority.percent >= 60) factors.push("matéria com importância " + priority.label.toLowerCase());
+  if (!factors.length) return { text: "Este é o próximo bloco pendente do ciclo atual.", factors: [] };
+  return { text: factors.slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
+}
+
+function continueAlternativeEntries(suggested) {
+  return rankedContinueEntries()
+    .filter((entry) => entry.index !== suggested?.index)
+    .slice(0, 5);
+}
+
+function continueAvailableReviews() {
+  return reviewScheduleRows("all")
+    .filter((item) => item.status !== "Concluída")
+    .sort((a, b) => {
+      const rank = { overdue: 0, today: 1, upcoming: 2 };
+      return (rank[a.statusInfo?.group] ?? 3) - (rank[b.statusInfo?.group] ?? 3);
+    })
+    .slice(0, 3);
+}
+
+function focusedDraftFor(index) {
+  const block = state.generatedBlocks[index];
+  if (!block) return null;
+  if (!focusedStudyDrafts.has(index)) {
+    focusedStudyDrafts.set(index, {
+      status: normalizeStatus(block.status),
+      dificuldade: block.dificuldade || "Média",
+      tipoAtividade: block.tipoAtividade || "Teoria",
+      tempoEstudado: block.tempoEstudado ? formatDuration(block.tempoEstudado) : "",
+      questoes: block.questoes ? String(block.questoes) : "",
+      acertos: block.acertos ? String(block.acertos) : "",
+      observacoes: block.observacoes || "",
+      pontosRevisar: Boolean(block.pontosRevisar),
+    });
+  }
+  return focusedStudyDrafts.get(index);
+}
+
+function focusedTimerSeconds() {
+  if (!focusedStudySession) return 0;
+  const current = focusedStudySession.running && focusedStudySession.startedAt
+    ? (Date.now() - focusedStudySession.startedAt) / 1000
+    : 0;
+  return Math.max(0, Math.floor(focusedStudySession.elapsedSeconds + current));
+}
+
+function updateFocusedTimerDisplay() {
+  const display = document.querySelector("[data-focused-timer]");
+  if (display) display.textContent = formatTimerSeconds(focusedTimerSeconds());
+  const status = document.querySelector("[data-focused-timer-status]");
+  if (status && focusedStudySession) status.textContent = focusedStudySession.running ? "Cronômetro em andamento" : focusedTimerSeconds() ? "Cronômetro pausado" : "Cronômetro opcional";
+  const toggle = document.querySelector("[data-focused-timer-toggle]");
+  if (toggle && focusedStudySession) {
+    toggle.innerHTML = "<i data-lucide=\"" + (focusedStudySession.running ? "pause" : "play") + "\"></i><span>" + (focusedStudySession.running ? "Pausar cronômetro" : focusedTimerSeconds() ? "Continuar cronômetro" : "Iniciar cronômetro") + "</span>";
+    if (window.lucide) window.lucide.createIcons();
+  }
+}
+
+function stopFocusedTimerInterval() {
+  if (focusedStudyTimerInterval) {
+    clearInterval(focusedStudyTimerInterval);
+    focusedStudyTimerInterval = null;
+  }
+}
+
+function startFocusedTimer() {
+  if (!focusedStudySession || focusedStudySession.running) return;
+  focusedStudySession.running = true;
+  focusedStudySession.startedAt = Date.now();
+  stopFocusedTimerInterval();
+  focusedStudyTimerInterval = window.setInterval(updateFocusedTimerDisplay, 1000);
+  updateFocusedTimerDisplay();
+}
+
+function pauseFocusedTimer() {
+  if (!focusedStudySession || !focusedStudySession.running) return;
+  focusedStudySession.elapsedSeconds = focusedTimerSeconds();
+  focusedStudySession.running = false;
+  focusedStudySession.startedAt = 0;
+  stopFocusedTimerInterval();
+  updateFocusedTimerDisplay();
+}
+
+function resetFocusedTimer() {
+  if (!focusedStudySession) return;
+  focusedStudySession.running = false;
+  focusedStudySession.startedAt = 0;
+  focusedStudySession.elapsedSeconds = 0;
+  stopFocusedTimerInterval();
+  updateFocusedTimerDisplay();
+}
+
+function focusedDraftHasChanges(index) {
+  const block = state.generatedBlocks[index];
+  const draft = focusedStudyDrafts.get(index);
+  if (!block || !draft) return false;
+  return draft.status !== normalizeStatus(block.status) ||
+    String(draft.questoes || "") !== String(block.questoes || "") ||
+    String(draft.acertos || "") !== String(block.acertos || "") ||
+    String(draft.observacoes || "") !== String(block.observacoes || "") ||
+    Boolean(draft.pontosRevisar) !== Boolean(block.pontosRevisar) ||
+    focusedTimerSeconds() > 0;
+}
+
+function closeFocusedStudy(options = {}) {
+  if (focusedStudyIndex < 0) return;
+  if (!options.force && focusedDraftHasChanges(focusedStudyIndex) && !window.confirm("Há dados preenchidos neste estudo. Sair sem salvar?")) return;
+  stopFocusedTimerInterval();
+  focusedStudyIndex = -1;
+  focusedStudySession = null;
+  renderContinuePanel();
+}
+
+function focusedStudyMarkup(block, index, draft, suggestion) {
+  const timer = focusedTimerSeconds();
+  return `
+    <div class="focused-study-modal" role="dialog" aria-modal="true" aria-labelledby="focusedStudyTitle">
+      <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Fechar modo focado"></button>
+      <section class="focused-study-panel">
+        <header class="focused-study-header">
+          <div>
+            <span class="section-kicker">Modo focado de estudo</span>
+            <span class="focused-study-subject">${escapeHtml(block.materia)}</span>
+            <h2 id="focusedStudyTitle">${escapeHtml(themeTitle(block.assunto))}</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-focused aria-label="Fechar modo focado"><i data-lucide="x"></i></button>
+        </header>
+        <div class="focused-study-context">
+          <strong>Conteúdo principal</strong>
+          <p>${escapeHtml(themeDetails(block.assunto) || block.assunto)}</p>
+          <span>Meta ${index + 1} de ${state.generatedBlocks.length} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
+        </div>
+        <div class="focused-study-timer">
+          <div>
+            <span>Tempo realizado</span>
+            <strong data-focused-timer aria-live="off">${formatTimerSeconds(timer)}</strong>
+            <small data-focused-timer-status>Cronômetro opcional</small>
+          </div>
+          <div class="focused-study-timer-actions">
+            <button class="primary-button compact-button" type="button" data-focused-timer-toggle><i data-lucide="play"></i><span>Iniciar cronômetro</span></button>
+            <button class="ghost-button compact-button" type="button" data-focused-timer-reset><i data-lucide="rotate-ccw"></i><span>Zerar</span></button>
+          </div>
+        </div>
+        <div class="focused-study-tools">
+          <button class="ghost-button compact-button" type="button" data-open-notebook-focused><i data-lucide="notebook-pen"></i><span>Abrir caderno de resumos</span></button>
+          <label class="focused-check"><input type="checkbox" data-focused-field="pontosRevisar" ${draft.pontosRevisar ? "checked" : ""} /> Marcar pontos para revisar</label>
+        </div>
+        <div class="focused-study-form">
+          <div class="focused-study-form-grid">
+            <label>Status
+              <select data-focused-field="status">${statusOptionsMarkup(draft.status)}</select>
+            </label>
+            <label>Tipo de atividade
+              <select data-focused-field="tipoAtividade">
+                ${["Teoria", "Questões", "Revisão", "Teoria e questões"].map((value) => "<option " + (value === draft.tipoAtividade ? "selected" : "") + ">" + value + "</option>").join("")}
+              </select>
+            </label>
+            <label>Dificuldade sentida
+              <select data-focused-field="dificuldade">
+                ${["Baixa", "Média", "Alta"].map((value) => "<option " + (value === draft.dificuldade ? "selected" : "") + ">" + value + "</option>").join("")}
+              </select>
+            </label>
+            <label>Tempo efetivamente estudado
+              <input data-focused-field="tempoEstudado" value="${escapeHtml(draft.tempoEstudado || "")}" placeholder="Ex.: 1h30" />
+            </label>
+            <label>Questões realizadas
+              <input data-focused-field="questoes" type="number" min="0" step="1" value="${escapeHtml(draft.questoes || "")}" />
+            </label>
+            <label>Acertos
+              <input data-focused-field="acertos" type="number" min="0" step="1" value="${escapeHtml(draft.acertos || "")}" />
+            </label>
+          </div>
+          <label>Observação
+            <textarea data-focused-field="observacoes" placeholder="Registre o que ajudou, uma dúvida ou o próximo ponto de atenção.">${escapeHtml(draft.observacoes || "")}</textarea>
+          </label>
+        </div>
+        <details class="focused-study-details" ${continueDetailsOpen ? "open" : ""}>
+          <summary>Ver detalhes da recomendação</summary>
+          <p>${escapeHtml(suggestion?.text || "")}</p>
+        </details>
+        <footer class="focused-study-actions">
+          <button class="ghost-button" type="button" data-close-focused>Cancelar</button>
+          <button class="primary-button" type="button" data-save-focused><i data-lucide="save"></i><span>Salvar resultado</span></button>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
+function openFocusedStudy(index) {
+  if (!state.generatedBlocks[index]) return;
+  focusedStudyIndex = index;
+  focusedStudySession = { index, elapsedSeconds: 0, startedAt: 0, running: false };
+  continueDetailsOpen = false;
+  focusedStudyDraftFor(index);
+  renderContinuePanel();
+  document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
+  showToast("Estudo iniciado.");
+}
+
+function saveFocusedStudy() {
+  if (focusedStudySaving || focusedStudyIndex < 0) return;
+  const block = state.generatedBlocks[focusedStudyIndex];
+  const draft = focusedStudyDrafts.get(focusedStudyIndex);
+  if (!block || !draft) return;
+  focusedStudySaving = true;
+  const questionText = String(draft.questoes || "").trim();
+  const correctText = String(draft.acertos || "").trim();
+  const questions = questionText ? Number(questionText) : 0;
+  const correct = correctText ? Number(correctText) : 0;
+  if (!Number.isFinite(questions) || questions < 0 || !Number.isFinite(correct) || correct < 0 || correct > questions) {
+    focusedStudySaving = false;
+    showToast("Confira as questões e os acertos informados.");
+    return;
+  }
+  const sessionHours = focusedTimerSeconds() / 3600;
+  const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
+  const effectiveHours = Number((typedHours || sessionHours || 0).toFixed(2));
+  const nextStatus = normalizeStatus(draft.status);
+  const previousStatus = normalizeStatus(block.status);
+  block.status = nextStatus;
+  block.sessaoId = crypto.randomUUID ? crypto.randomUUID() : "sessao-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  block.tipoAtividade = draft.tipoAtividade || "Teoria";
+  block.dificuldade = draft.dificuldade || "Média";
+  block.questoes = questions;
+  block.acertos = correct;
+  block.tempoEstudado = effectiveHours;
+  block.observacoes = String(draft.observacoes || "").trim();
+  block.pontosRevisar = Boolean(draft.pontosRevisar);
+  if (nextStatus === "Concluído") {
+    if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
+    syncCompletedHistoryForBlock(block);
+  } else {
+    block.concluidoEm = "";
+  }
+  if (nextStatus === "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
+  syncBlockReviewRecords(block);
+  const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
+  updateBlockAccuracy(block);
+  focusedStudyDrafts.delete(focusedStudyIndex);
+  stopFocusedTimerInterval();
+  focusedStudyIndex = -1;
+  focusedStudySession = null;
+  continueSuggestionOffset = 0;
+  focusedStudySaving = false;
+  renderContinuePanel();
+  renderGeneratedSchedule();
+  renderCompleted();
+  renderReviews();
+  renderEvolution();
+  renderWeeklyResult();
+  saveAppStateNow("Resultado do estudo salvo");
+  if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
+  else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
+  else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");
+  else if (previousStatus !== "Concluído" && nextStatus === "Concluído") showToast("Resultado salvo. Próximo passo disponível.");
+  else showToast("Resultado salvo.");
+}
+
+function renderContinuePanel() {
+  if (!els.continuePanel) return;
+  const config = getContestConfig();
+  if (!config.concurso && !state.generatedBlocks.length) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card">
+        <div><span class="section-kicker">Continue seu ciclo</span><h3>Cadastre os dados do concurso para iniciar seu planejamento.</h3><p>O sistema mantém a direção. Você mantém o ritmo.</p></div>
+        <button class="primary-button" type="button" data-open-contest><i data-lucide="clipboard-pen-line"></i><span>Dados do concurso</span></button>
+      </section>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+  if (!state.rows.length) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card"><div><span class="section-kicker">Continue seu ciclo</span><h3>Adicione e confirme o conteúdo programático.</h3><p>Depois disso, defina as prioridades para receber seu próximo estudo.</p></div><button class="primary-button" type="button" data-open-content><i data-lucide="file-plus-2"></i><span>Adicionar conteúdo</span></button></section>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+  if (!state.confirmed) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card"><div><span class="section-kicker">Continue seu ciclo</span><h3>Adicione e confirme o conteúdo programático.</h3><p>Depois, defina importância e dificuldade das matérias.</p></div><button class="primary-button" type="button" data-open-content><i data-lucide="arrow-right"></i><span>Conferir conteúdo</span></button></section>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+  if (!state.planningBase?.materias?.length) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card"><div><span class="section-kicker">Continue seu ciclo</span><h3>Defina importância e dificuldade das matérias.</h3><p>Esses critérios orientam o próximo ciclo.</p></div><button class="primary-button" type="button" data-open-priority><i data-lucide="sliders-horizontal"></i><span>Definir prioridades</span></button></section>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+  if (!state.generatedBlocks.length) {
+    els.continuePanel.innerHTML = `
+      <section class="continue-empty-card"><div><span class="section-kicker">Continue seu ciclo</span><h3>Gere o primeiro ciclo para receber uma sugestão de estudo.</h3><p>As metas serão organizadas pela prioridade já definida.</p></div><button class="primary-button" type="button" data-continue-generate><i data-lucide="calendar-plus"></i><span>Gerar ciclo</span></button></section>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+
+  const pending = rankedContinueEntries();
+  const total = state.generatedBlocks.length;
+  const completed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
+  const inProgress = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Em andamento").length;
+  const reprogrammed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Reprogramar").length;
+  const pendingCount = Math.max(0, total - completed);
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+  if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
+  const suggested = pending.length ? pending[continueSuggestionOffset % pending.length] : null;
+  const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
+  const alternatives = suggested ? continueAlternativeEntries(suggested) : [];
+  const reviews = continueAvailableReviews();
+  const totalHours = performanceTotals(state.generatedBlocks).horas;
+  const insights = buildPerformanceInsights(suggestion?.text || "").slice(0, 2);
+  const nextSteps = pending.filter((entry) => entry.index !== suggested?.index).slice(0, 3);
+
+  els.continuePanel.innerHTML = `
+    <section class="continue-main-card continue-recommendation-card">
+      <div class="continue-card-header">
+        <div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
+      ${suggested ? `
+        <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
+        <div class="continue-meta-grid">
+          <div><span>Posição no ciclo</span><strong>Meta ${suggested.index + 1} de ${total}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
+          <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
+        </div>
+        ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". Desempenho e revisões relacionados são considerados apenas quando existem dados registrados.</p></div>" : ""}
+        <div class="continue-actions"><button class="primary-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
+        ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : priorityInfo(entry.block.prioridade).label + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
+      ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
+    </section>
+    <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
+    <section class="continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Revisões disponíveis</span><h3>${reviews.length ? reviews.length + " para considerar agora" : "Nenhuma revisão pendente"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(item.intervalLabel || item.intervalKey) + " · " + escapeHtml(item.dataPrevista || "") + "</em><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
+    <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
+    ${focusedStudyIndex >= 0 && state.generatedBlocks[focusedStudyIndex] ? focusedStudyMarkup(state.generatedBlocks[focusedStudyIndex], focusedStudyIndex, focusedDraftFor(focusedStudyIndex), suggestion) : ""}
   `;
   if (window.lucide) window.lucide.createIcons();
 }
@@ -3298,7 +3663,7 @@ function renderCompleted() {
 }
 
 function blockDurationValue(block) {
-  return Number(block.duracao) || 0;
+  return Number(block.tempoEstudado) > 0 ? Number(block.tempoEstudado) : Number(block.duracao) || 0;
 }
 
 function studiedCycleHours(blocks = state.generatedBlocks) {
@@ -3692,12 +4057,14 @@ function renderEvolution() {
 
 function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
   return {
+    sessaoId: block.sessaoId || "",
     concluidoEm: block.concluidoEm || new Date().toLocaleDateString("pt-BR"),
     semana: weekLabel || "",
     ciclo: block.ciclo || currentCycleLabel(),
     materia: block.materia,
     assunto: block.assunto,
-    duracao: block.duracao,
+    duracao: blockDurationValue(block),
+    tempoEstudado: Number(block.tempoEstudado) || 0,
     questoes: block.questoes || 0,
     acertos: block.acertos || 0,
     percentual: block.percentual || 0,
@@ -5593,17 +5960,91 @@ els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
 els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
 els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
 els.continuePanel?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-focused]")) {
+    closeFocusedStudy();
+    return;
+  }
+
+  if (event.target.closest("[data-focused-timer-toggle]")) {
+    if (focusedStudySession?.running) pauseFocusedTimer();
+    else startFocusedTimer();
+    return;
+  }
+
+  if (event.target.closest("[data-focused-timer-reset]")) {
+    resetFocusedTimer();
+    return;
+  }
+
+  if (event.target.closest("[data-save-focused]")) {
+    saveFocusedStudy();
+    return;
+  }
+
+  if (event.target.closest("[data-open-notebook-focused]")) {
+    const block = state.generatedBlocks[focusedStudyIndex];
+    if (block) {
+      notebookSelection = { materia: block.materia, assunto: block.assunto };
+      switchTab("erros");
+    }
+    return;
+  }
+
+  if (event.target.closest("[data-toggle-continue-details]")) {
+    continueDetailsOpen = !continueDetailsOpen;
+    renderContinuePanel();
+    return;
+  }
+
+  if (event.target.closest("[data-toggle-alternatives]")) {
+    continueAlternativesOpen = !continueAlternativesOpen;
+    renderContinuePanel();
+    return;
+  }
+
+  const alternative = event.target.closest("[data-study-alternative]");
+  if (alternative) {
+    const index = Number(alternative.dataset.studyAlternative);
+    const pending = rankedContinueEntries();
+    const position = pending.findIndex((entry) => entry.index === index);
+    if (position >= 0) {
+      continueSuggestionOffset = position;
+      continueAlternativesOpen = false;
+      renderContinuePanel();
+    }
+    return;
+  }
+
+  const reviewButton = event.target.closest("[data-start-review]");
+  if (reviewButton) {
+    const review = reviewScheduleRows("all").find((item) => item.id === reviewButton.dataset.startReview);
+    const entry = review ? state.generatedBlocks.map((block, index) => ({ block, index })).find(({ block }) => topicMatches(review, block.materia, block.assunto)) : null;
+    if (entry) openFocusedStudy(entry.index);
+    else switchTab("revisoes");
+    return;
+  }
+
+  if (event.target.closest("[data-open-contest]")) {
+    switchTab("concurso");
+    return;
+  }
+
+  if (event.target.closest("[data-open-content]")) {
+    switchTab("conteudo");
+    return;
+  }
+
+  if (event.target.closest("[data-open-priority]")) {
+    switchTab("pesos");
+    return;
+  }
+
   const startButton = event.target.closest("[data-start-continue]");
   if (startButton) {
     const index = Number(startButton.dataset.startContinue);
     const block = state.generatedBlocks[index];
     if (!block) return;
-    startBlockTimer(block);
-    unitDetailIndex = index;
-    performanceEditIndex = -1;
-    renderGeneratedSchedule();
-    switchTab("cronograma");
-    saveAppStateNow("Estudo iniciado");
+    openFocusedStudy(index);
     return;
   }
 
@@ -5634,6 +6075,23 @@ els.continuePanel?.addEventListener("click", (event) => {
   if (event.target.closest("[data-continue-generate]")) {
     switchTab("pesos");
   }
+});
+els.continuePanel?.addEventListener("input", (event) => {
+  const field = event.target.closest("[data-focused-field]");
+  if (!field || focusedStudyIndex < 0) return;
+  const draft = focusedDraftFor(focusedStudyIndex);
+  if (field.type === "checkbox") draft[field.dataset.focusedField] = field.checked;
+  else draft[field.dataset.focusedField] = field.value;
+});
+els.continuePanel?.addEventListener("change", (event) => {
+  const field = event.target.closest("[data-focused-field]");
+  if (!field || focusedStudyIndex < 0) return;
+  const draft = focusedDraftFor(focusedStudyIndex);
+  if (field.type === "checkbox") draft[field.dataset.focusedField] = field.checked;
+  else draft[field.dataset.focusedField] = field.value;
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && focusedStudyIndex >= 0) closeFocusedStudy();
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
 els.newPlanButton?.addEventListener("click", createNewPlan);
