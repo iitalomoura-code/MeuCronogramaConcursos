@@ -3278,7 +3278,7 @@ function openFocusedStudy(index) {
   focusedStudyIndex = index;
   focusedStudySession = { index, elapsedSeconds: 0, startedAt: 0, running: false };
   continueDetailsOpen = false;
-  focusedStudyDraftFor(index);
+  focusedDraftFor(index);
   renderContinuePanel();
   // Garante que o overlay apareca mesmo se a re-renderizacao do painel
   // (ou a transicao de tela) tiver desfeito a insercao acima.
