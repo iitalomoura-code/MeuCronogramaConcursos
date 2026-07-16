@@ -3098,6 +3098,7 @@ function focusedDraftFor(index) {
       acertos: block.acertos ? String(block.acertos) : "",
       observacoes: block.observacoes || "",
       pontosRevisar: Boolean(block.pontosRevisar),
+      reviewCycles: reviewCyclesFromBlock(block),
     });
   }
   return focusedStudyDrafts.get(index);
@@ -3166,6 +3167,7 @@ function focusedDraftHasChanges(index) {
     String(draft.acertos || "") !== String(block.acertos || "") ||
     String(draft.observacoes || "") !== String(block.observacoes || "") ||
     Boolean(draft.pontosRevisar) !== Boolean(block.pontosRevisar) ||
+    JSON.stringify([...(draft.reviewCycles || [])].sort()) !== JSON.stringify([...reviewCyclesFromBlock(block)].sort()) ||
     focusedTimerSeconds() > 0;
 }
 
@@ -3191,6 +3193,27 @@ function renderFocusedStudyOverlay() {
   document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex), explainStudySuggestion(block)));
   if (window.lucide) window.lucide.createIcons();
   document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
+}
+
+function focusedReviewOptionsMarkup(block, draft) {
+  const selected = new Set(Array.isArray(draft.reviewCycles) ? draft.reviewCycles : reviewCyclesFromBlock(block));
+  return `
+    <div class="focused-review-scheduling">
+      <div>
+        <strong>Agendar revisão</strong>
+        <small>Escolha uma ou mais revisões para este tema.</small>
+      </div>
+      <div class="review-chip-group" role="group" aria-label="Agendar revisões no modo focado">
+        ${REVIEW_INTERVALS.map((item) => `
+          <label class="review-chip">
+            <input type="checkbox" data-focused-review="${item.key}" ${selected.has(item.key) ? "checked" : ""} />
+            <span>${item.label}</span>
+          </label>
+        `).join("")}
+      </div>
+      <span class="review-pending-note">As revisões serão efetivadas quando o tema estiver concluído.</span>
+    </div>
+  `;
 }
 
 function focusedStudyMarkup(block, index, draft, suggestion) {
@@ -3231,6 +3254,7 @@ function focusedStudyMarkup(block, index, draft, suggestion) {
             <span><strong>Ponto de atenção</strong><small>Registra este tema no resultado; não agenda revisão sozinho.</small></span>
           </label>
         </div>
+        ${focusedReviewOptionsMarkup(block, draft)}
         <div class="focused-study-form">
           <div class="focused-study-form-grid">
             <label>Status
@@ -3319,6 +3343,7 @@ function saveFocusedStudy() {
   block.tempoEstudado = effectiveHours;
   block.observacoes = String(draft.observacoes || "").trim();
   block.pontosRevisar = Boolean(draft.pontosRevisar);
+  setBlockReviewCycles(block, draft.reviewCycles || []);
   if (nextStatus === "Concluído") {
     if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
     syncCompletedHistoryForBlock(block);
@@ -6116,6 +6141,12 @@ document.addEventListener("input", (event) => {
   else draft[field.dataset.focusedField] = field.value;
 });
 document.addEventListener("change", (event) => {
+  const reviewField = event.target.closest("[data-focused-review]");
+  if (reviewField && focusedStudyIndex >= 0) {
+    const draft = focusedDraftFor(focusedStudyIndex);
+    draft.reviewCycles = [...document.querySelectorAll(".focused-study-panel [data-focused-review]:checked")].map((input) => input.dataset.focusedReview);
+    return;
+  }
   const field = event.target.closest("[data-focused-field]");
   if (!field || focusedStudyIndex < 0) return;
   const draft = focusedDraftFor(focusedStudyIndex);
