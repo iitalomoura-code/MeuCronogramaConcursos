@@ -138,6 +138,14 @@ const els = {
   mobilePlanTitle: document.querySelector("#mobilePlanTitle"),
   mobileDrawerBackdrop: document.querySelector("#mobileDrawerBackdrop"),
   planSelect: document.querySelector("#planSelect"),
+  planSwitcherButton: document.querySelector("#planSwitcherButton"),
+  planPopover: document.querySelector("#planPopover"),
+  activePlanName: document.querySelector("#activePlanName"),
+  activePlanRole: document.querySelector("#activePlanRole"),
+  openPlanSwitcherButton: document.querySelector("#openPlanSwitcherButton"),
+  openManagePlanButton: document.querySelector("#openManagePlanButton"),
+  contestPlanContext: document.querySelector("#contestPlanContext"),
+  contestPlanMenuButton: document.querySelector("#contestPlanMenuButton"),
   newPlanButton: document.querySelector("#newPlanButton"),
   planMenuButton: document.querySelector("#planMenuButton"),
   planMenu: document.querySelector("#planMenu"),
@@ -148,11 +156,29 @@ const els = {
   confirmDeletePlanButton: document.querySelector("#confirmDeletePlanButton"),
   duplicatePlanModal: document.querySelector("#duplicatePlanModal"),
   duplicatePlanContent: document.querySelector("#duplicatePlanContent"),
+  duplicatePlanData: document.querySelector("#duplicatePlanData"),
+  duplicatePlanPriorities: document.querySelector("#duplicatePlanPriorities"),
+  duplicatePlanName: document.querySelector("#duplicatePlanName"),
   duplicatePlanCycleConfig: document.querySelector("#duplicatePlanCycleConfig"),
   duplicatePlanNotebook: document.querySelector("#duplicatePlanNotebook"),
   cancelDuplicatePlanButton: document.querySelector("#cancelDuplicatePlanButton"),
   cancelDuplicatePlanBackdrop: document.querySelector("#cancelDuplicatePlanBackdrop"),
   confirmDuplicatePlanButton: document.querySelector("#confirmDuplicatePlanButton"),
+  newPlanModal: document.querySelector("#newPlanModal"),
+  newPlanName: document.querySelector("#newPlanName"),
+  newPlanBoard: document.querySelector("#newPlanBoard"),
+  newPlanRole: document.querySelector("#newPlanRole"),
+  newPlanExamDate: document.querySelector("#newPlanExamDate"),
+  newPlanStartDate: document.querySelector("#newPlanStartDate"),
+  newPlanWeeklyHours: document.querySelector("#newPlanWeeklyHours"),
+  newPlanBlockDuration: document.querySelector("#newPlanBlockDuration"),
+  cancelNewPlanButton: document.querySelector("#cancelNewPlanButton"),
+  cancelNewPlanBackdrop: document.querySelector("#cancelNewPlanBackdrop"),
+  confirmNewPlanButton: document.querySelector("#confirmNewPlanButton"),
+  managePlanModal: document.querySelector("#managePlanModal"),
+  managePlanDetails: document.querySelector("#managePlanDetails"),
+  closeManagePlanButton: document.querySelector("#closeManagePlanButton"),
+  cancelManagePlanBackdrop: document.querySelector("#cancelManagePlanBackdrop"),
   contestName: document.querySelector("#contestName"),
   examBoard: document.querySelector("#examBoard"),
   jobRole: document.querySelector("#jobRole"),
@@ -913,7 +939,7 @@ function openMobileDrawer(trigger = els.mobileMenuButton, { openSettings = false
   }
   els.mobileMenuButton?.setAttribute("aria-expanded", "true");
   if (openSettings) toggleSettingsMenu();
-  window.setTimeout(() => (openSettings ? els.settingsToggleButton : els.planSelect)?.focus(), 0);
+  window.setTimeout(() => (openSettings ? els.settingsToggleButton : els.planSwitcherButton)?.focus(), 0);
 }
 
 function closeMobileDrawer({ restoreFocus = true } = {}) {
@@ -1042,6 +1068,7 @@ function switchTab(tabName, activeButton = null) {
   }
   closeSettingsMenu();
   closePlanMenu();
+  closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
   const run = () => activateTab(tabName, activeButton);
   if (!prefersReducedMotion() && document.startViewTransition) {
@@ -6741,7 +6768,53 @@ function writePlansIndex(plans = state.plans) {
 function renderPlanSelect() {
   if (!els.planSelect) return;
   els.planSelect.innerHTML = state.plans.map((plan) => `<option value="${plan.id}" ${plan.id === state.currentPlanId ? "selected" : ""}>${escapeHtml(planVisibleName(plan))}</option>`).join("");
+  const current = activePlan();
+  const currentRole = els.jobRole?.value?.trim() || "";
+  if (els.activePlanName) els.activePlanName.textContent = planVisibleName(current || {});
+  if (els.activePlanRole) {
+    els.activePlanRole.textContent = currentRole;
+    els.activePlanRole.hidden = !currentRole;
+  }
+  if (els.contestPlanContext) els.contestPlanContext.textContent = `Planejamento: ${planVisibleName(current || {})}`;
+  renderPlanPopover();
   updateMobilePlanTitle();
+}
+
+function planRoleFor(plan) {
+  if (!plan) return "";
+  if (plan.id === state.currentPlanId) return els.jobRole?.value?.trim() || "";
+  try {
+    return JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "{}").form?.jobRole?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function renderPlanPopover() {
+  if (!els.planPopover) return;
+  const items = state.plans.map((plan) => {
+    const active = plan.id === state.currentPlanId;
+    const role = planRoleFor(plan);
+    return `<button type="button" class="plan-popover-item${active ? " active" : ""}" data-switch-plan="${escapeHtml(plan.id)}" aria-current="${active ? "true" : "false"}"><span><strong>${active ? "✓ " : ""}${escapeHtml(planVisibleName(plan))}</strong>${role ? `<small>${escapeHtml(role)}</small>` : ""}</span></button>`;
+  }).join("");
+  els.planPopover.innerHTML = `<div class="plan-popover-heading">Planejamentos</div><div class="plan-popover-list">${items || "<p>Nenhum planejamento criado.</p>"}</div><div class="plan-popover-divider"></div><button type="button" class="plan-popover-manage" data-open-manage-plan>Gerenciar planejamentos</button>`;
+}
+
+function closePlanPopover({ restoreFocus = false } = {}) {
+  if (!els.planPopover) return;
+  const wasOpen = !els.planPopover.hidden;
+  els.planPopover.hidden = true;
+  els.planSwitcherButton?.setAttribute("aria-expanded", "false");
+  if (restoreFocus && wasOpen) els.planSwitcherButton?.focus();
+}
+
+function togglePlanPopover() {
+  if (!els.planPopover) return;
+  closeSettingsMenu();
+  const open = els.planPopover.hidden;
+  els.planPopover.hidden = !open;
+  els.planSwitcherButton?.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) els.planPopover.querySelector(".plan-popover-item.active, .plan-popover-item")?.focus();
 }
 
 function formState() {
@@ -7350,33 +7423,119 @@ function blankAppSnapshot(name = "") {
 
 function switchPlan(planId) {
   if (!planId || planId === state.currentPlanId) return;
+  const previousTab = getActiveTabName();
   saveAppStateNow("Salvo");
   state.currentPlanId = planId;
   localStorage.setItem(ACTIVE_PLAN_KEY, planId);
   renderPlanSelect();
   const raw = localStorage.getItem(planStorageKey(planId));
   applyAppSnapshot(raw ? JSON.parse(raw) : blankAppSnapshot());
+  const previousTarget = [...els.tabs].find((button) => button.dataset.tabTarget === previousTab);
+  activateTab(previousTarget?.getAttribute("aria-disabled") === "false" ? previousTab : "continuar");
   setSaveStatus("Planejamento carregado");
 }
 
-async function createNewPlan() {
+function openNewPlanModal() {
+  if (!els.newPlanModal) return;
+  closeSettingsMenu();
+  closePlanPopover();
+  const defaults = { weeklyHours: els.weeklyHours?.value || "24", blockDuration: els.blockDuration?.value || "1.5", planStartDate: els.planStartDate?.value || "" };
+  if (els.newPlanName) els.newPlanName.value = "";
+  if (els.newPlanBoard) els.newPlanBoard.value = "";
+  if (els.newPlanRole) els.newPlanRole.value = "";
+  if (els.newPlanExamDate) els.newPlanExamDate.value = "";
+  if (els.newPlanStartDate) els.newPlanStartDate.value = defaults.planStartDate;
+  if (els.newPlanWeeklyHours) els.newPlanWeeklyHours.value = defaults.weeklyHours;
+  if (els.newPlanBlockDuration) els.newPlanBlockDuration.value = defaults.blockDuration;
+  els.newPlanModal.hidden = false;
+  window.setTimeout(() => els.newPlanName?.focus(), 0);
+}
+
+function closeNewPlanModal() {
+  if (!els.newPlanModal) return;
+  els.newPlanModal.hidden = true;
+  els.newPlanButton?.focus();
+}
+
+function createNewPlan() {
+  const name = els.newPlanName?.value.trim() || "";
+  const hours = Number(els.newPlanWeeklyHours?.value);
+  if (!name) {
+    showToast("Informe o nome do concurso para criar o planejamento.");
+    els.newPlanName?.focus();
+    return;
+  }
+  if (!Number.isFinite(hours) || hours <= 0) {
+    showToast("Informe uma carga horária válida.");
+    els.newPlanWeeklyHours?.focus();
+    return;
+  }
   saveAppStateNow("Salvo");
-  const name = await dialogPrompt("Nome do novo concurso:", "Novo concurso", { title: "Novo concurso", label: "Nome exibido" });
-  if (name === null) return;
-  const plan = createPlanMeta(name.trim() || "Novo concurso");
+  const plan = createPlanMeta(name);
   plan.customName = plan.name;
+  const snapshot = blankAppSnapshot(plan.name);
+  snapshot.form = {
+    ...snapshot.form,
+    contestName: name,
+    examBoard: els.newPlanBoard?.value.trim() || "",
+    jobRole: els.newPlanRole?.value.trim() || "",
+    examDate: els.newPlanExamDate?.value || "",
+    planStartDate: els.newPlanStartDate?.value || "",
+    weeklyHours: String(hours),
+    blockDuration: els.newPlanBlockDuration?.value || "1.5",
+  };
   state.plans.push(plan);
   state.currentPlanId = plan.id;
   writePlansIndex();
   localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
+  localStorage.setItem(planStorageKey(plan.id), JSON.stringify(snapshot));
+  closeNewPlanModal();
   renderPlanSelect();
-  applyAppSnapshot(blankAppSnapshot(plan.name));
+  applyAppSnapshot(snapshot);
   saveAppStateNow("Novo concurso criado");
-  switchTab("concurso");
+  switchTab("conteudo");
 }
 
 function activePlan() {
   return state.plans.find((plan) => plan.id === state.currentPlanId) || null;
+}
+
+function openManagePlanModal() {
+  const plan = activePlan();
+  if (!plan || !els.managePlanModal) return;
+  closeSettingsMenu();
+  closePlanPopover();
+  const form = formState();
+  const createdAt = plan.createdAt ? new Date(plan.createdAt).toLocaleDateString("pt-BR") : "Não informado";
+  if (els.managePlanDetails) {
+    els.managePlanDetails.innerHTML = [
+      ["Nome", planVisibleName(plan)],
+      ["Banca", form.examBoard || "Não informada"],
+      ["Cargo", form.jobRole || "Não informado"],
+      ["Data da prova", form.examDate ? new Date(`${form.examDate}T12:00:00`).toLocaleDateString("pt-BR") : "Não informada"],
+      ["Criado em", createdAt],
+    ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  }
+  els.managePlanModal.hidden = false;
+  window.setTimeout(() => els.managePlanModal.querySelector("[data-manage-rename]")?.focus(), 0);
+}
+
+function closeManagePlanModal() {
+  if (!els.managePlanModal) return;
+  els.managePlanModal.hidden = true;
+}
+
+function exportCurrentPlan() {
+  const snapshot = captureAppState();
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${planVisibleName(activePlan() || {}).replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "planejamento"}-backup.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  rememberBackupExport(snapshot.version || 1);
+  showToast("Backup deste planejamento exportado.");
 }
 
 function closePlanMenu() {
@@ -7398,9 +7557,13 @@ function togglePlanMenu() {
 function openDuplicatePlanModal() {
   if (!els.duplicatePlanModal || !activePlan()) return;
   closePlanMenu();
+  closeManagePlanModal();
   if (els.duplicatePlanContent) els.duplicatePlanContent.checked = true;
+  if (els.duplicatePlanData) els.duplicatePlanData.checked = true;
+  if (els.duplicatePlanPriorities) els.duplicatePlanPriorities.checked = true;
   if (els.duplicatePlanCycleConfig) els.duplicatePlanCycleConfig.checked = false;
   if (els.duplicatePlanNotebook) els.duplicatePlanNotebook.checked = false;
+  if (els.duplicatePlanName) els.duplicatePlanName.value = `Cópia de ${planVisibleName(activePlan() || {})}`;
   els.duplicatePlanModal.hidden = false;
   els.confirmDuplicatePlanButton?.focus();
 }
@@ -7408,7 +7571,7 @@ function openDuplicatePlanModal() {
 function closeDuplicatePlanModal() {
   if (!els.duplicatePlanModal) return;
   els.duplicatePlanModal.hidden = true;
-  els.planMenuButton?.focus();
+  els.planSwitcherButton?.focus();
 }
 
 function snapshotClone(value) {
@@ -7420,21 +7583,17 @@ function duplicateCurrentPlan() {
   const sourcePlan = activePlan();
   if (!sourcePlan) return;
   const source = captureAppState();
-  const nextName = `${planVisibleName(sourcePlan)} - cópia`;
+  const nextName = els.duplicatePlanName?.value.trim() || `Cópia de ${planVisibleName(sourcePlan)}`;
   const plan = createPlanMeta(nextName);
   plan.customName = nextName;
+  const copyData = Boolean(els.duplicatePlanData?.checked);
   const copyContent = Boolean(els.duplicatePlanContent?.checked);
+  const copyPriorities = Boolean(els.duplicatePlanPriorities?.checked);
   const copyCycleConfig = Boolean(els.duplicatePlanCycleConfig?.checked);
   const copyNotebook = Boolean(els.duplicatePlanNotebook?.checked);
   const duplicate = blankAppSnapshot(nextName);
-  duplicate.form = {
-    ...duplicate.form,
-    contestName: nextName,
-    examBoard: source.form?.examBoard || "",
-    jobRole: source.form?.jobRole || "",
-    examDate: source.form?.examDate || "",
-    planStartDate: source.form?.planStartDate || "",
-  };
+  if (copyData) duplicate.form = { ...duplicate.form, contestName: nextName, examBoard: source.form?.examBoard || "", jobRole: source.form?.jobRole || "", examDate: source.form?.examDate || "", planStartDate: source.form?.planStartDate || "" };
+  else duplicate.form.contestName = nextName;
   if (copyCycleConfig) {
     ["weeklyHours", "blockDuration", "referenceWeek", "overrideWeeklyHours", "overrideCycleEnabled", "allowResidualBlock", "dailyHours"].forEach((key) => {
       if (source.form && key in source.form) duplicate.form[key] = snapshotClone(source.form[key]);
@@ -7444,7 +7603,7 @@ function duplicateCurrentPlan() {
     duplicate.programText = source.programText || "";
     duplicate.rows = snapshotClone(Array.isArray(source.rows) ? source.rows : []);
     duplicate.confirmed = Boolean(source.confirmed);
-    duplicate.planningBase = snapshotClone(source.planningBase || null);
+    duplicate.planningBase = copyPriorities ? snapshotClone(source.planningBase || null) : null;
   }
   if (copyNotebook) duplicate.notebook = snapshotClone(source.notebook || {});
   state.plans.push(plan);
@@ -7464,6 +7623,7 @@ async function renameCurrentPlan() {
   const plan = activePlan();
   if (!plan) return;
   closePlanMenu();
+  closeManagePlanModal();
   const currentName = planVisibleName(plan);
   const nextName = await dialogPrompt("Novo nome do concurso:", currentName, { title: "Renomear concurso", label: "Nome exibido" });
   if (nextName === null) return;
@@ -7480,6 +7640,7 @@ function openDeletePlanModal() {
   const plan = activePlan();
   if (!plan || !els.deletePlanModal) return;
   closePlanMenu();
+  closeManagePlanModal();
   if (els.deletePlanQuestion) {
     els.deletePlanQuestion.textContent = `Excluir o planejamento '${planVisibleName(plan)}'?`;
   }
@@ -7503,6 +7664,7 @@ function deleteCurrentPlan() {
   localStorage.removeItem(planStorageKey(deletedId));
   let remaining = state.plans.filter((item) => item.id !== deletedId);
   let nextPlan = newestPlan(remaining);
+  const wasLastPlan = !nextPlan;
 
   if (!nextPlan) {
     nextPlan = createPlanMeta("Novo concurso");
@@ -7521,10 +7683,30 @@ function deleteCurrentPlan() {
   applyAppSnapshot(raw ? JSON.parse(raw) : blankAppSnapshot(planVisibleName(nextPlan)));
   saveAppStateNow("Planejamento exclu\u00eddo");
   showToast("Planejamento exclu\u00eddo.");
-  switchTab("continuar");
+  if (wasLastPlan) openNewPlanModal();
+  else switchTab("continuar");
 }
 
 els.tabs.forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tabTarget, button)));
+els.planSwitcherButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  togglePlanPopover();
+});
+els.planPopover?.addEventListener("click", (event) => {
+  const planButton = event.target.closest("[data-switch-plan]");
+  if (planButton) {
+    switchPlan(planButton.dataset.switchPlan);
+    closePlanPopover({ restoreFocus: true });
+    return;
+  }
+  if (event.target.closest("[data-open-manage-plan]")) openManagePlanModal();
+});
+els.openPlanSwitcherButton?.addEventListener("click", () => {
+  closeSettingsMenu();
+  togglePlanPopover();
+});
+els.openManagePlanButton?.addEventListener("click", openManagePlanModal);
+els.contestPlanMenuButton?.addEventListener("click", openManagePlanModal);
 els.planMenuButton?.addEventListener("click", (event) => {
   event.stopPropagation();
   togglePlanMenu();
@@ -7543,6 +7725,17 @@ els.planMenu?.addEventListener("click", (event) => {
 els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
 els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
 els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
+els.cancelNewPlanButton?.addEventListener("click", closeNewPlanModal);
+els.cancelNewPlanBackdrop?.addEventListener("click", closeNewPlanModal);
+els.confirmNewPlanButton?.addEventListener("click", createNewPlan);
+els.closeManagePlanButton?.addEventListener("click", closeManagePlanModal);
+els.cancelManagePlanBackdrop?.addEventListener("click", closeManagePlanModal);
+els.managePlanModal?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-manage-rename]")) renameCurrentPlan();
+  if (event.target.closest("[data-manage-duplicate]")) openDuplicatePlanModal();
+  if (event.target.closest("[data-manage-export]")) exportCurrentPlan();
+  if (event.target.closest("[data-manage-delete]")) openDeletePlanModal();
+});
 els.cancelDuplicatePlanButton?.addEventListener("click", closeDuplicatePlanModal);
 els.cancelDuplicatePlanBackdrop?.addEventListener("click", closeDuplicatePlanModal);
 els.confirmDuplicatePlanButton?.addEventListener("click", duplicateCurrentPlan);
@@ -7552,6 +7745,10 @@ els.mobileMenuButton?.addEventListener("click", () => {
 });
 els.mobileSettingsButton?.addEventListener("click", () => openMobileDrawer(els.mobileSettingsButton, { openSettings: true }));
 els.mobileSaveButton?.addEventListener("click", () => saveAppStateNow("Dados salvos"));
+els.mobilePlanTitle?.addEventListener("click", () => {
+  openMobileDrawer(els.mobilePlanTitle);
+  window.setTimeout(togglePlanPopover, 0);
+});
 els.mobileDrawerBackdrop?.addEventListener("click", () => closeMobileDrawer());
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-focused]")) {
@@ -7702,7 +7899,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && focusedStudyIndex >= 0) closeFocusedStudy();
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
-els.newPlanButton?.addEventListener("click", createNewPlan);
+els.newPlanButton?.addEventListener("click", openNewPlanModal);
 if (els.fileInput) els.fileInput.addEventListener("change", async () => {
   const file = els.fileInput.files[0];
   if (!file) return;
@@ -8588,6 +8785,7 @@ document.addEventListener("change", scheduleAutoSave);
 document.addEventListener("click", (event) => {
   if (!event.target.closest("#settingsMenu, #settingsToggleButton")) closeSettingsMenu();
   if (!event.target.closest("#planMenu, #planMenuButton")) closePlanMenu();
+  if (!event.target.closest("#planPopover, #planSwitcherButton, #openPlanSwitcherButton")) closePlanPopover();
   if (event.target.closest("button, .tab-button, [data-tab-target]")) {
     scheduleAutoSave();
   }
@@ -8601,8 +8799,11 @@ document.addEventListener("keydown", (event) => {
     }
     closeSettingsMenu({ restoreFocus: true });
     if (closePlanMenu()) els.planMenuButton?.focus();
+    closePlanPopover({ restoreFocus: true });
     closeDeletePlanModal();
     closeDuplicatePlanModal();
+    closeNewPlanModal();
+    closeManagePlanModal();
     return;
   }
   const target = event.target;

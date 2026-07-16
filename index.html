@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260716-navigation" />
+    <link rel="stylesheet" href="./styles.css?v=20260716-plan-switcher" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -19,7 +19,7 @@
     <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
     <header class="mobile-topbar" aria-label="Navegação móvel">
       <button id="mobileMenuButton" class="mobile-topbar-button" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="appSidebar"><i data-lucide="menu"></i></button>
-      <span id="mobilePlanTitle" class="mobile-plan-title">Meu Cronograma</span>
+      <button id="mobilePlanTitle" class="mobile-plan-title" type="button" aria-label="Trocar planejamento">Meu Cronograma</button>
       <div class="mobile-topbar-actions">
         <button id="mobileSaveButton" class="mobile-topbar-button" type="button" aria-label="Salvar dados localmente"><i data-lucide="save"></i></button>
         <button id="mobileSettingsButton" class="mobile-topbar-button" type="button" aria-label="Abrir configurações"><i data-lucide="settings"></i></button>
@@ -40,12 +40,17 @@
           <div id="settingsMenu" class="settings-popover" hidden>
             <div class="settings-popover-header">
               <strong>Configurações e dados</strong>
-              <span>Seus dados permanecem neste navegador ou no arquivo conectado.</span>
+              <span id="saveStatus" class="save-status">Dados salvos localmente</span>
             </div>
             <div class="backup-actions">
+              <section class="settings-section" aria-labelledby="plansSettingsHeading">
+                <h2 id="plansSettingsHeading">Planejamentos</h2>
+                <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo planejamento</span></button>
+                <button id="openPlanSwitcherButton" class="backup-button" type="button"><i data-lucide="repeat-2"></i><span>Trocar planejamento</span></button>
+                <button id="openManagePlanButton" class="backup-button" type="button"><i data-lucide="settings-2"></i><span>Gerenciar atual</span></button>
+              </section>
               <section class="settings-section" aria-labelledby="localDataHeading">
-                <h2 id="localDataHeading">Dados locais</h2>
-                <button id="saveNowButton" class="backup-button" type="button"><i data-lucide="save"></i><span>Salvar agora</span></button>
+                <h2 id="localDataHeading">Dados</h2>
                 <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Exportar backup</span></button>
                 <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar backup</span></label>
                 <input id="importBackupInput" type="file" accept="application/json,.json" />
@@ -55,43 +60,41 @@
                 <span id="backupReminderNotice" class="backup-reminder-notice" hidden></span>
                 <button id="backupNowButton" class="backup-button backup-now-button" type="button"><i data-lucide="shield-check"></i><span>Fazer backup agora</span></button>
               </div>
-              <section class="settings-section" aria-labelledby="connectedFileHeading">
-                <h2 id="connectedFileHeading">Arquivo conectado</h2>
-                <p id="connectedFileStatus" class="connected-file-status">Arquivo não conectado</p>
-                <div id="fileConnectionActions" class="settings-inline-actions">
-                  <button id="createDataFileButton" class="backup-button" type="button"><i data-lucide="file-plus-2"></i><span>Criar arquivo</span></button>
-                  <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Conectar arquivo</span></button>
-                </div>
-                <button id="saveDataFileButton" class="backup-button" type="button" disabled><i data-lucide="cloud-upload"></i><span>Salvar no arquivo conectado</span></button>
-                <button id="loadDataFileButton" class="backup-button" type="button" disabled><i data-lucide="folder-sync"></i><span>Carregar do arquivo conectado</span></button>
-                <button id="disconnectDataFileButton" class="text-action settings-disconnect-button" type="button" hidden>Desconectar arquivo</button>
+              <section class="settings-section" aria-labelledby="preferencesHeading">
+                <h2 id="preferencesHeading">Preferências</h2>
+                <button id="settingsAppearanceButton" class="backup-button" type="button"><i data-lucide="sun-moon"></i><span>Aparência</span></button>
+                <details class="settings-shortcuts-help"><summary>Atalhos de teclado</summary><p>Alt + 1 Continuar · Alt + 2 Ciclo · Alt + 3 Revisões · Alt + 4 Evolução · Ctrl/Cmd + S Salvar</p></details>
               </section>
-              <section class="settings-section settings-maintenance" aria-labelledby="cycleMaintenanceHeading">
-                <h2 id="cycleMaintenanceHeading">Manutenção do ciclo</h2>
-                <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Restaurar ciclo anterior</span></button>
-                <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
-              </section>
-              <details class="settings-shortcuts-help"><summary>Atalhos do teclado</summary><p>Alt + 1 Continuar · Alt + 2 Ciclo · Alt + 3 Revisões · Alt + 4 Evolução · Ctrl/Cmd + S Salvar</p></details>
-              <span id="saveStatus" class="save-status">Dados salvos localmente</span>
+              <details class="settings-advanced">
+                <summary>Opções avançadas</summary>
+                <section class="settings-section" aria-labelledby="connectedFileHeading">
+                  <h2 id="connectedFileHeading">Arquivo externo</h2>
+                  <p id="connectedFileStatus" class="connected-file-status">Arquivo não conectado</p>
+                  <div id="fileConnectionActions" class="settings-inline-actions">
+                    <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Configurar arquivo externo</span></button>
+                    <button id="createDataFileButton" class="backup-button" type="button" hidden><i data-lucide="file-plus-2"></i><span>Criar arquivo</span></button>
+                  </div>
+                  <button id="saveDataFileButton" class="backup-button" type="button" disabled><i data-lucide="cloud-upload"></i><span>Salvar no arquivo conectado</span></button>
+                  <button id="loadDataFileButton" class="backup-button" type="button" disabled><i data-lucide="folder-sync"></i><span>Carregar do arquivo conectado</span></button>
+                  <button id="disconnectDataFileButton" class="text-action settings-disconnect-button" type="button" hidden>Desconectar arquivo</button>
+                </section>
+                <section class="settings-section settings-maintenance" aria-labelledby="cycleMaintenanceHeading">
+                  <h2 id="cycleMaintenanceHeading">Manutenção do ciclo</h2>
+                  <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Restaurar ciclo anterior</span></button>
+                  <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
+                </section>
+              </details>
             </div>
           </div>
         </div>
-        <div class="contest-switcher sidebar-plan">
-          <label for="planSelect">Planejamento atual</label>
-          <div class="plan-context-card">
-            <select id="planSelect"></select>
-            <div class="plan-actions-row">
-              <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo concurso</span></button>
-              <div class="plan-menu-wrap">
-                <button id="planMenuButton" class="plan-menu-button" type="button" aria-label="Abrir op&ccedil;&otilde;es do planejamento" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
-                <div id="planMenu" class="plan-menu" hidden>
-                  <button type="button" data-rename-plan>Renomear concurso</button>
-                  <button type="button" data-duplicate-plan>Duplicar planejamento</button>
-                  <button type="button" class="danger" data-delete-plan>Excluir concurso</button>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="sidebar-plan">
+          <span class="sidebar-plan-label">Planejamento atual</span>
+          <button id="planSwitcherButton" class="plan-switcher-button" type="button" aria-label="Trocar planejamento" aria-expanded="false" aria-controls="planPopover">
+            <span class="plan-switcher-copy"><strong id="activePlanName">Novo concurso</strong><small id="activePlanRole" hidden></small></span>
+            <i data-lucide="chevron-down"></i>
+          </button>
+          <select id="planSelect" class="visually-hidden" tabindex="-1" aria-hidden="true"></select>
+          <div id="planPopover" class="plan-popover" role="dialog" aria-label="Planejamentos" hidden></div>
         </div>
         <nav class="tabs sidebar-flow" aria-label="Se&ccedil;&otilde;es do planejamento">
           <section class="sidebar-nav-group" aria-label="Estudo"><h2>Estudo</h2>
@@ -132,7 +135,9 @@
               <span class="section-kicker">Dados iniciais</span>
               <h2>Dados do Concurso</h2>
               <p>Configure as informa&ccedil;&otilde;es principais para gerar seu cronograma de estudos.</p>
+              <span id="contestPlanContext" class="contest-plan-context">Planejamento ativo</span>
             </div>
+            <button id="contestPlanMenuButton" class="header-menu-button" type="button" aria-label="Gerenciar planejamento"><i data-lucide="ellipsis"></i></button>
           </div>
 
           <div class="contest-form-card">
@@ -580,6 +585,48 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
+    <div id="newPlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="newPlanTitle">
+      <button id="cancelNewPlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Cancelar criação"></button>
+      <section class="plan-delete-dialog new-plan-dialog">
+        <div>
+          <span class="section-kicker">Novo planejamento</span>
+          <h2 id="newPlanTitle">Criar novo planejamento</h2>
+          <p>Informe os dados básicos do concurso. O conteúdo programático poderá ser adicionado na etapa seguinte.</p>
+        </div>
+        <div class="new-plan-grid">
+          <label>Nome do concurso<input id="newPlanName" type="text" placeholder="Ex.: TCE-PE" required /></label>
+          <label>Banca<input id="newPlanBoard" type="text" placeholder="Ex.: FGV" /></label>
+          <label>Cargo<input id="newPlanRole" type="text" placeholder="Ex.: Analista" /></label>
+          <label>Data da prova<input id="newPlanExamDate" type="date" /></label>
+          <label>Data inicial<input id="newPlanStartDate" type="date" /></label>
+          <label>Carga horária do ciclo<input id="newPlanWeeklyHours" type="number" min="1" step="0.5" value="24" /></label>
+          <label>Duração padrão do bloco<select id="newPlanBlockDuration"><option value="1">1h</option><option value="1.5" selected>1h30</option><option value="2">2h</option><option value="2.5">2h30</option></select></label>
+        </div>
+        <div class="plan-delete-actions">
+          <button id="cancelNewPlanButton" class="ghost-button" type="button">Cancelar</button>
+          <button id="confirmNewPlanButton" class="primary-button" type="button">Criar planejamento</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="managePlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="managePlanTitle">
+      <button id="cancelManagePlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Fechar gerenciamento"></button>
+      <section class="plan-delete-dialog manage-plan-dialog">
+        <div>
+          <span class="section-kicker">Planejamento ativo</span>
+          <h2 id="managePlanTitle">Gerenciar planejamento</h2>
+          <dl id="managePlanDetails" class="manage-plan-details"></dl>
+        </div>
+        <div class="manage-plan-actions">
+          <button type="button" class="ghost-button" data-manage-rename>Renomear</button>
+          <button type="button" class="ghost-button" data-manage-duplicate>Duplicar</button>
+          <button type="button" class="ghost-button" data-manage-export>Exportar este planejamento</button>
+          <button type="button" class="ghost-button danger-button" data-manage-delete>Excluir planejamento</button>
+        </div>
+        <div class="plan-delete-actions"><button id="closeManagePlanButton" class="ghost-button" type="button">Fechar</button></div>
+      </section>
+    </div>
+
     <div id="duplicatePlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="duplicatePlanTitle">
       <button id="cancelDuplicatePlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Cancelar duplicação"></button>
       <section class="plan-delete-dialog duplicate-plan-dialog">
@@ -588,7 +635,10 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <h2 id="duplicatePlanTitle">O que deseja copiar?</h2>
           <p>Os dados do concurso serão copiados. Desempenho, histórico de ciclos e revisões não serão incluídos.</p>
           <div class="duplicate-plan-options">
-            <label><input id="duplicatePlanContent" type="checkbox" checked /> Conteúdo programático e prioridades</label>
+            <label>Nome da cópia<input id="duplicatePlanName" type="text" /></label>
+            <label><input id="duplicatePlanData" type="checkbox" checked /> Dados do concurso</label>
+            <label><input id="duplicatePlanContent" type="checkbox" checked /> Conteúdo programático</label>
+            <label><input id="duplicatePlanPriorities" type="checkbox" checked /> Prioridades</label>
             <label><input id="duplicatePlanCycleConfig" type="checkbox" /> Configurações do ciclo</label>
             <label><input id="duplicatePlanNotebook" type="checkbox" /> Caderno de resumos</label>
           </div>
@@ -600,9 +650,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./js/adaptive-review.js?v=20260716-navigation"></script>
+    <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260716-navigation"></script>
+    <script src="./app.js?v=20260716-plan-switcher"></script>
   </body>
 </html>
 
