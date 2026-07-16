@@ -908,12 +908,16 @@ function activateTab(tabName, activeButton = null) {
     button.classList.toggle("active", isActive);
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
-  if (tabName === "erros") renderErrors();
   if (tabName === "continuar") {
-    renderContinuePanel();
+    safeRender("Continuar", renderContinuePanel, renderContinueError);
   } else {
     removeFocusedStudyOverlay();
   }
+  if (tabName === "cronograma") safeRender("Ciclo atual", renderGeneratedSchedule);
+  if (tabName === "revisoes") safeRender("Revisões", renderReviews);
+  if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
+  if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
+  if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator(document.querySelector(`[data-tab-target="${tabName}"]`));
     animatePanelNumbers(tabName);
@@ -1612,7 +1616,7 @@ function markUnconfirmed() {
   els.confirmationStatus.classList.remove("confirmed");
   ["pesos", "disponibilidade", "cronograma"].forEach((tab) => setTabEnabled(tab, false));
   updateContentFlowSteps();
-  renderGeneratedSchedule();
+  renderAppViews();
 }
 
 function selectedRows() {
@@ -2904,7 +2908,7 @@ async function generateSchedule() {
   const queue = buildAlternatingQueue(state.distribution, analysis);
   state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots), config.horasSemanaCronograma, config.duracaoBloco);
   setTabEnabled("cronograma", true);
-  renderGeneratedSchedule();
+  renderAppViews();
   lockCycle();
   switchTab("cronograma");
   if (analysis.status === "insufficient") {
@@ -2912,14 +2916,60 @@ async function generateSchedule() {
   }
 }
 
+function renderEvolutionError() {
+  if (els.evolutionGrid) els.evolutionGrid.innerHTML = "";
+  if (els.evolutionEmpty) {
+    els.evolutionEmpty.hidden = false;
+    els.evolutionEmpty.textContent = "Não foi possível montar o Painel de Evolução. Os dados permanecem salvos.";
+  }
+  if (els.evolutionSections) els.evolutionSections.hidden = true;
+}
+
+function renderContinueError() {
+  if (!els.continuePanel) return;
+  els.continuePanel.innerHTML = `<section class="continue-empty-card"><div><span class="section-kicker">Continue seu ciclo</span><h3>Não foi possível montar esta tela agora.</h3><p>Seus dados permanecem salvos. Atualize a página para tentar novamente.</p></div></section>`;
+}
+
+function showInitializationError(error) {
+  console.error("Falha durante a inicialização do planejamento:", error);
+  renderContinueError();
+  renderEvolutionError();
+  setSaveStatus("Falha ao restaurar a visualização; os dados não foram alterados");
+}
+
+function safeRender(name, callback, onError = null) {
+  try {
+    callback();
+    return true;
+  } catch (error) {
+    console.error(`Erro ao renderizar ${name}:`, error);
+    onError?.(error);
+    return false;
+  }
+}
+
+function renderAppViews(options = {}) {
+  const settings = {
+    cycle: true,
+    weekly: true,
+    completed: true,
+    reviews: true,
+    notebook: true,
+    continuePanel: true,
+    evolution: true,
+    ...options,
+  };
+  if (settings.cycle) safeRender("Ciclo atual", renderGeneratedSchedule);
+  if (settings.weekly) safeRender("Resultado do ciclo", renderWeeklyResult);
+  if (settings.completed) safeRender("Temas concluídos", renderCompleted);
+  if (settings.reviews) safeRender("Revisões", renderReviews);
+  if (settings.notebook) safeRender("Caderno de resumos", renderErrors);
+  if (settings.continuePanel) safeRender("Continuar", renderContinuePanel, renderContinueError);
+  if (settings.evolution) safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
+}
+
 function renderGeneratedSchedule() {
   if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
-  renderWeeklyResult();
-  renderCompleted();
-  renderReviews();
-  renderErrors();
-  renderEvolution();
-  renderContinuePanel();
 
   if (!state.generatedBlocks.length) {
     if (els.scheduleStatus) els.scheduleStatus.textContent = "Nenhum ciclo gerado";
@@ -3633,7 +3683,7 @@ function saveFocusedStudy() {
   focusedStudySession = null;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
-  renderGeneratedSchedule();
+  renderAppViews();
   if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
   else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
   else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");
@@ -4362,7 +4412,7 @@ function renderSubjectChart(subjects) {
 }
 
 function evolutionTopicCatalog() {
-  const rows = state.rows.filter((row) => row?.materia && row?.assunto);
+  const rows = (Array.isArray(state.rows) ? state.rows : []).filter((row) => row?.materia && row?.assunto);
   const source = rows.length
     ? rows.map((row) => ({
       materia: row.materia,
@@ -4558,12 +4608,13 @@ function performanceTrend(entries = []) {
 function performanceMetrics(entries = []) {
   const totals = performanceTotalsFromEntries(entries);
   const trend = performanceTrend(entries);
-  const hours = entries.reduce((sum, entry) => sum + (Number(entry.horas) || 0), 0);
-  return { ...totals, trend, horas, hasTime: hours > 0 };
+  const horas = entries.reduce((sum, entry) => sum + (Number(entry.horas) || 0), 0);
+  return { ...totals, trend, horas, hasTime: horas > 0 };
 }
 
 function evolutionSubjectPlan(materia) {
-  const planning = (state.planningBase?.materias || []).find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia));
+  const materias = Array.isArray(state.planningBase?.materias) ? state.planningBase.materias : [];
+  const planning = materias.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia));
   if (!planning) return { materia, peso: 3, dominio: 3 };
   return planning;
 }
@@ -5153,7 +5204,7 @@ function restorePreviousCycle() {
     : state.reviews;
   if (state.generatedBlocks.length) setTabEnabled("cronograma", true);
   updateContestSummary();
-  renderGeneratedSchedule();
+  renderAppViews();
   switchTab("cronograma");
   saveAppStateNow("Ciclo anterior restaurado");
 }
@@ -5168,7 +5219,7 @@ function resetCycles() {
   state.cycleResults = [];
   state.reviews = [];
   setTabEnabled("cronograma", false);
-  renderGeneratedSchedule();
+  renderAppViews();
   updateContestSummary();
   if (state.planningBase) switchTab("pesos");
   saveAppStateNow("Ciclos reiniciados");
@@ -6645,6 +6696,7 @@ function resetPlanningAccess() {
 
 function applyAppSnapshot(saved = {}) {
   isRestoring = true;
+  try {
   resetPlanningAccess();
   applyFormState(saved.form);
   els.programText.value = saved.programText || "";
@@ -6695,10 +6747,13 @@ function applyAppSnapshot(saved = {}) {
     els.confirmationStatus.classList.add("confirmed");
   }
   updateContentFlowSteps();
-  renderGeneratedSchedule();
+  renderAppViews();
   applyLockState();
-  switchTab("continuar");
-  isRestoring = false;
+  const restoredTab = [...els.tabs].some((button) => button.dataset.tabTarget === saved.activeTab) ? saved.activeTab : "continuar";
+  activateTab(restoredTab);
+  } finally {
+    isRestoring = false;
+  }
 }
 
 function setSaveStatus(text) {
@@ -6800,8 +6855,10 @@ function restoreAppState() {
 
   try {
     applyAppSnapshot(JSON.parse(raw));
-  } catch {
-    return false;
+  } catch (error) {
+    console.error("Falha ao restaurar planejamento:", error);
+    showInitializationError(error);
+    return true;
   }
 
   setSaveStatus("Dados restaurados");
@@ -7970,6 +8027,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
     renderWeeklyResult();
     renderCompleted();
     renderEvolution();
+    renderContinuePanel();
     renderGeneratedSchedule();
     saveAppStateNow("Dura\u00e7\u00e3o atualizada");
     return;
@@ -7991,6 +8049,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
     renderCompleted();
     renderReviews();
     renderEvolution();
+    renderContinuePanel();
     updateDeadlineDisplays();
     performanceEditIndex = index;
     performanceSaveSessionId = createStudySessionId();
@@ -8008,6 +8067,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
     renderCompleted();
     renderReviews();
     renderEvolution();
+    renderContinuePanel();
     performanceEditIndex = index;
     performanceSaveSessionId = createStudySessionId();
     renderGeneratedSchedule();
@@ -8286,7 +8346,7 @@ renderHistory();
 if (!restoreAppState()) {
   renderRows();
   updateContestSummary();
-  renderGeneratedSchedule();
+  renderAppViews();
 }
 restoreRememberedDataFile();
 renderBackupReminder();
