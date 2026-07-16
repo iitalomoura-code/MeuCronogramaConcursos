@@ -13,6 +13,7 @@
   --card: #FFFFFF;
   --primary: #D97706;
   --primary-hover: #B45309;
+  --primary-contrast: #1E293B;
   --primary-soft: #FEF3E2;
   --primary-soft-text: #B45309;
   --success: #B45309;
@@ -64,6 +65,7 @@
   --card: #1A2234;
   --primary: #F59E0B;
   --primary-hover: #FBBF24;
+  --primary-contrast: #0F1420;
   --primary-soft: #3A2A12;
   --primary-soft-text: #FCD9A0;
   --success: #F59E0B;
@@ -781,7 +783,7 @@ svg {
 }
 
 :root[data-theme="night"] .ghost-button,
-:root[data-theme="night"] .compact-button,
+:root[data-theme="night"] .compact-button:not(.primary-button),
 :root[data-theme="night"] .notebook-toolbar button,
 :root[data-theme="night"] .file-button,
 :root[data-theme="night"] .topic-actions-menu summary,
@@ -1299,8 +1301,14 @@ textarea:focus {
 .primary-button {
   border-color: var(--primary);
   background: var(--primary);
-  color: #FFFFFF;
+  color: var(--primary-contrast);
   box-shadow: 0 6px 16px rgba(217, 119, 6, 0.24);
+}
+
+.primary-button > span,
+.primary-button > svg,
+.primary-button .lucide {
+  color: inherit;
 }
 
 .primary-button:hover {
@@ -4642,8 +4650,8 @@ details[open] > :not(summary),
 }
 
 :root[data-theme="night"] .ghost-button,
-:root[data-theme="night"] .compact-button,
-:root[data-theme="night"] .timer-button,
+:root[data-theme="night"] .compact-button:not(.primary-button),
+:root[data-theme="night"] .timer-button:not(.primary-button),
 :root[data-theme="night"] .priority-toggle,
 :root[data-theme="night"] .scale-button,
 :root[data-theme="night"] .review-chip,
