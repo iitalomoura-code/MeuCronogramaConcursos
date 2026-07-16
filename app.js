@@ -6,6 +6,9 @@ const LEGACY_APP_STATE_KEY = APP_STATE_KEY;
 const APP_THEME_KEY = "meu-cronograma-theme";
 const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
 const BACKUP_REMINDER_DAYS = 7;
+const EVOLUTION_MIN_SAMPLE_QUESTIONS = 10;
+const EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS = 30;
+const EVOLUTION_TREND_MARGIN = 0.03;
 const STATUS_OPTIONS = ["N\u00e3o iniciado", "Em andamento", "Conclu\u00eddo", "Reprogramar"];
 const REVIEW_INTERVALS = [
   { key: "24h", label: "24h", days: 1 },
@@ -111,6 +114,8 @@ let focusedStudySession = null;
 let focusedStudyDrafts = new Map();
 let focusedStudyTimerInterval = null;
 let focusedStudySaving = false;
+let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "attention" };
+let evolutionContext = null;
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
 const DATA_FILE_STORE = "handles";
@@ -217,6 +222,17 @@ const els = {
   evolutionGrid: document.querySelector("#evolutionGrid"),
   evolutionEmpty: document.querySelector("#evolutionEmpty"),
   evolutionSections: document.querySelector("#evolutionSections"),
+  evolutionPeriod: document.querySelector("#evolutionPeriod"),
+  evolutionSubjectFilter: document.querySelector("#evolutionSubjectFilter"),
+  evolutionActivityFilter: document.querySelector("#evolutionActivityFilter"),
+  evolutionSubjectSort: document.querySelector("#evolutionSubjectSort"),
+  evolutionProgress: document.querySelector("#evolutionProgress"),
+  evolutionPace: document.querySelector("#evolutionPace"),
+  evolutionPerformance: document.querySelector("#evolutionPerformance"),
+  evolutionChartDescription: document.querySelector("#evolutionChartDescription"),
+  evolutionRecommendation: document.querySelector("#evolutionRecommendation"),
+  evolutionTopicModal: document.querySelector("#evolutionTopicModal"),
+  exportEvolutionButton: document.querySelector("#exportEvolutionButton"),
   evolutionCycleBody: document.querySelector("#evolutionCycleBody"),
   evolutionSubjectBody: document.querySelector("#evolutionSubjectBody"),
   evolutionSubjectChart: document.querySelector("#evolutionSubjectChart"),
@@ -3948,6 +3964,7 @@ function saveStudyResult({
   block.tempoEstudado = nextHours;
   block.observacoes = String(notes || "").trim();
   block.pontosRevisar = Boolean(reviewPoints);
+  block.atualizadoEm = new Date().toISOString();
   setBlockReviewCycles(block, Array.isArray(reviewCycles) ? reviewCycles : reviewCyclesFromBlock(block));
 
   if (nextStatus === "Concluído") {
@@ -4344,96 +4361,650 @@ function renderSubjectChart(subjects) {
   `;
 }
 
+function evolutionTopicCatalog() {
+  const rows = state.rows.filter((row) => row?.materia && row?.assunto);
+  const source = rows.length
+    ? rows.map((row) => ({
+      materia: row.materia,
+      assunto: row.assunto,
+      estudar: row.estudar,
+      blocosSugeridos: Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto),
+    }))
+    : (state.planningBase?.materias || []).flatMap((materia) => (materia.assuntos || []).map((assunto) => ({
+      materia: materia.materia,
+      assunto: typeof assunto === "string" ? assunto : assunto.assunto,
+      estudar: "Sim",
+      blocosSugeridos: estimateThemeBlocks(typeof assunto === "string" ? assunto : assunto.assunto),
+    })));
+  const byKey = new Map();
+  source.forEach((topic) => {
+    const key = topicKey(topic.materia, topic.assunto);
+    if (!byKey.has(key)) byKey.set(key, topic);
+  });
+  return [...byKey.values()];
+}
+
+function evolutionCycleRecords() {
+  const finalized = Array.isArray(state.cycleResults) ? state.cycleResults.filter(Boolean) : [];
+  const fallback = !finalized.length
+    ? (state.cycleHistory || []).map((snapshot, index) => ({
+      ...cycleSummary(snapshot.generatedBlocks || [], `Ciclo ${index + 1}`),
+      finalizedAt: snapshot.savedAt || "",
+      referenceWeek: snapshot.referenceWeek || "",
+      isFallback: true,
+    }))
+    : [];
+  const records = (finalized.length ? finalized : fallback).map((record, index) => ({
+    ...record,
+    label: record.label || `Ciclo ${index + 1}`,
+    completed: Array.isArray(record.completed) ? record.completed : [],
+  }));
+  const live = liveCycleResult();
+  if (live) records.push(live);
+  return records;
+}
+
+function evolutionActivityLabel(value = "") {
+  const normalized = normalizeForMatch(value);
+  if (normalized.includes("revis")) return "Revisão";
+  if (normalized.includes("teoria") && normalized.includes("quest")) return "Teoria e questões";
+  if (normalized.includes("quest")) return "Questões";
+  if (normalized.includes("teoria")) return "Teoria";
+  return "Não informado";
+}
+
+function evolutionEntryDate(block = {}, fallback = "", isCurrent = false) {
+  const candidates = [block.atualizadoEm, block.completedAt, block.savedAt, block.concluidoEm, fallback].filter(Boolean);
+  for (const candidate of candidates) {
+    const date = candidate instanceof Date ? candidate : parseBrazilianDate(candidate) || new Date(candidate);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return isCurrent && (Number(block.questoes) > 0 || Number(block.tempoEstudado) > 0) ? new Date() : null;
+}
+
+function evolutionEntryFromBlock(block = {}, meta = {}) {
+  const ciclo = meta.ciclo || block.ciclo || currentCycleLabel();
+  const totalQuestoes = Math.max(0, Number(block.questoes) || 0);
+  const acertos = Math.min(Math.max(0, Number(block.acertos) || 0), totalQuestoes);
+  const status = normalizeStatus(block.status || (meta.completed ? "Concluído" : "Não iniciado"));
+  const date = evolutionEntryDate(block, meta.finalizedAt || "", Boolean(meta.current));
+  return {
+    id: `${ciclo}::${topicKey(block.materia, block.assunto)}`,
+    materia: block.materia || "",
+    assunto: block.assunto || "",
+    ciclo,
+    status,
+    questoes: totalQuestoes,
+    acertos,
+    percentual: totalQuestoes ? acertos / totalQuestoes : Number(block.percentual) || 0,
+    horas: Math.max(0, Number(block.tempoEstudado) || 0),
+    atividade: evolutionActivityLabel(block.tipoAtividade || block.tipo || ""),
+    reprogramacoes: Number(block.reprogramacoes) || (status === "Reprogramar" ? 1 : 0),
+    dificuldade: block.dificuldade || "",
+    date,
+    source: meta.source || "unknown",
+    completed: status === "Concluído" || Boolean(meta.completed),
+  };
+}
+
+function evolutionEntries() {
+  const records = evolutionCycleRecords();
+  const byId = new Map();
+  const add = (block, meta = {}) => {
+    if (!block?.materia || !block?.assunto) return;
+    const entry = evolutionEntryFromBlock(block, meta);
+    const previous = byId.get(entry.id);
+    const score = (candidate) => (candidate.questoes * 3) + (candidate.horas * 2) + (candidate.completed ? 1 : 0) + (candidate.source === "cycleResult" ? .5 : 0);
+    if (!previous || score(entry) >= score(previous)) byId.set(entry.id, entry);
+  };
+
+  const finalized = Array.isArray(state.cycleResults) && state.cycleResults.length;
+  if (finalized) {
+    state.cycleResults.forEach((result) => (result.completed || []).forEach((block) => add(block, {
+      ciclo: result.label,
+      finalizedAt: result.finalizedAt || result.savedAt || "",
+      completed: true,
+      source: "cycleResult",
+    })));
+  } else {
+    (state.cycleHistory || []).forEach((snapshot, index) => {
+      const ciclo = `Ciclo ${index + 1}`;
+      (snapshot.completedHistory || snapshot.generatedBlocks || []).forEach((block) => add(block, {
+        ciclo: block.ciclo || ciclo,
+        finalizedAt: snapshot.savedAt || "",
+        completed: normalizeStatus(block.status || "Concluído") === "Concluído",
+        source: "cycleHistory",
+      }));
+    });
+  }
+  (state.completedHistory || []).forEach((block) => add(block, {
+    ciclo: block.ciclo || currentCycleLabel(),
+    completed: true,
+    source: "completedHistory",
+  }));
+  (state.generatedBlocks || []).forEach((block) => add(block, {
+    ciclo: block.ciclo || currentCycleLabel(),
+    current: true,
+    completed: normalizeStatus(block.status) === "Concluído",
+    source: "current",
+  }));
+  return [...byId.values()];
+}
+
+function evolutionEntriesForView(view = evolutionView) {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const currentLabel = currentCycleLabel();
+  return evolutionEntries().filter((entry) => {
+    if (view.period === "cycle" && entry.ciclo !== currentLabel && entry.source !== "current") return false;
+    if (view.period === "30d" && (!entry.date || entry.date < thirtyDaysAgo)) return false;
+    if (view.subject !== "all" && normalizeForMatch(entry.materia) !== view.subject) return false;
+    if (view.activity !== "all" && entry.atividade !== view.activity) return false;
+    return true;
+  });
+}
+
+function evolutionProgressMetrics() {
+  const catalog = evolutionTopicCatalog();
+  const completedKeys = new Set(evolutionEntries().filter((entry) => entry.completed).map((entry) => topicKey(entry.materia, entry.assunto)));
+  const currentByTopic = new Map((state.generatedBlocks || []).map((block) => [topicKey(block.materia, block.assunto), normalizeStatus(block.status)]));
+  const selected = catalog.filter((topic) => normalizeForMatch(topic.estudar || "sim") !== "nao");
+  const removed = catalog.filter((topic) => normalizeForMatch(topic.estudar || "sim") === "nao");
+  const completed = selected.filter((topic) => completedKeys.has(topicKey(topic.materia, topic.assunto)));
+  const inProgress = selected.filter((topic) => !completedKeys.has(topicKey(topic.materia, topic.assunto)) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) === "Em andamento");
+  const pending = selected.filter((topic) => !completedKeys.has(topicKey(topic.materia, topic.assunto)) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) !== "Em andamento");
+  return {
+    catalog,
+    selected,
+    removed,
+    completed,
+    inProgress,
+    pending,
+    percent: selected.length ? completed.length / selected.length : null,
+  };
+}
+
+function performanceTotalsFromEntries(entries = []) {
+  const answered = entries.filter((entry) => Number(entry.questoes) > 0);
+  const totals = answered.reduce((total, entry) => {
+    total.questoes += Number(entry.questoes) || 0;
+    total.acertos += Math.min(Number(entry.acertos) || 0, Number(entry.questoes) || 0);
+    return total;
+  }, { questoes: 0, acertos: 0 });
+  return { ...totals, percentual: totals.questoes ? totals.acertos / totals.questoes : null, answered };
+}
+
+function performanceTrend(entries = []) {
+  const totals = performanceTotalsFromEntries(entries);
+  if (totals.questoes < EVOLUTION_MIN_SAMPLE_QUESTIONS) return { label: "Dados insuficientes", delta: null, confidence: "Amostra insuficiente" };
+  const ordered = [...totals.answered].sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0));
+  if (ordered.length < 2) return { label: "Dados insuficientes", delta: null, confidence: totals.questoes < EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS ? "Amostra pequena" : "Sem comparação equivalente" };
+  const recent = ordered.slice(-3);
+  const previous = ordered.slice(-6, -3);
+  if (!previous.length) return { label: "Dados insuficientes", delta: null, confidence: totals.questoes < EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS ? "Amostra pequena" : "Sem comparação equivalente" };
+  const recentPercent = performanceTotalsFromEntries(recent).percentual;
+  const previousPercent = performanceTotalsFromEntries(previous).percentual;
+  const delta = recentPercent - previousPercent;
+  const label = Math.abs(delta) < EVOLUTION_TREND_MARGIN ? "Estabilidade" : delta > 0 ? "Melhora" : "Queda";
+  return {
+    label,
+    delta,
+    recentPercent,
+    previousPercent,
+    confidence: totals.questoes < EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS ? "Amostra pequena" : "Análise disponível",
+  };
+}
+
+function performanceMetrics(entries = []) {
+  const totals = performanceTotalsFromEntries(entries);
+  const trend = performanceTrend(entries);
+  const hours = entries.reduce((sum, entry) => sum + (Number(entry.horas) || 0), 0);
+  return { ...totals, trend, horas, hasTime: hours > 0 };
+}
+
+function evolutionSubjectPlan(materia) {
+  const planning = (state.planningBase?.materias || []).find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia));
+  if (!planning) return { materia, peso: 3, dominio: 3 };
+  return planning;
+}
+
+function deadlineProjection(progress = evolutionProgressMetrics()) {
+  const config = scheduleConfig();
+  const exam = parseLocalDate(config.dataProva);
+  const blockDuration = Number(config.duracaoBloco) || 1.5;
+  if (!exam) return { status: "Dados insuficientes", reason: "Cadastre a data da prova para visualizar a projeção de ritmo." };
+  const days = Math.max(0, daysBetween(new Date(), exam));
+  const cycles = Math.max(1, Math.ceil(days / 7));
+  const remainingTopics = [...progress.pending, ...progress.inProgress];
+  const topicBlocks = remainingTopics.reduce((sum, topic) => sum + Math.max(1, Number(topic.blocosSugeridos) || 1), 0);
+  const openReviews = (state.reviews || []).filter((review) => !["Concluída", "Cancelada"].includes(normalizeReviewStatus(review.status))).length;
+  const demandBlocks = topicBlocks + openReviews;
+  const plannedHours = cycles * (Number(config.horasSemana) || 0);
+  const plannedBlocks = Math.floor(plannedHours / blockDuration);
+  const recentCycles = evolutionCycleRecords().filter((record) => Number(record.horasEstudadas) > 0).slice(-3);
+  const observedHoursPerCycle = recentCycles.length
+    ? recentCycles.reduce((sum, record) => sum + (Number(record.horasEstudadas) || 0), 0) / recentCycles.length
+    : null;
+  const observedBlocks = observedHoursPerCycle === null ? null : Math.floor((observedHoursPerCycle * cycles) / blockDuration);
+  const capacity = observedBlocks === null ? plannedBlocks : observedBlocks;
+  const status = !demandBlocks || capacity >= demandBlocks
+    ? "Compatível"
+    : capacity >= Math.ceil(demandBlocks * .8)
+      ? "Atenção"
+      : "Insuficiente com a configuração atual";
+  return {
+    status,
+    exam,
+    days,
+    cycles,
+    demandBlocks,
+    topicBlocks,
+    reviewReserveBlocks: openReviews,
+    plannedHours,
+    plannedBlocks,
+    observedHoursPerCycle,
+    observedBlocks,
+    basis: observedBlocks === null ? "planejada" : "observada",
+    recentCycles: recentCycles.length,
+  };
+}
+
+function evaluateSubjectAttention(subject, projection = {}) {
+  const reasons = [];
+  let score = 0;
+  if (subject.performance.questoes >= EVOLUTION_MIN_SAMPLE_QUESTIONS && subject.performance.percentual < .6) {
+    score += 2;
+    reasons.push(`${formatPercent(subject.performance.percentual)} de acerto em ${subject.performance.questoes} questões`);
+  }
+  if (subject.performance.trend.label === "Queda") {
+    score += 1;
+    reasons.push("queda recente de desempenho");
+  }
+  if (subject.openReviews >= 2) {
+    score += 1;
+    reasons.push(`${subject.openReviews} revisões abertas`);
+  }
+  if (subject.reprogramacoes >= 2) {
+    score += 1;
+    reasons.push(`${subject.reprogramacoes} reprogramações registradas`);
+  }
+  if (projection.days <= 56 && subject.priority.percent >= 60 && subject.progress < .25 && subject.pending > 0) {
+    score += 1;
+    reasons.push("prioridade alta com pouco progresso perto da prova");
+  }
+  const level = score >= 3 ? "alta" : score >= 1 ? "media" : "baixa";
+  const suggestedAction = subject.openReviews
+    ? "Inclua uma revisão desta matéria antes de acrescentar novos temas longos."
+    : subject.performance.questoes >= EVOLUTION_MIN_SAMPLE_QUESTIONS && subject.performance.percentual < .6
+      ? "Reserve um bloco para revisão e questões direcionadas."
+      : subject.reprogramacoes >= 2
+        ? "Escolha um tema pendente menor para retomar a matéria com flexibilidade."
+        : "Acompanhe a evolução nos próximos registros.";
+  return { level, reasons: reasons.slice(0, 3), suggestedAction };
+}
+
+function evolutionSubjectData(entries, progress, projection) {
+  const grouped = new Map();
+  progress.selected.forEach((topic) => {
+    const key = normalizeForMatch(topic.materia);
+    if (!grouped.has(key)) grouped.set(key, { materia: topic.materia, topics: [] });
+    grouped.get(key).topics.push(topic);
+  });
+  return [...grouped.values()].map((subject) => {
+    const subjectEntries = entries.filter((entry) => normalizeForMatch(entry.materia) === normalizeForMatch(subject.materia));
+    const completed = subject.topics.filter((topic) => progress.completed.some((item) => topicKey(item.materia, item.assunto) === topicKey(topic.materia, topic.assunto))).length;
+    const inProgress = subject.topics.filter((topic) => progress.inProgress.some((item) => topicKey(item.materia, item.assunto) === topicKey(topic.materia, topic.assunto))).length;
+    const pending = Math.max(0, subject.topics.length - completed - inProgress);
+    const plan = evolutionSubjectPlan(subject.materia);
+    const basePriority = priorityScore(plan);
+    const adaptive = adaptivePriorityForTarget({ ...plan, materia: subject.materia, prioridadeBase: basePriority });
+    const priority = priorityInfo(adaptive.adjusted);
+    const performance = performanceMetrics(subjectEntries);
+    const openReviews = (state.reviews || []).filter((review) => !["Concluída", "Cancelada"].includes(normalizeReviewStatus(review.status)) && topicMatches(review, subject.materia)).length;
+    const reprogramacoes = [...subjectEntries, ...(state.generatedBlocks || []).filter((block) => normalizeForMatch(block.materia) === normalizeForMatch(subject.materia))]
+      .reduce((sum, entry) => sum + (Number(entry.reprogramacoes) || (normalizeStatus(entry.status) === "Reprogramar" ? 1 : 0)), 0);
+    const data = {
+      ...subject,
+      total: subject.topics.length,
+      completed,
+      inProgress,
+      pending,
+      progress: subject.topics.length ? completed / subject.topics.length : 0,
+      performance,
+      priority,
+      priorityPlan: plan,
+      openReviews,
+      reprogramacoes,
+      hours: performance.horas,
+      entries: subjectEntries,
+    };
+    return { ...data, attention: evaluateSubjectAttention(data, projection) };
+  });
+}
+
+function sortEvolutionSubjects(subjects, sort = evolutionView.sort) {
+  const attentionValue = { alta: 3, media: 2, baixa: 1 };
+  return [...subjects].sort((a, b) => {
+    if (sort === "name") return a.materia.localeCompare(b.materia);
+    if (sort === "progress") return a.progress - b.progress || b.priority.percent - a.priority.percent;
+    if (sort === "performance") return (a.performance.percentual ?? 2) - (b.performance.percentual ?? 2);
+    if (sort === "priority") return b.priority.percent - a.priority.percent || a.progress - b.progress;
+    if (sort === "reviews") return b.openReviews - a.openReviews || b.priority.percent - a.priority.percent;
+    return attentionValue[b.attention.level] - attentionValue[a.attention.level] || b.priority.percent - a.priority.percent || a.progress - b.progress;
+  });
+}
+
+function evolutionMetric(label, value, note = "") {
+  return `<article class="evolution-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</article>`;
+}
+
+function renderEvolutionFilters() {
+  if (!els.evolutionSubjectFilter) return;
+  const current = evolutionView.subject;
+  const subjects = [...new Map(evolutionTopicCatalog().map((topic) => [normalizeForMatch(topic.materia), topic.materia])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  els.evolutionSubjectFilter.innerHTML = `<option value="all">Todas</option>${subjects.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("")}`;
+  evolutionView.subject = subjects.some(([value]) => value === current) ? current : "all";
+  els.evolutionSubjectFilter.value = evolutionView.subject;
+  if (els.evolutionPeriod) els.evolutionPeriod.value = evolutionView.period;
+  if (els.evolutionActivityFilter) els.evolutionActivityFilter.value = evolutionView.activity;
+  if (els.evolutionSubjectSort) els.evolutionSubjectSort.value = evolutionView.sort;
+}
+
+function renderEvolutionProgress(progress) {
+  if (!els.evolutionProgress) return;
+  const categories = [
+    ["completed", "Concluídos", progress.completed.length],
+    ["inProgress", "Em andamento", progress.inProgress.length],
+    ["pending", "Pendentes", progress.pending.length],
+    ["removed", "Retirados do planejamento", progress.removed.length],
+  ];
+  els.evolutionProgress.innerHTML = `
+    <div class="evolution-progress-heading"><strong>${progress.selected.length} temas selecionados para estudo</strong><span>${progress.percent === null ? "Sem conteúdo confirmado" : `${formatPercent(progress.percent)} concluído`}</span></div>
+    <div class="evolution-progress-track"><span style="width:${Math.round((progress.percent || 0) * 100)}%"></span></div>
+    <div class="evolution-progress-categories">${categories.map(([key, label, count]) => `<button type="button" data-evolution-progress-filter="${key}"><strong>${count}</strong><span>${label}</span></button>`).join("")}</div>
+  `;
+}
+
+function paceSuggestions(projection, subjects) {
+  if (!["Atenção", "Insuficiente com a configuração atual"].includes(projection.status)) return [];
+  const suggestions = [];
+  const highPriority = subjects.filter((subject) => subject.priority.percent >= 60 && subject.pending > 0).slice(0, 5);
+  const lowPriorityTopics = subjects.filter((subject) => subject.priority.percent < 40).reduce((sum, subject) => sum + subject.pending, 0);
+  const gap = Math.max(0, projection.demandBlocks - (projection.observedBlocks ?? projection.plannedBlocks));
+  if (highPriority.length) suggestions.push(`Concentrar o próximo ciclo nas ${highPriority.length} matérias de maior prioridade ainda pendentes.`);
+  if (lowPriorityTopics) suggestions.push(`Revisar ${lowPriorityTopics} temas de baixa prioridade que seguem selecionados.`);
+  if (gap > 0 && projection.cycles > 0) {
+    const extraHours = Math.ceil((gap * 1.5) / projection.cycles);
+    if (extraHours > 0) suggestions.push(`Acrescentar cerca de ${extraHours}h ao ciclo, caso isso seja viável.`);
+  }
+  return suggestions.slice(0, 3);
+}
+
+function renderEvolutionPace(projection, subjects) {
+  if (!els.evolutionPace) return;
+  if (projection.status === "Dados insuficientes") {
+    els.evolutionPace.innerHTML = `<div class="evolution-empty-inline">${escapeHtml(projection.reason)}</div>`;
+    return;
+  }
+  const observed = projection.observedBlocks === null ? "Sem tempo suficiente" : `${projection.observedBlocks} blocos estimados`;
+  const basis = projection.observedBlocks === null
+    ? "Estimativa baseada apenas na carga horária planejada."
+    : `Estimativa observada com base nos últimos ${projection.recentCycles} ciclo${projection.recentCycles === 1 ? "" : "s"} com tempo registrado.`;
+  const suggestions = paceSuggestions(projection, subjects);
+  els.evolutionPace.innerHTML = `
+    <div class="evolution-pace-status status-${normalizeForMatch(projection.status).replace(/\s+/g, "-")}"><strong>${escapeHtml(projection.status)}</strong><span>${projection.status === "Compatível" ? "Com a configuração atual, existe capacidade estimada para o conteúdo principal." : `Restam cerca de ${projection.demandBlocks} blocos, incluindo ${projection.reviewReserveBlocks} reserva${projection.reviewReserveBlocks === 1 ? "" : "s"} para revisão.`}</span></div>
+    <div class="evolution-pace-grid"><div><span>Capacidade planejada</span><strong>${projection.plannedBlocks} blocos</strong><small>${formatHours(projection.plannedHours)} até a prova</small></div><div><span>Capacidade observada</span><strong>${observed}</strong><small>${basis}</small></div><div><span>Conteúdo restante</span><strong>${projection.topicBlocks} blocos</strong><small>${projection.days} dias até a prova</small></div></div>
+    ${evolutionView.subject !== "all" ? `<p class="evolution-global-note">A projeção considera todo o conteúdo selecionado, não apenas a matéria filtrada.</p>` : ""}
+    ${suggestions.length ? `<div class="evolution-pace-suggestions"><strong>Possíveis ajustes</strong><ul>${suggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+  `;
+}
+
+function renderEvolutionPerformance(performance) {
+  if (!els.evolutionPerformance) return;
+  const value = performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual);
+  const trendText = performance.trend.delta === null ? performance.trend.label : `${performance.trend.label} ${performance.trend.delta >= 0 ? "+" : ""}${Math.round(performance.trend.delta * 100)} p.p.`;
+  els.evolutionPerformance.innerHTML = `<div class="evolution-performance-summary"><div><span>Desempenho geral</span><strong>${value}</strong><small>${performance.questoes ? `${performance.acertos} acertos em ${performance.questoes} questões` : "Registre questões e acertos para acompanhar."}</small></div><div><span>Tendência</span><strong>${escapeHtml(trendText)}</strong><small>${escapeHtml(performance.trend.confidence)}</small></div><div><span>Tempo registrado</span><strong>${performance.hasTime ? formatHours(performance.horas) : "Sem registro"}</strong><small>${performance.hasTime ? "Somente tempo efetivamente informado." : "A projeção usa a carga planejada."}</small></div></div>`;
+}
+
+function evolutionEntriesForCycleRecord(record, entries = []) {
+  const labels = new Set([record.label]);
+  if (record.isLive) labels.add(currentCycleLabel());
+  return entries.filter((entry) => labels.has(entry.ciclo));
+}
+
+function renderEvolutionChart(entries, cycleRecords) {
+  if (!els.evolutionSubjectChart || !els.evolutionChartDescription) return;
+  const labels = cycleRecords.map((record) => record.label);
+  const uniqueLabels = [...new Set(labels.length ? labels : entries.map((entry) => entry.ciclo))];
+  const data = uniqueLabels.map((label) => {
+    const record = cycleRecords.find((item) => item.label === label);
+    const totals = record
+      ? performanceTotalsFromEntries(evolutionEntriesForCycleRecord(record, entries))
+      : performanceTotalsFromEntries(entries.filter((entry) => entry.ciclo === label));
+    return { label, ...totals };
+  });
+  if (!data.some((item) => item.questoes)) {
+    els.evolutionSubjectChart.innerHTML = `<div class="evolution-empty-inline">Registre questões e acertos para visualizar a evolução do desempenho.</div>`;
+    els.evolutionChartDescription.textContent = "Ainda não há pontos suficientes para o gráfico.";
+    return;
+  }
+  const width = Math.max(460, data.length * 112);
+  const height = 230;
+  const left = 38;
+  const top = 20;
+  const plotWidth = width - left - 22;
+  const plotHeight = 150;
+  const step = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth / 2;
+  const point = (item, index) => item.percentual === null ? null : { x: left + (data.length === 1 ? step : index * step), y: top + (1 - item.percentual) * plotHeight };
+  const points = data.map(point);
+  const segments = points.map((current, index) => current && index && points[index - 1] ? `<line x1="${points[index - 1].x}" y1="${points[index - 1].y}" x2="${current.x}" y2="${current.y}" class="evolution-chart-line" />` : "").join("");
+  const circles = points.map((item, index) => item ? `<circle cx="${item.x}" cy="${item.y}" r="5" class="evolution-chart-point"><title>${escapeHtml(data[index].label)}: ${formatPercent(data[index].percentual)} em ${data[index].questoes} questões</title></circle>` : "").join("");
+  const xLabels = data.map((item, index) => `<text x="${left + (data.length === 1 ? step : index * step)}" y="${top + plotHeight + 30}" text-anchor="middle" class="evolution-chart-label">${escapeHtml(shortText(item.label, 13))}</text>`).join("");
+  els.evolutionSubjectChart.innerHTML = `<div class="evolution-chart-scroll"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true"><line x1="${left}" y1="${top}" x2="${left}" y2="${top + plotHeight}" class="evolution-chart-axis" /><line x1="${left}" y1="${top + plotHeight}" x2="${width - 22}" y2="${top + plotHeight}" class="evolution-chart-axis" /><text x="5" y="${top + 5}" class="evolution-chart-label">100%</text><text x="10" y="${top + plotHeight}" class="evolution-chart-label">0%</text>${segments}${circles}${xLabels}</svg></div>`;
+  els.evolutionChartDescription.textContent = data.filter((item) => item.questoes).map((item) => `${item.label}: ${formatPercent(item.percentual)} em ${item.questoes} questões`).join(". ");
+}
+
+function renderEvolutionSubjects(subjects) {
+  if (!els.evolutionSubjectBody) return;
+  const sorted = sortEvolutionSubjects(subjects);
+  els.evolutionSubjectBody.innerHTML = sorted.length ? sorted.map((subject) => `
+    <article class="evolution-subject-card">
+      <div><span class="evolution-subject-name">${escapeHtml(subject.materia)}</span><p>Progresso ${formatPercent(subject.progress)} · ${subject.completed}/${subject.total} temas concluídos</p></div>
+      <div class="evolution-subject-metrics"><span>Desempenho <strong>${subject.performance.percentual === null ? "Sem dados" : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</strong></span><span>Tendência <strong>${escapeHtml(subject.performance.trend.label)}</strong></span><span>Revisões <strong>${subject.openReviews}</strong></span><span>Prioridade <strong>${escapeHtml(subject.priority.label)}</strong></span></div>
+      <button class="text-action" type="button" data-evolution-subject-details="${escapeHtml(normalizeForMatch(subject.materia))}">Ver detalhes</button>
+    </article>
+  `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria encontrada para os filtros atuais.</div>`;
+}
+
+function renderEvolutionAttention(subjects) {
+  if (!els.attentionSubjects) return;
+  const attention = subjects.filter((subject) => subject.attention.level !== "baixa").slice(0, 3);
+  els.attentionSubjects.innerHTML = attention.length ? attention.map((subject) => `
+    <article class="attention-subject attention-${subject.attention.level}"><div><strong>${escapeHtml(subject.materia)}</strong><ul>${subject.attention.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul><p>${escapeHtml(subject.attention.suggestedAction)}</p></div><button class="text-action" type="button" data-evolution-subject-details="${escapeHtml(normalizeForMatch(subject.materia))}">Ver matéria</button></article>
+  `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria reúne sinais suficientes de atenção neste período.</div>`;
+}
+
+function cycleMetricsForView(record, entries) {
+  const matching = evolutionEntriesForCycleRecord(record, entries);
+  const totals = performanceTotalsFromEntries(matching);
+  return {
+    ...record,
+    metasConcluidas: matching.filter((entry) => entry.completed).length || Number(record.metasConcluidas) || 0,
+    horasEstudadas: matching.reduce((sum, entry) => sum + (Number(entry.horas) || 0), 0) || Number(record.horasEstudadas) || 0,
+    questoes: totals.questoes,
+    acertos: totals.acertos,
+    percentual: totals.percentual,
+    reprogramadas: matching.reduce((sum, entry) => sum + (Number(entry.reprogramacoes) || 0), 0),
+  };
+}
+
+function cycleComparisonText(current, previous) {
+  if (!previous) return "Primeiro ciclo disponível para comparação.";
+  const blocks = current.metasConcluidas - previous.metasConcluidas;
+  const hours = current.horasEstudadas - previous.horasEstudadas;
+  const percent = current.percentual === null || previous.percentual === null ? null : Math.round((current.percentual - previous.percentual) * 100);
+  const parts = [`${blocks >= 0 ? "+" : ""}${blocks} blocos concluídos`, `${hours >= 0 ? "+" : ""}${formatHours(hours)} de estudo`];
+  if (percent !== null) parts.push(`${percent >= 0 ? "+" : ""}${percent} pontos percentuais de acertos`);
+  if (current.reprogramadas > previous.reprogramadas) {
+    const reprogrammed = current.reprogramadas - previous.reprogramadas;
+    parts.push(`${reprogrammed} ${reprogrammed === 1 ? "reprogramação" : "reprogramações"} a mais`);
+  }
+  return parts.join(" · ");
+}
+
+function renderEvolutionCycles(records, entries) {
+  if (!els.evolutionCycleBody) return;
+  const filtered = records.filter((record) => {
+    if (evolutionView.period === "cycle") return record.isLive || record.label === currentCycleLabel();
+    if (evolutionView.period === "30d") {
+      const date = record.finalizedAt ? new Date(record.finalizedAt) : null;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      return record.isLive || (date && date >= cutoff);
+    }
+    return true;
+  }).map((record) => cycleMetricsForView(record, entries));
+  els.evolutionCycleBody.innerHTML = filtered.length ? filtered.map((record, index) => {
+    const previous = filtered[index - 1];
+    const percent = record.percentual === null ? "Sem dados" : formatPercent(record.percentual);
+    return `<details class="evolution-cycle-item"><summary><div><strong>${escapeHtml(record.label)}${record.isLive ? " · em andamento" : ""}</strong><span>${record.metasConcluidas} de ${record.metasGeradas || record.metasConcluidas} blocos concluídos · ${formatHours(record.horasEstudadas)}</span></div><span>${percent}</span></summary><div class="evolution-cycle-details"><span>${record.questoes} questões · ${record.reviewsCreated || 0} revisões criadas · ${record.reprogramadas || 0} reprogramações</span><p>${escapeHtml(cycleComparisonText(record, previous))}</p></div></details>`;
+  }).join("") : `<div class="evolution-empty-inline">Nenhum ciclo corresponde aos filtros atuais.</div>`;
+}
+
+function renderEvolutionRecommendation(subjects, projection) {
+  if (!els.evolutionRecommendation) return;
+  const attention = subjects.filter((subject) => subject.attention.level !== "baixa").slice(0, 2);
+  const content = attention.length
+    ? `Com base nos registros dos ciclos e no desempenho, ${attention.map((subject) => subject.materia).join(" e ")} concentram as principais necessidades de atenção. ${attention.map((subject) => subject.attention.suggestedAction).join(" ")}`
+    : projection.status === "Compatível"
+      ? "Com base nos registros disponíveis, o ritmo atual está compatível com o conteúdo principal. Continue ajustando o ciclo conforme sua disponibilidade."
+      : "Registre tempo, questões e acertos nos próximos blocos para tornar a recomendação mais específica.";
+  els.evolutionRecommendation.innerHTML = `<p>${escapeHtml(content)}</p>`;
+}
+
+function renderEvolutionCompletedArchive() {
+  if (!els.evolutionCompletedBody) return;
+  const completed = [...new Map(evolutionEntries().filter((entry) => entry.completed).map((entry) => [topicKey(entry.materia, entry.assunto), entry])).values()];
+  els.evolutionCompletedBody.innerHTML = completed.length ? completed.map((entry) => `<tr><td>${entry.date ? formatDateBR(entry.date) : ""}</td><td>${escapeHtml(entry.ciclo)}</td><td>${escapeHtml(entry.materia)}</td><td>${escapeHtml(entry.assunto)}</td><td>${entry.horas ? formatHours(entry.horas) : ""}</td><td>${entry.questoes}</td><td>${entry.questoes ? formatPercent(entry.percentual) : ""}</td></tr>`).join("") : `<tr><td colspan="7">Nenhum conteúdo concluído registrado.</td></tr>`;
+}
+
+function evolutionTopicList(kind, progress) {
+  const labels = { completed: "Temas concluídos", inProgress: "Temas em andamento", pending: "Temas pendentes", removed: "Temas retirados do planejamento" };
+  return { title: labels[kind] || "Temas", topics: progress[kind] || [] };
+}
+
+function openEvolutionTopicModal(content, trigger = null) {
+  if (!els.evolutionTopicModal) return;
+  els.evolutionTopicModal.dataset.returnFocus = trigger ? "true" : "";
+  els.evolutionTopicModal.innerHTML = `<button class="evolution-topic-backdrop" type="button" data-close-evolution-modal aria-label="Fechar detalhes"></button><section class="evolution-topic-dialog" role="dialog" aria-modal="true" aria-labelledby="evolutionTopicModalTitle"><header><div><span class="section-kicker">Painel de evolução</span><h3 id="evolutionTopicModalTitle">${escapeHtml(content.title)}</h3>${content.subtitle ? `<p>${escapeHtml(content.subtitle)}</p>` : ""}</div><button class="icon-button" type="button" data-close-evolution-modal aria-label="Fechar detalhes"><i data-lucide="x"></i></button></header><div class="evolution-topic-dialog-body">${content.body}</div><footer><button class="ghost-button" type="button" data-close-evolution-modal>Fechar</button></footer></section>`;
+  els.evolutionTopicModal.hidden = false;
+  els.evolutionTopicModal._trigger = trigger;
+  if (window.lucide) window.lucide.createIcons();
+  els.evolutionTopicModal.querySelector("[data-close-evolution-modal]")?.focus();
+}
+
+function closeEvolutionTopicModal() {
+  if (!els.evolutionTopicModal || els.evolutionTopicModal.hidden) return;
+  const trigger = els.evolutionTopicModal._trigger;
+  els.evolutionTopicModal.hidden = true;
+  els.evolutionTopicModal.innerHTML = "";
+  trigger?.focus?.();
+}
+
+function openEvolutionSubjectDetails(subjectName, context, trigger) {
+  const subject = context.subjects.find((item) => normalizeForMatch(item.materia) === subjectName);
+  if (!subject) return;
+  const explanation = explainPriority(subject.priorityPlan);
+  const topicRows = subject.topics.map((topic) => {
+    const key = topicKey(topic.materia, topic.assunto);
+    const stateLabel = context.progress.completed.some((item) => topicKey(item.materia, item.assunto) === key) ? "Concluído" : context.progress.inProgress.some((item) => topicKey(item.materia, item.assunto) === key) ? "Em andamento" : "Pendente";
+    const topicEntries = subject.entries.filter((entry) => topicKey(entry.materia, entry.assunto) === key);
+    const metrics = performanceMetrics(topicEntries);
+    return `<li><strong>${escapeHtml(themeTitle(topic.assunto))}</strong><span>${stateLabel}${metrics.percentual === null ? "" : ` · ${formatPercent(metrics.percentual)} em ${metrics.questoes} questões`}</span></li>`;
+  }).join("");
+  const reviews = (state.reviews || []).filter((review) => topicMatches(review, subject.materia) && !["Concluída", "Cancelada"].includes(normalizeReviewStatus(review.status)));
+  openEvolutionTopicModal({
+    title: subject.materia,
+    subtitle: `Progresso ${formatPercent(subject.progress)} · ${subject.completed}/${subject.total} temas concluídos`,
+    body: `<div class="evolution-detail-grid"><div><strong>Desempenho</strong><span>${subject.performance.percentual === null ? "Ainda não há questões suficientes." : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</span></div><div><strong>Tempo estudado</strong><span>${subject.hours ? formatHours(subject.hours) : "Sem tempo registrado"}</span></div><div><strong>Revisões abertas</strong><span>${reviews.length}</span></div><div><strong>Prioridade</strong><span>${escapeHtml(subject.priority.label)}</span></div></div><section class="evolution-detail-section"><strong>Por que esta prioridade?</strong><ul>${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></section><section class="evolution-detail-section"><strong>Temas</strong><ul class="evolution-detail-topic-list">${topicRows || "<li>Nenhum tema disponível.</li>"}</ul></section>`,
+  }, trigger);
+}
+
+function exportEvolutionSummary(context) {
+  const config = getContestConfig();
+  const { progress, performance, projection, subjects } = context;
+  const lines = [
+    "Resumo de evolução - Meu Cronograma Concursos",
+    `Gerado em: ${new Date().toLocaleString("pt-BR")}`,
+    `Concurso: ${config.concurso || "Não informado"}`,
+    `Cargo: ${config.cargo || "Não informado"}`,
+    `Período: ${els.evolutionPeriod?.selectedOptions?.[0]?.textContent || "Ciclo atual"}`,
+    "",
+    `Conteúdo concluído: ${progress.percent === null ? "Sem conteúdo confirmado" : formatPercent(progress.percent)}`,
+    `Temas selecionados: ${progress.selected.length}`,
+    `Temas concluídos: ${progress.completed.length}`,
+    `Em andamento: ${progress.inProgress.length}`,
+    `Pendentes: ${progress.pending.length}`,
+    `Horas estudadas: ${performance.hasTime ? formatHours(performance.horas) : "Sem tempo registrado"}`,
+    `Questões: ${performance.questoes}`,
+    `Desempenho: ${performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual)}`,
+    `Tendência: ${performance.trend.label}`,
+    `Ritmo até a prova: ${projection.status}`,
+    "",
+    "Evolução por matéria:",
+    ...subjects.map((subject) => `${subject.materia}: progresso ${formatPercent(subject.progress)}; desempenho ${subject.performance.percentual === null ? "sem dados" : formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões; revisões abertas ${subject.openReviews}; prioridade ${subject.priority.label}.`),
+    "",
+    "Matérias que merecem atenção:",
+    ...subjects.filter((subject) => subject.attention.level !== "baixa").slice(0, 3).map((subject) => `${subject.materia}: ${subject.attention.reasons.join("; ")}. ${subject.attention.suggestedAction}`),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "resumo-evolucao.txt";
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast("Resumo da evolução exportado.");
+}
+
 function renderEvolution() {
   if (!els.evolutionGrid) return;
-  const finalizedResults = state.cycleResults || [];
-  const currentResult = liveCycleResult();
-  const results = currentResult ? [...finalizedResults, currentResult] : finalizedResults;
-  const hasResults = results.length > 0;
+  renderEvolutionFilters();
+  const progress = evolutionProgressMetrics();
+  const entries = evolutionEntriesForView();
+  const performance = performanceMetrics(entries);
+  const projection = deadlineProjection(progress);
+  const subjects = evolutionSubjectData(entries, progress, projection);
+  const cycleRecords = evolutionCycleRecords();
+  const hasContent = progress.selected.length > 0 || (state.generatedBlocks || []).length > 0 || (state.cycleResults || []).length > 0;
+  const periodLabel = els.evolutionPeriod?.selectedOptions?.[0]?.textContent || "Ciclo atual";
+  const cycleCounts = progress.selected.length ? `${progress.completed.length} de ${progress.selected.length} temas` : "Sem conteúdo confirmado";
+  els.evolutionGrid.innerHTML = [
+    evolutionMetric("Conteúdo concluído", progress.percent === null ? "Sem dados" : formatPercent(progress.percent), cycleCounts),
+    evolutionMetric("Ciclo atual", `${(state.generatedBlocks || []).filter((block) => normalizeStatus(block.status) === "Concluído").length} de ${(state.generatedBlocks || []).length} blocos`, "Blocos concluídos"),
+    evolutionMetric("Desempenho recente", performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual), performance.questoes ? `${performance.questoes} questões no período` : "Registre questões e acertos"),
+    evolutionMetric("Tempo estudado", performance.hasTime ? formatHours(performance.horas) : "Sem registro", periodLabel),
+  ].join("");
   if (els.evolutionEmpty) {
-    els.evolutionEmpty.hidden = hasResults;
-    els.evolutionEmpty.textContent = "Conclua uma meta ou finalize o primeiro ciclo para visualizar sua evolu\u00e7\u00e3o.";
+    els.evolutionEmpty.hidden = hasContent;
+    els.evolutionEmpty.textContent = !(state.generatedBlocks || []).length && !(state.cycleResults || []).length
+      ? "Gere e utilize seu primeiro ciclo para começar a acompanhar a evolução."
+      : "Registre questões, acertos ou tempo estudado para ampliar a leitura do desempenho.";
   }
-  if (els.evolutionSections) els.evolutionSections.hidden = !hasResults;
-
-  const completed = dedupeCompletedEntries(results.flatMap((result) => result.completed || []));
-  const totals = results.reduce((total, result) => {
-    total.questoes += Number(result.questoes) || 0;
-    total.acertos += Number(result.acertos) || 0;
-    total.reviews += Number(result.reviewsCreated) || 0;
-    total.horas += Number(result.horasEstudadas) || (result.completed || []).reduce((sum, block) => sum + (Number(block.duracao) || 0), 0);
-    return total;
-  }, { questoes: 0, acertos: 0, reviews: 0, horas: 0 });
-  const percent = totals.questoes ? totals.acertos / totals.questoes : 0;
-  const totalPlanned = plannedUnitCount("tight") || completed.length;
-  const editalPercent = totalPlanned ? completed.length / totalPlanned : 0;
-  const reviewRows = reviewScheduleRows("all");
-
-  els.evolutionGrid.innerHTML = summaryItems([
-    ["% do edital conclu\u00eddo", formatPercent(editalPercent)],
-    ["Ciclos finalizados", finalizedResults.length],
-    ["Temas conclu\u00eddos", completed.length],
-    ["Horas estudadas", formatHours(totals.horas)],
-    ["Quest\u00f5es feitas", totals.questoes],
-    ["% geral de acerto", formatPercent(percent)],
-    ["Revis\u00f5es pendentes", reviewRows.length],
-  ]);
-
-  if (!hasResults) return;
-
-  if (els.evolutionCycleBody) {
-    els.evolutionCycleBody.innerHTML = results.map((result) => `
-      <tr>
-        <td>${escapeHtml(result.label)}</td>
-        <td>${result.metasGeradas || 0}</td>
-        <td>${result.metasConcluidas || 0}</td>
-        <td>${formatHours(result.horasEstudadas || (result.completed || []).reduce((sum, block) => sum + (Number(block.duracao) || 0), 0))}</td>
-        <td>${result.questoes || 0}</td>
-        <td>${formatPercent(result.percentual || 0)}</td>
-        <td>${result.reviewsCreated || 0}</td>
-      </tr>
-    `).join("");
-  }
-
-  const subjects = aggregateHistoricalSubjects(results);
-  if (els.evolutionSubjectBody) {
-    els.evolutionSubjectBody.innerHTML = subjects.map((item) => `
-      <tr>
-        <td>${escapeHtml(item.materia)}</td>
-        <td>${item.concluidos}</td>
-        <td>${item.questoes}</td>
-        <td>${item.acertos}</td>
-        <td>${item.erros}</td>
-        <td>${formatPercent(item.percentual)}</td>
-        <td>${difficultyLabelFromScore(item.dificuldadeMedia)}</td>
-        <td>${item.situacao}</td>
-      </tr>
-    `).join("");
-  }
-
-  const attention = subjects.filter((item) => item.situacao === "Refor\u00e7o" || item.situacao === "Aten\u00e7\u00e3o" || item.reprogramadas > 0);
-  if (els.attentionSubjects) {
-    els.attentionSubjects.innerHTML = attention.length ? attention.map((item) => `
-      <article>
-        <strong>${escapeHtml(item.materia)}</strong>
-        <span>${formatPercent(item.percentual)} de acerto &middot; ${difficultyLabelFromScore(item.dificuldadeMedia)} dificuldade &middot; ${item.reprogramadas} reprograma\u00e7\u00f5es</span>
-      </article>
-    `).join("") : `<div class="empty-panel">Nenhuma mat\u00e9ria de aten\u00e7\u00e3o no hist\u00f3rico finalizado.</div>`;
-  }
-
-  if (els.evolutionCompletedBody) {
-    els.evolutionCompletedBody.innerHTML = completed.length ? completed.map((block) => `
-      <tr>
-        <td>${block.concluidoEm || ""}</td>
-        <td>${escapeHtml(block.ciclo || "")}</td>
-        <td>${escapeHtml(block.materia)}</td>
-        <td>${escapeHtml(block.assunto)}</td>
-        <td>${formatDuration(block.duracao)}</td>
-        <td>${block.questoes || 0}</td>
-        <td>${formatPercent(block.percentual || 0)}</td>
-      </tr>
-    `).join("") : `<tr><td colspan="7">Nenhum conte\u00fado conclu\u00eddo em ciclos finalizados.</td></tr>`;
-  }
+  if (els.evolutionSections) els.evolutionSections.hidden = !hasContent;
+  if (!hasContent) return;
+  renderEvolutionProgress(progress);
+  renderEvolutionPace(projection, subjects);
+  renderEvolutionPerformance(performance);
+  renderEvolutionChart(entries, cycleRecords);
+  renderEvolutionSubjects(subjects);
+  renderEvolutionAttention(subjects);
+  renderEvolutionCycles(cycleRecords, entries);
+  renderEvolutionRecommendation(subjects, projection);
+  renderEvolutionCompletedArchive();
+  evolutionContext = { progress, entries, performance, projection, subjects, cycleRecords };
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
@@ -6795,6 +7366,10 @@ document.addEventListener("change", (event) => {
   else draft[field.dataset.focusedField] = field.value;
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && els.evolutionTopicModal && !els.evolutionTopicModal.hidden) {
+    closeEvolutionTopicModal();
+    return;
+  }
   if (event.key === "Escape" && els.reviewHistoryModal && !els.reviewHistoryModal.hidden) {
     closeReviewHistory();
     return;
@@ -7592,6 +8167,35 @@ els.reviewsBody?.addEventListener("click", async (event) => {
 });
 els.reviewHistoryModal?.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-review-history]")) closeReviewHistory();
+});
+function refreshEvolutionForView(next = {}) {
+  evolutionView = { ...evolutionView, ...next };
+  renderEvolution();
+}
+
+els.evolutionPeriod?.addEventListener("change", () => refreshEvolutionForView({ period: els.evolutionPeriod.value }));
+els.evolutionSubjectFilter?.addEventListener("change", () => refreshEvolutionForView({ subject: els.evolutionSubjectFilter.value }));
+els.evolutionActivityFilter?.addEventListener("change", () => refreshEvolutionForView({ activity: els.evolutionActivityFilter.value }));
+els.evolutionSubjectSort?.addEventListener("change", () => refreshEvolutionForView({ sort: els.evolutionSubjectSort.value }));
+els.exportEvolutionButton?.addEventListener("click", () => {
+  if (evolutionContext) exportEvolutionSummary(evolutionContext);
+});
+els.evolutionProgress?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-evolution-progress-filter]");
+  if (!button || !evolutionContext) return;
+  const content = evolutionTopicList(button.dataset.evolutionProgressFilter, evolutionContext.progress);
+  const topics = content.topics.map((topic) => `<li><strong>${escapeHtml(topic.materia)}</strong><span>${escapeHtml(themeTitle(topic.assunto))}</span></li>`).join("");
+  openEvolutionTopicModal({ ...content, body: `<ul class="evolution-detail-topic-list">${topics || "<li>Nenhum tema encontrado.</li>"}</ul>` }, button);
+});
+function handleEvolutionSubjectDetails(event) {
+  const button = event.target.closest("[data-evolution-subject-details]");
+  if (!button || !evolutionContext) return;
+  openEvolutionSubjectDetails(button.dataset.evolutionSubjectDetails, evolutionContext, button);
+}
+els.evolutionSubjectBody?.addEventListener("click", handleEvolutionSubjectDetails);
+els.attentionSubjects?.addEventListener("click", handleEvolutionSubjectDetails);
+els.evolutionTopicModal?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-evolution-modal]")) closeEvolutionTopicModal();
 });
 els.themeToggleButton?.addEventListener("click", () => {
   const current = document.documentElement.dataset.theme === "night" ? "night" : "day";

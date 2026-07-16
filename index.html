@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260716-revisoes" />
+    <link rel="stylesheet" href="./styles.css?v=20260716-evolucao" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -485,44 +485,28 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <div class="panel-heading">
             <div>
               <h2>Painel de Evolu&ccedil;&atilde;o</h2>
-              <p>Acompanhe seu progresso acumulado, desempenho por mat&eacute;ria e revis&otilde;es pendentes.</p>
+              <p>Use os registros do ciclo para decidir o pr&oacute;ximo ajuste, sem transformar o estudo em uma agenda r&iacute;gida.</p>
             </div>
           </div>
-          <div class="summary-grid" id="evolutionGrid"></div>
-          <div class="evolution-empty" id="evolutionEmpty" hidden>Finalize o primeiro ciclo para visualizar sua evolu&ccedil;&atilde;o.</div>
-          <div class="evolution-sections" id="evolutionSections">
-            <section class="evolution-card">
-              <h3>Evolu&ccedil;&atilde;o por ciclo</h3>
-              <div class="table-wrap simple">
-                <table>
-                  <thead><tr><th>Ciclo</th><th>Blocos do ciclo</th><th>Blocos conclu&iacute;dos</th><th>Horas estudadas</th><th>Quest&otilde;es feitas</th><th>% de acerto</th><th>Revis&otilde;es criadas</th></tr></thead>
-                  <tbody id="evolutionCycleBody"></tbody>
-                </table>
-              </div>
-            </section>
-            <section class="evolution-card">
-              <h3>Desempenho por mat&eacute;ria</h3>
-              <div class="table-wrap simple">
-                <table>
-                  <thead><tr><th>Mat&eacute;ria</th><th>Temas conclu&iacute;dos</th><th>Quest&otilde;es feitas</th><th>Acertos</th><th>Erros</th><th>% de acerto</th><th>Dificuldade m&eacute;dia</th><th>Situa&ccedil;&atilde;o</th></tr></thead>
-                  <tbody id="evolutionSubjectBody"></tbody>
-                </table>
-              </div>
-            </section>
-            <section class="evolution-card">
-              <h3>Mat&eacute;rias de aten&ccedil;&atilde;o</h3>
-              <div id="attentionSubjects" class="attention-list"></div>
-            </section>
-            <section class="evolution-card">
-              <h3>Hist&oacute;rico de conte&uacute;dos conclu&iacute;dos</h3>
-              <div class="table-wrap simple">
-                <table>
-                  <thead><tr><th>Data</th><th>Ciclo</th><th>Mat&eacute;ria</th><th>Tema</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead>
-                  <tbody id="evolutionCompletedBody"></tbody>
-                </table>
-              </div>
-            </section>
+          <div class="evolution-toolbar" aria-label="Filtros do painel de evolu&ccedil;&atilde;o">
+            <label>Per&iacute;odo<select id="evolutionPeriod"><option value="cycle">Ciclo atual</option><option value="30d">&Uacute;ltimos 30 dias</option><option value="all">Todo o hist&oacute;rico</option></select></label>
+            <label>Mat&eacute;ria<select id="evolutionSubjectFilter"><option value="all">Todas</option></select></label>
+            <label>Atividade<select id="evolutionActivityFilter"><option value="all">Todas</option><option value="Teoria">Teoria</option><option value="Quest&otilde;es">Quest&otilde;es</option><option value="Revis&atilde;o">Revis&atilde;o</option><option value="Teoria e quest&otilde;es">Teoria e quest&otilde;es</option></select></label>
+            <button id="exportEvolutionButton" class="ghost-button compact-button" type="button"><i data-lucide="download"></i><span>Exportar resumo</span></button>
           </div>
+          <div class="evolution-overview-grid" id="evolutionGrid"></div>
+          <div class="evolution-empty" id="evolutionEmpty" hidden></div>
+          <div class="evolution-sections" id="evolutionSections">
+            <section class="evolution-card evolution-progress-card"><div class="evolution-section-heading"><div><span class="section-kicker">Progresso do conte&uacute;do</span><h3>Conte&uacute;do selecionado</h3></div></div><div id="evolutionProgress"></div></section>
+            <section class="evolution-card evolution-pace-card"><div class="evolution-section-heading"><div><span class="section-kicker">Ritmo at&eacute; a prova</span><h3>Estimativa de capacidade</h3></div></div><div id="evolutionPace"></div></section>
+            <section class="evolution-card evolution-performance-card"><div class="evolution-section-heading"><div><span class="section-kicker">Desempenho</span><h3>Acertos ao longo dos ciclos</h3></div></div><div id="evolutionPerformance"></div><div id="evolutionSubjectChart" class="evolution-chart" role="img" aria-label="Gr&aacute;fico de desempenho por ciclo"></div><p id="evolutionChartDescription" class="evolution-chart-description"></p></section>
+            <section class="evolution-card evolution-subjects-card"><div class="evolution-section-heading"><div><span class="section-kicker">Evolu&ccedil;&atilde;o por mat&eacute;ria</span><h3>Onde concentrar o pr&oacute;ximo ciclo</h3></div><label class="evolution-sort-label">Ordenar<select id="evolutionSubjectSort"><option value="attention">Aten&ccedil;&atilde;o e prioridade</option><option value="name">Nome</option><option value="progress">Menor progresso</option><option value="performance">Menor desempenho</option><option value="priority">Maior prioridade</option><option value="reviews">Mais revis&otilde;es</option></select></label></div><div id="evolutionSubjectBody" class="evolution-subject-list"></div></section>
+            <section class="evolution-card evolution-attention-card"><div class="evolution-section-heading"><div><span class="section-kicker">Pontos de aten&ccedil;&atilde;o</span><h3>Mat&eacute;rias que merecem acompanhamento</h3></div></div><div id="attentionSubjects" class="attention-list"></div></section>
+            <section class="evolution-card evolution-cycles-card"><div class="evolution-section-heading"><div><span class="section-kicker">Hist&oacute;rico dos ciclos</span><h3>Fechamentos e varia&ccedil;&otilde;es</h3></div></div><div id="evolutionCycleBody" class="evolution-cycle-list"></div></section>
+            <section class="evolution-card evolution-recommendation-card"><div class="evolution-section-heading"><div><span class="section-kicker">Pr&oacute;ximo ajuste sugerido</span><h3>Uma leitura pr&aacute;tica do momento</h3></div></div><div id="evolutionRecommendation"></div></section>
+            <details class="evolution-completed-archive"><summary>Hist&oacute;rico de conte&uacute;dos conclu&iacute;dos</summary><div class="table-wrap simple"><table><thead><tr><th>Data</th><th>Ciclo</th><th>Mat&eacute;ria</th><th>Tema</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead><tbody id="evolutionCompletedBody"></tbody></table></div></details>
+          </div>
+          <div id="evolutionTopicModal" class="evolution-topic-modal" hidden></div>
         </section>
       </section>
     </main>
@@ -559,9 +543,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./js/adaptive-review.js?v=20260716-revisoes"></script>
+    <script src="./js/adaptive-review.js?v=20260716-evolucao"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260716-revisoes"></script>
+    <script src="./app.js?v=20260716-evolucao"></script>
   </body>
 </html>
 
