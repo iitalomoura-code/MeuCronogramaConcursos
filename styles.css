@@ -545,9 +545,7 @@ svg {
 }
 
 .sidebar-footer {
-  display: grid;
-  gap: 10px;
-  padding-top: 4px;
+  display: none;
 }
 
 .status-pill {
