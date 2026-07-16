@@ -1502,6 +1502,14 @@ textarea:focus {
   margin-bottom: 14px;
 }
 
+.continue-next-steps {
+  order: 3;
+}
+
+.continue-reviews-card {
+  order: 4;
+}
+
 .continue-insight-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -5658,12 +5666,12 @@ details[open] > :not(summary),
 
   .continue-next-steps {
     grid-column: 1 / -1;
-    grid-row: 3;
+    grid-row: 2;
   }
 
   .continue-reviews-card {
     grid-column: 1 / -1;
-    grid-row: 2;
+    grid-row: 3;
   }
 }
 
