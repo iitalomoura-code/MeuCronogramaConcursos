@@ -7378,7 +7378,13 @@ function exportBackup() {
 async function importBackup(file) {
   if (!file) return;
   const text = await file.text();
-  JSON.parse(text);
+  const snapshot = JSON.parse(text);
+  if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
+    applyDriveDataSnapshot(snapshot);
+    saveAppStateNow("Backup importado");
+    showToast("Backup com planejamentos importado.");
+    return;
+  }
   if (!state.currentPlanId) {
     const plan = createPlanMeta("Backup importado");
     state.plans.push(plan);
@@ -7386,7 +7392,7 @@ async function importBackup(file) {
     writePlansIndex();
   }
   localStorage.setItem(planStorageKey(state.currentPlanId), text);
-  applyAppSnapshot(JSON.parse(text));
+  applyAppSnapshot(snapshot);
   saveAppStateNow("Backup importado");
 }
 
