@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260716-estabilizacao" />
+    <link rel="stylesheet" href="./styles.css?v=20260716-revisoes" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -378,23 +378,35 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <div class="panel-heading">
             <div>
               <h2>Revis&otilde;es</h2>
+              <p>Veja o que j&aacute; est&aacute; dispon&iacute;vel, o que vem a seguir e o hist&oacute;rico de cada tema.</p>
             </div>
-            <label class="review-filter">Filtro
+          </div>
+          <div class="review-summary-grid" id="reviewSummary" aria-label="Resumo das revis&otilde;es"></div>
+          <div class="reviews-toolbar">
+            <label class="review-search-wrap">
+              <span class="sr-only">Pesquisar revis&otilde;es</span>
+              <i data-lucide="search" aria-hidden="true"></i>
+              <input id="reviewSearch" type="search" placeholder="Pesquisar mat&eacute;ria, tema ou observa&ccedil;&atilde;o" autocomplete="off" />
+            </label>
+            <label class="review-filter">Mostrar
               <select id="reviewFilter">
-                <option value="all">Pendentes</option>
-                <option value="today">Hoje</option>
-                <option value="overdue">Atrasadas</option>
+                <option value="all">Todas</option>
+                <option value="available">Dispon&iacute;veis</option>
                 <option value="upcoming">Pr&oacute;ximas</option>
+                <option value="adaptive">Adaptativas</option>
+                <option value="common">Comuns</option>
                 <option value="done">Conclu&iacute;das</option>
+                <option value="cancelled">Canceladas</option>
+              </select>
+            </label>
+            <label class="review-filter">Mat&eacute;ria
+              <select id="reviewSubjectFilter">
+                <option value="all">Todas</option>
               </select>
             </label>
           </div>
-          <div class="table-wrap simple">
-            <table>
-              <thead><tr><th>Revis&atilde;o</th><th>Mat&eacute;ria</th><th>Tema</th><th>Ciclo</th><th>Data base</th><th>Prazo</th><th>Status</th></tr></thead>
-              <tbody id="reviewsBody"></tbody>
-            </table>
-          </div>
+          <div id="reviewsBody" class="reviews-board" aria-live="polite"></div>
+          <div id="reviewHistoryModal" class="review-history-modal" hidden></div>
         </section>
 
         <section class="tab-panel" id="tab-erros">
@@ -547,9 +559,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./js/adaptive-review.js?v=20260711-revisao-adaptativa"></script>
+    <script src="./js/adaptive-review.js?v=20260716-revisoes"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260716-estabilizacao"></script>
+    <script src="./app.js?v=20260716-revisoes"></script>
   </body>
 </html>
 

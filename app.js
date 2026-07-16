@@ -81,6 +81,7 @@ let isWritingDataFile = false;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
 let performanceSaveSessionId = "";
+let reviewSearchTimer = 0;
 let unitDetailIndex = -1;
 let recentTopicFeedback = null;
 let showPendingOnly = false;
@@ -202,6 +203,10 @@ const els = {
   weeklyResultGrid: document.querySelector("#weeklyResultGrid"),
   weeklySubjectBody: document.querySelector("#weeklySubjectBody"),
   reviewFilter: document.querySelector("#reviewFilter"),
+  reviewSearch: document.querySelector("#reviewSearch"),
+  reviewSubjectFilter: document.querySelector("#reviewSubjectFilter"),
+  reviewSummary: document.querySelector("#reviewSummary"),
+  reviewHistoryModal: document.querySelector("#reviewHistoryModal"),
   completedBody: document.querySelector("#completedBody"),
   reviewsBody: document.querySelector("#reviewsBody"),
   notebookSubjects: document.querySelector("#notebookSubjects"),
@@ -2154,6 +2159,31 @@ function priorityReason(subject) {
   return "prioridade equilibrada";
 }
 
+function explainPriority(subject = {}) {
+  const baseScore = priorityScore(subject);
+  const base = priorityInfo(baseScore);
+  const adaptive = adaptivePriorityAdjustment({ materia: subject.materia, prioridadeBase: baseScore });
+  const mainReasons = [
+    `Importância informada como ${Number(subject.peso) || 3} de 5`,
+    `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
+  ];
+  const secondaryReasons = [];
+  adaptive.reasons?.forEach((reason) => {
+    if (!mainReasons.some((item) => normalizeForMatch(item).includes(normalizeForMatch(reason)))) secondaryReasons.push(reason);
+  });
+  if (adaptive.adjustment > 0 && adaptive.rawAdjustment > adaptive.adjustment) {
+    secondaryReasons.push(`Ajuste adaptativo limitado ao teto de ${Math.round(adaptive.cap * 100)}%`);
+  }
+  return {
+    level: base.label,
+    basePercent: base.percent,
+    adjustedPercent: Math.round(Math.min(1, baseScore + adaptive.adjustment) * 100),
+    mainReasons: [...mainReasons, ...secondaryReasons].slice(0, 3),
+    secondaryReasons: secondaryReasons.slice(0, 4),
+    adaptive,
+  };
+}
+
 function renderPriorityXray(subjects) {
   return "";
   if (!subjects.length) return "";
@@ -2201,6 +2231,7 @@ function renderPriorityXray(subjects) {
 }
 
 function priorityEditPanel(subject, index, priority) {
+  const explanation = explainPriority(subject);
   return `
     <div class="priority-edit-panel">
       <div class="priority-edit-toolbar">
@@ -2210,6 +2241,11 @@ function priorityEditPanel(subject, index, priority) {
       <div class="priority-scale-grid">
         ${scaleMarkup(index, "peso", "Import\u00e2ncia na prova", "Quanto essa mat\u00e9ria pesa no resultado.", subject.peso)}
         ${scaleMarkup(index, "dominio", "Dificuldade pessoal", "Quanto voc\u00ea sente dificuldade nessa mat\u00e9ria.", subject.dominio)}
+      </div>
+      <div class="priority-explanation">
+        <strong>Por que esta prioridade?</strong>
+        <ul>${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
+        <small>A pontuação base permanece ligada à importância e à dificuldade. Ajustes adaptativos só entram quando há desempenho, revisões ou reprogramações registradas.</small>
       </div>
     </div>
   `;
@@ -2365,22 +2401,34 @@ function isAdaptiveReview(record = {}) {
   return record.tipo === "adaptativa";
 }
 
-function normalizeAdaptiveReviewRecord(record = {}) {
-  if (!isAdaptiveReview(record)) return { ...record, status: normalizeReviewStatus(record.status) };
-  const available = record.disponivelEm || record.availableAt || "";
+function normalizeReviewRecord(record = {}) {
+  const base = {
+    ...record,
+    tipo: isAdaptiveReview(record) ? "adaptativa" : "comum",
+    status: normalizeReviewStatus(record.status),
+    intensidade: record.intensidade || null,
+    tentativas: Array.isArray(record.tentativas) ? record.tentativas : [],
+    questoesSugeridas: Math.max(1, Number(record.questoesSugeridas) || 10),
+    origem: record.origem || record.sourceKey || (isAdaptiveReview(record) ? "desempenho" : "ciclo"),
+    adiamentoTipo: record.adiamentoTipo || "data",
+    motivo: record.motivo && typeof record.motivo === "object" ? record.motivo : {},
+  };
+  if (!isAdaptiveReview(base)) return base;
+  const available = base.disponivelEm || base.availableAt || "";
   const dueDate = record.dataPrevista || (available ? formatDateBR(new Date(available)) : "");
   return {
-    ...record,
+    ...base,
     tipo: "adaptativa",
-    status: normalizeReviewStatus(record.status),
-    intensidade: record.intensidade || "curta",
-    tentativas: Array.isArray(record.tentativas) ? record.tentativas : [],
-    motivo: record.motivo && typeof record.motivo === "object" ? record.motivo : {},
+    intensidade: base.intensidade || "curta",
     dataPrevista: dueDate,
     disponivelEm: available || "",
-    questoesSugeridas: Math.max(1, Number(record.questoesSugeridas) || 6),
-    sugestao: record.sugestao || "Revise as questões erradas e consulte suas anotações.",
+    questoesSugeridas: Math.max(1, Number(base.questoesSugeridas) || 6),
+    sugestao: base.sugestao || "Revise as questões erradas e consulte suas anotações.",
   };
+}
+
+function normalizeAdaptiveReviewRecord(record = {}) {
+  return normalizeReviewRecord(record);
 }
 
 function adaptiveReviewFor(materia = "", assunto = "") {
@@ -2461,7 +2509,10 @@ function adaptivePriorityAdjustment(target = {}) {
 
   const cap = assunto ? 0.35 : 0.3;
   return {
+    rawAdjustment: adjustment,
     adjustment: Math.min(cap, adjustment),
+    cap,
+    factorLimits: { accuracy: 0.18, difficulty: 0.08, reprogramming: 0.09, standardReview: 0.12, adaptiveReview: 0.14, performanceDrop: 0.08 },
     reasons: [...new Set(reasons)],
     accuracy: recentAccuracy,
     reviewAttention,
@@ -3235,17 +3286,16 @@ function continueAlternativeEntries(suggested) {
 
 function continueAvailableReviews() {
   return reviewScheduleRows("all")
-    .filter((item) => item.status !== "Concluída")
+    .filter((item) => !["Concluída", "Cancelada"].includes(item.status))
     .sort((a, b) => {
-      const dateDifference = new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
-      if (dateDifference) return dateDifference;
-      const rank = { overdue: 0, today: 1, upcoming: 2 };
-      return (rank[a.statusInfo?.group] ?? 3) - (rank[b.statusInfo?.group] ?? 3);
+      const priorityDifference = reviewSortRank(a) - reviewSortRank(b);
+      if (priorityDifference) return priorityDifference;
+      return new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
     })
     .slice(0, 3);
 }
 
-function focusedDraftFor(index) {
+function focusedDraftFor(index, context = {}) {
   const block = state.generatedBlocks[index];
   if (!block) return null;
   if (!focusedStudyDrafts.has(index)) {
@@ -3259,10 +3309,15 @@ function focusedDraftFor(index) {
       observacoes: block.observacoes || "",
       pontosRevisar: Boolean(block.pontosRevisar),
       reviewCycles: reviewCyclesFromBlock(block),
+      context: context.context || "estudo",
+      reviewId: context.reviewId || "",
       sessionId: createStudySessionId(),
     });
   }
-  return focusedStudyDrafts.get(index);
+  const draft = focusedStudyDrafts.get(index);
+  if (context.context) draft.context = context.context;
+  if (context.reviewId) draft.reviewId = context.reviewId;
+  return draft;
 }
 
 function createStudySessionId() {
@@ -3355,7 +3410,9 @@ function renderFocusedStudyOverlay() {
   const panel = document.querySelector("#tab-continuar");
   if (!panel || !panel.classList.contains("active")) return;
   const block = state.generatedBlocks[focusedStudyIndex];
-  document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex), explainStudySuggestion(block)));
+  const context = focusedStudySession?.context || { context: "estudo" };
+  const review = context.reviewId ? state.reviews.find((record) => record.id === context.reviewId) : null;
+  document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex, context), explainStudySuggestion(block), { ...context, review }));
   if (window.lucide) window.lucide.createIcons();
   document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
 }
@@ -3381,24 +3438,28 @@ function focusedReviewOptionsMarkup(block, draft) {
   `;
 }
 
-function focusedStudyMarkup(block, index, draft, suggestion) {
+function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   const timer = focusedTimerSeconds();
+  const isReview = context.context === "revisao";
+  const review = context.review || null;
+  const reviewReason = review ? reviewReasonText(review) : "Retome os erros, releia o resumo e registre uma nova tentativa.";
   return `
     <div class="focused-study-modal" role="dialog" aria-modal="true" aria-labelledby="focusedStudyTitle">
       <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Fechar modo focado"></button>
       <section class="focused-study-panel">
         <header class="focused-study-header">
           <div>
-            <span class="section-kicker">Modo focado de estudo</span>
+            <span class="section-kicker">${isReview ? "Modo focado de revis\u00e3o" : "Modo focado de estudo"}</span>
             <span class="focused-study-subject">${escapeHtml(block.materia)}</span>
             <h2 id="focusedStudyTitle">${escapeHtml(themeTitle(block.assunto))}</h2>
           </div>
           <button class="icon-button" type="button" data-close-focused aria-label="Fechar modo focado"><i data-lucide="x"></i></button>
         </header>
-        <div class="focused-study-context">
-          <strong>Conteúdo principal</strong>
+        <div class="focused-study-context ${isReview ? "is-review-context" : ""}">
+          <strong>${isReview ? "Por que revisar agora" : "Conteúdo principal"}</strong>
           <p>${escapeHtml(themeDetails(block.assunto) || block.assunto)}</p>
-          <span>Bloco ${index + 1} de ${state.generatedBlocks.length} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
+          <span>${isReview ? escapeHtml(reviewReason) : `Bloco ${index + 1} de ${state.generatedBlocks.length}`} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
+          ${isReview ? `<small class="focused-review-sequence">Sugestão: revisar erros, reler pontos frágeis, resolver novas questões e registrar o resultado. ${Number(review?.questoesSugeridas) || 10} questões sugeridas.</small>` : ""}
         </div>
         <div class="focused-study-timer">
           <div>
@@ -3423,7 +3484,7 @@ function focusedStudyMarkup(block, index, draft, suggestion) {
         <div class="focused-study-form">
           <div class="focused-study-form-grid">
             <label>Status
-              <select data-focused-field="status">${statusOptionsMarkup(draft.status)}</select>
+              <select data-focused-field="status">${isReview ? focusedReviewStatusMarkup(draft.status) : statusOptionsMarkup(draft.status)}</select>
             </label>
             <label>Tipo de atividade
               <select data-focused-field="tipoAtividade">
@@ -3462,12 +3523,12 @@ function focusedStudyMarkup(block, index, draft, suggestion) {
   `;
 }
 
-function openFocusedStudy(index) {
+function openFocusedStudy(index, context = { context: "estudo" }) {
   if (!state.generatedBlocks[index]) return;
   focusedStudyIndex = index;
-  focusedStudySession = { index, elapsedSeconds: 0, startedAt: 0, running: false };
+  focusedStudySession = { index, context, elapsedSeconds: 0, startedAt: 0, running: false };
   continueDetailsOpen = false;
-  focusedDraftFor(index);
+  focusedDraftFor(index, context);
   renderContinuePanel();
   // Garante que o overlay apareca mesmo se a re-renderizacao do painel
   // (ou a transicao de tela) tiver desfeito a insercao acima.
@@ -3476,7 +3537,46 @@ function openFocusedStudy(index) {
       renderFocusedStudyOverlay();
     }
   });
-  showToast("Estudo iniciado.");
+  showToast(context.context === "revisao" ? "Revisão iniciada." : "Estudo iniciado.");
+}
+
+function recordReviewAttempt(reviewId, block, draft, outcome) {
+  ensureReviewsArray();
+  const record = state.reviews.find((item) => item.id === reviewId);
+  if (!record || !block || !outcome?.ok) return;
+  const sessionId = String(draft.sessionId || block.lastSavedSessionId || createStudySessionId());
+  const attempts = reviewHistoryEntries(record);
+  if (!attempts.some((attempt) => attempt.sessaoId === sessionId)) {
+    attempts.push({
+      sessaoId: sessionId,
+      registradaEm: new Date().toISOString(),
+      tipoAtividade: draft.tipoAtividade || "Revisão",
+      tempoEstudado: Number(block.tempoEstudado) || 0,
+      totalQuestoes: Number(block.questoes) || 0,
+      acertos: Number(block.acertos) || 0,
+      percentual: Number(block.percentual) || 0,
+      dificuldade: block.dificuldade || "Média",
+      observacoes: block.observacoes || "",
+      pontosFrageis: Boolean(block.pontosRevisar),
+      intensidade: record.intensidade || null,
+      statusDepois: outcome.nextStatus,
+    });
+  }
+  record.tentativas = attempts;
+  record.atualizadaEm = new Date().toISOString();
+  if (outcome.nextStatus === "Concluído") {
+    record.status = "Concluída";
+    record.concluidaEm = new Date().toISOString();
+    record.adiamentoTipo = "data";
+  } else if (!isAdaptiveReview(record)) {
+    record.status = "Pendente";
+    record.adiamentoTipo = outcome.nextStatus === "Reprogramar" ? "ciclo" : "data";
+    if (record.adiamentoTipo === "ciclo") {
+      record.dataPrevista = "";
+      record.disponivelEm = "";
+      record.disponibilidade = "Disponível no próximo ciclo possível";
+    }
+  }
 }
 
 function saveFocusedStudy() {
@@ -3484,6 +3584,7 @@ function saveFocusedStudy() {
   const index = focusedStudyIndex;
   const block = state.generatedBlocks[index];
   const draft = focusedStudyDrafts.get(index);
+  const context = focusedStudySession?.context || draft?.context || { context: "estudo" };
   if (!block || !draft) return;
   focusedStudySaving = true;
   const sessionHours = focusedTimerSeconds() / 3600;
@@ -3509,6 +3610,7 @@ function saveFocusedStudy() {
     return;
   }
   const { adaptiveOutcome, previousStatus, nextStatus } = outcome;
+  if (context.context === "revisao" && context.reviewId) recordReviewAttempt(context.reviewId, block, draft, outcome);
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
   focusedStudyIndex = -1;
@@ -3594,7 +3696,7 @@ function renderContinuePanel() {
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
     <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
-    <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(item.intervalLabel || item.intervalKey) + " · " + escapeHtml(item.dataPrevista || "") + "</em><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
+    <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
   `;
   if (window.lucide) window.lucide.createIcons();
@@ -3625,7 +3727,10 @@ function normalizeReviewStatus(status) {
   const comparable = normalizeForMatch(raw)
     .replace(/[?]+/g, "i")
     .replace(/\s+/g, " ");
+  if (comparable.includes("cancel")) return "Cancelada";
   if (comparable.includes("conclu") || raw.includes("Conclu")) return "Conclu\u00edda";
+  if (comparable.includes("acompanh") || comparable.includes("em revis")) return "Em revis\u00e3o";
+  if (comparable.includes("dispon") || comparable.includes("pend") || comparable.includes("nao inici")) return "Pendente";
   return raw || "Pendente";
 }
 
@@ -3690,6 +3795,15 @@ function unitDetailCard(block) {
 function statusOptionsMarkup(selected) {
   const normalized = normalizeStatus(selected);
   return STATUS_OPTIONS.map((status) => `<option ${status === normalized ? "selected" : ""}>${status}</option>`).join("");
+}
+
+function focusedReviewStatusMarkup(selected) {
+  const normalized = normalizeStatus(selected);
+  return [
+    ["Conclu\u00eddo", "Conclu\u00edda"],
+    ["Em andamento", "Manter em acompanhamento"],
+    ["Reprogramar", "Reprogramar"],
+  ].map(([value, label]) => `<option value="${value}" ${value === normalized ? "selected" : ""}>${label}</option>`).join("");
 }
 
 function reviewOptionsMarkup(block, index) {
@@ -4525,7 +4639,15 @@ function reviewRecordId(item, intervalKey) {
 
 function ensureReviewsArray() {
   if (!Array.isArray(state.reviews)) state.reviews = [];
-  state.reviews = state.reviews.map((record) => normalizeAdaptiveReviewRecord(record));
+  const byId = new Map();
+  state.reviews.map((record) => normalizeReviewRecord(record)).forEach((record) => {
+    const key = record.id || `${record.tipo}::${reviewSourceKey(record)}::${record.intervalKey || ""}`;
+    const previous = byId.get(key);
+    if (!previous || new Date(record.atualizadaEm || record.createdAt || 0) >= new Date(previous.atualizadaEm || previous.createdAt || 0)) {
+      byId.set(key, record);
+    }
+  });
+  state.reviews = [...byId.values()];
 }
 
 function adaptiveReviewSourceKey(item = {}) {
@@ -4542,6 +4664,9 @@ function syncAdaptiveReviewForBlock(block, options = {}) {
   const outcome = engine.mergeReview(existing, {
     id: sourceKey,
     sourceKey,
+    tipo: "adaptativa",
+    origem: "desempenho",
+    adiamentoTipo: "data",
     concursoId: state.currentPlanId || "",
     materia: block.materia,
     assunto: block.assunto,
@@ -4615,6 +4740,8 @@ function syncReviewSource(item, isCompleted = false) {
     state.reviews.push({
       id,
       sourceKey,
+      tipo: "comum",
+      origem: "ciclo",
       materia: item.materia,
       assunto: item.assunto,
       ciclo: item.ciclo || currentCycleLabel(),
@@ -4623,6 +4750,11 @@ function syncReviewSource(item, isCompleted = false) {
       dataBase: baseDateText,
       dataPrevista: formatDateBR(dueDate),
       status: "Pendente",
+      adiamentoTipo: "data",
+      adiamentoValor: interval.key,
+      tentativas: [],
+      questoesSugeridas: 10,
+      motivo: {},
       createdAt: new Date().toISOString(),
     });
   });
@@ -4650,6 +4782,9 @@ function reviewStatusInfo(record) {
     if (normalizedStatus === "Em revisão") {
       return { label: "Em revisão", remaining: 0, group: "today" };
     }
+    if (record.adiamentoTipo === "ciclo" && !record.dataPrevista) {
+      return { label: "Disponível no próximo ciclo possível", remaining: Number.POSITIVE_INFINITY, group: "upcoming" };
+    }
     const dueDate = parseBrazilianDate(record.dataPrevista) || new Date(record.disponivelEm || Date.now());
     const remaining = daysUntil(dueDate);
     if (remaining <= 0) return { label: "Disponível para revisão", remaining, group: "today" };
@@ -4662,12 +4797,15 @@ function reviewStatusInfo(record) {
   if (normalizedStatus === "Concluída") {
     return { label: "Conclu\u00edda", remaining: 0, group: "done" };
   }
+  if (record.adiamentoTipo === "ciclo" && !record.dataPrevista) {
+    return { label: "Dispon\u00edvel no pr\u00f3ximo ciclo poss\u00edvel", remaining: Number.POSITIVE_INFINITY, group: "upcoming" };
+  }
   const dueDate = parseBrazilianDate(record.dataPrevista) || new Date();
   const remaining = daysUntil(dueDate);
   const label =
-    remaining < 0 ? `${Math.abs(remaining)} dia${Math.abs(remaining) === 1 ? "" : "s"} em atraso` :
-    remaining === 0 ? "Revisar hoje" :
-    `Programada em ${remaining} dia${remaining === 1 ? "" : "s"}`;
+    remaining < 0 ? `Dispon\u00edvel desde ${record.dataPrevista || "a data anterior"}` :
+    remaining === 0 ? "Dispon\u00edvel agora" :
+    `Dispon\u00edvel a partir de ${record.dataPrevista || "uma data futura"}`;
   const group = remaining < 0 ? "overdue" : remaining === 0 ? "today" : "upcoming";
   return { label, remaining, group };
 }
@@ -4677,16 +4815,102 @@ function reviewScheduleRows(filterValue = "") {
   const selected = filterValue || els.reviewFilter?.value || "all";
   return state.reviews
     .map((record) => {
-      const dueDate = parseBrazilianDate(record.dataPrevista) || new Date();
+      const dueDate = record.adiamentoTipo === "ciclo" && !record.dataPrevista
+        ? new Date(8640000000000000)
+        : parseBrazilianDate(record.dataPrevista) || new Date();
       return { ...record, dueDate, statusInfo: reviewStatusInfo(record) };
     })
     .filter((record) => {
       if (selected === "done") return record.status === "Concluída";
-      if (["Concluída", "Cancelada"].includes(record.status)) return false;
+      if (selected === "cancelled") return record.status === "Cancelada";
+      if (record.status === "Cancelada") return false;
       if (selected === "all") return true;
+      if (record.status === "Concluída") return false;
+      if (selected === "available" || selected === "today") return ["overdue", "today"].includes(record.statusInfo.group);
+      if (selected === "adaptive") return isAdaptiveReview(record);
+      if (selected === "common") return !isAdaptiveReview(record);
       return record.statusInfo.group === selected;
     })
     .sort((a, b) => a.dueDate - b.dueDate || a.materia.localeCompare(b.materia));
+}
+
+function reviewRowsForView() {
+  const rows = reviewScheduleRows(els.reviewFilter?.value || "all");
+  const query = normalizeForMatch(els.reviewSearch?.value || "").trim();
+  const subject = normalizeForMatch(els.reviewSubjectFilter?.value || "all");
+  return rows.filter((record) => {
+    const matchesSubject = subject === "all" || normalizeForMatch(record.materia) === subject;
+    if (!matchesSubject) return false;
+    if (!query) return true;
+    const attemptNotes = reviewHistoryEntries(record).map((attempt) => attempt.observacoes || "").join(" ");
+    const haystack = normalizeForMatch([record.materia, record.assunto, record.observacoes, record.motivo?.texto, record.sugestao, attemptNotes].filter(Boolean).join(" "));
+    return haystack.includes(query);
+  });
+}
+
+function reviewSortRank(record) {
+  if (isAdaptiveReview(record) && record.intensidade === "reforcada") return 0;
+  if (isAdaptiveReview(record) && record.intensidade === "prioritaria") return 1;
+  if (record.statusInfo?.group === "overdue") return 2;
+  if (record.statusInfo?.group === "today") return 3;
+  return 4;
+}
+
+function reviewTypeLabel(record) {
+  if (!isAdaptiveReview(record)) return `Revis\u00e3o de ${record.intervalLabel || reviewShortLabel(record.intervalKey)}`;
+  const label = record.intensidade === "reforcada" ? "refor\u00e7ada" : record.intensidade === "prioritaria" ? "priorit\u00e1ria" : "curta";
+  return `Revis\u00e3o adaptativa ${label}`;
+}
+
+function reviewReasonText(record) {
+  if (!isAdaptiveReview(record)) return "Revis\u00e3o programada a partir do ciclo conclu\u00eddo.";
+  const motive = record.motivo || {};
+  const percent = Number(motive.percentual);
+  if (Number.isFinite(percent) && Number(motive.totalQuestoes) > 0) {
+    if (percent <= 0.4) return "Desempenho igual ou inferior ao limite de dom\u00ednio.";
+    if (percent <= 0.6) return "Desempenho abaixo do esperado para este tema.";
+    return "Desempenho pede uma retomada curta antes de avan\u00e7ar.";
+  }
+  return record.sugestao || "Revis\u00e3o criada a partir do desempenho registrado.";
+}
+
+function reviewPerformanceText(record) {
+  const motive = record.motivo || {};
+  const latest = Array.isArray(record.tentativas) && record.tentativas.length ? record.tentativas[record.tentativas.length - 1] : motive;
+  if (!latest || Number(latest.totalQuestoes) <= 0) return "Desempenho ainda n\u00e3o registrado";
+  return `${formatPercent(latest.percentual || 0)} em ${Number(latest.totalQuestoes) || 0} quest\u00f5es`;
+}
+
+function reviewAvailabilityText(record) {
+  const info = record.statusInfo || reviewStatusInfo(record);
+  if (info.group === "done") return `Conclu\u00edda${record.concluidaEm ? ` em ${formatDateBR(new Date(record.concluidaEm))}` : ""}`;
+  if (info.group === "cancelled") return "Cancelada pelo usu\u00e1rio";
+  if (record.adiamentoTipo === "ciclo" && !record.dataPrevista) return "Dispon\u00edvel no pr\u00f3ximo ciclo poss\u00edvel";
+  if (info.group === "overdue") return `Dispon\u00edvel desde ${record.dataPrevista || "a data anterior"}`;
+  if (info.group === "today") return "Dispon\u00edvel agora";
+  return `Dispon\u00edvel a partir de ${record.dataPrevista || "uma data futura"}`;
+}
+
+function reviewHistoryEntries(record) {
+  if (Array.isArray(record.tentativas) && record.tentativas.length) return record.tentativas;
+  const related = [...state.completedHistory, ...state.generatedBlocks]
+    .find((item) => topicMatches(record, item.materia, item.assunto) && normalizeStatus(item.status) === "Concluído");
+  if (!related || !(Number(related.questoes) > 0)) return [];
+  return [{
+    sessaoId: related.sessaoId || "legacy-review-attempt",
+    registradaEm: related.concluidoEm || related.savedAt || "",
+    tipoAtividade: related.tipoAtividade || "Teoria",
+    totalQuestoes: Number(related.questoes) || 0,
+    acertos: Number(related.acertos) || 0,
+    percentual: Number(related.percentual) || 0,
+    dificuldade: related.dificuldade || "Média",
+    statusDepois: "Concluído",
+  }];
+}
+
+function reviewAttemptDateLabel(value) {
+  const date = value instanceof Date ? value : parseBrazilianDate(value) || new Date(value);
+  return Number.isNaN(date.getTime()) ? "Data não informada" : formatDateBR(date);
 }
 
 function adaptiveReviewManualActionMarkup(block, index) {
@@ -4790,28 +5014,159 @@ async function updateAdaptiveReviewAction(id, action) {
   saveAppStateNow("Revisão adaptativa atualizada");
 }
 
+function reviewCardMarkup(item) {
+  const isDone = item.status === "Conclu\u00edda";
+  const isCancelled = item.status === "Cancelada";
+  const attempts = reviewHistoryEntries(item);
+  const latest = attempts.length ? attempts[attempts.length - 1] : null;
+  const intensity = isAdaptiveReview(item) ? (item.intensidade || "curta") : "common";
+  const classes = ["review-card", isAdaptiveReview(item) ? "is-adaptive" : "is-common", `review-intensity-${intensity}`, isDone ? "is-done" : "", isCancelled ? "is-cancelled" : ""].filter(Boolean).join(" ");
+  const actions = [];
+  if (!isDone && !isCancelled) {
+    actions.push(`<button class="primary-button compact-button" type="button" data-start-review="${escapeHtml(item.id || "")}"><i data-lucide="play"></i><span>Iniciar revis\u00e3o</span></button>`);
+    actions.push(`<button class="ghost-button compact-button" type="button" data-review-history="${escapeHtml(item.id || "")}"><i data-lucide="history"></i><span>Ver hist\u00f3rico</span></button>`);
+    actions.push(`<button class="text-action" type="button" data-review-postpone="${escapeHtml(item.id || "")}">Adiar</button>`);
+    if (isAdaptiveReview(item)) actions.push(`<button class="text-action" type="button" data-adaptive-review-action="questions" data-adaptive-review-id="${escapeHtml(item.id || "")}">Quest\u00f5es</button>`);
+    actions.push(`<button class="text-action" type="button" data-toggle-review-status="${escapeHtml(item.id || "")}">Concluir</button>`);
+    actions.push(`<button class="text-action danger-text" type="button" data-cancel-review="${escapeHtml(item.id || "")}">Cancelar</button>`);
+  } else {
+    actions.push(`<button class="ghost-button compact-button" type="button" data-review-history="${escapeHtml(item.id || "")}"><i data-lucide="history"></i><span>Ver hist\u00f3rico</span></button>`);
+    if (isDone) actions.push(`<button class="text-action" type="button" data-toggle-review-status="${escapeHtml(item.id || "")}">Reabrir</button>`);
+  }
+  return `
+    <article class="${classes}">
+      <div class="review-card-main">
+        <div class="review-card-heading">
+          <div>
+            <span class="review-subject">${escapeHtml(item.materia || "Mat\u00e9ria n\u00e3o informada")}</span>
+            <h3>${escapeHtml(themeTitle(item.assunto) || "Tema n\u00e3o informado")}</h3>
+          </div>
+          <span class="review-type-label"><i data-lucide="${isAdaptiveReview(item) ? "activity" : "repeat-2"}"></i>${escapeHtml(reviewTypeLabel(item))}</span>
+        </div>
+        <div class="review-card-meta">
+          <span class="review-status-line"><i data-lucide="${item.statusInfo.group === "upcoming" ? "calendar-clock" : item.statusInfo.group === "done" ? "check-circle-2" : "circle-alert"}"></i>${escapeHtml(reviewAvailabilityText(item))}</span>
+          ${isAdaptiveReview(item) ? `<span class="review-performance-line">${escapeHtml(reviewPerformanceText(item))}</span><span class="review-question-suggestion">${Number(item.questoesSugeridas) || 10} quest\u00f5es sugeridas</span>` : `<span class="review-cycle-line">${escapeHtml(item.ciclo || "Ciclo atual")}</span>`}
+        </div>
+        <div class="review-card-reason"><strong>Motivo</strong><span>${escapeHtml(reviewReasonText(item))}</span></div>
+        <div class="review-card-footer">
+          <span class="review-attempt-summary">${attempts.length ? `${attempts.length} tentativa${attempts.length === 1 ? "" : "s"}${latest ? ` · \u00faltima ${formatPercent(latest.percentual || 0)}` : ""}` : "Nenhuma tentativa registrada"}</span>
+          <div class="review-card-actions">${actions.join("")}</div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderReviewSummary(rows) {
+  if (!els.reviewSummary) return;
+  const all = reviewScheduleRows("all");
+  const available = all.filter((record) => ["overdue", "today"].includes(record.statusInfo.group));
+  const upcoming = all.filter((record) => record.statusInfo.group === "upcoming");
+  const adaptive = all.filter((record) => isAdaptiveReview(record) && !["Conclu\u00edda", "Cancelada"].includes(record.status));
+  const currentCycle = currentCycleLabel();
+  const done = state.reviews.filter((record) => record.status === "Conclu\u00edda" && (!record.ciclo || record.ciclo === currentCycle));
+  els.reviewSummary.innerHTML = summaryItems([
+    ["Dispon\u00edveis agora", available.length],
+    ["Pr\u00f3ximas", upcoming.length],
+    ["Adaptativas abertas", adaptive.length],
+    ["Conclu\u00eddas no ciclo", done.length],
+  ]);
+}
+
+function renderReviewSubjectFilter(rows) {
+  if (!els.reviewSubjectFilter) return;
+  const current = els.reviewSubjectFilter.value || "all";
+  const subjects = [...new Map(rows.map((record) => [normalizeForMatch(record.materia), record.materia])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  els.reviewSubjectFilter.innerHTML = `<option value="all">Todas</option>${subjects.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("")}`;
+  els.reviewSubjectFilter.value = subjects.some(([value]) => value === current) ? current : "all";
+}
+
 function renderReviews() {
-  const reviewRows = reviewScheduleRows();
-  const selected = els.reviewFilter?.selectedOptions?.[0]?.textContent || "revis\u00f5es";
-  els.reviewsBody.innerHTML = reviewRows.length ? reviewRows.map((item) => {
-    const isDone = item.status === "Conclu\u00edda";
-    return `
-      <tr>
-        <td>${escapeHtml(item.intervalLabel || item.intervalKey)}</td>
-        <td>${escapeHtml(item.materia)}</td>
-        <td>${escapeHtml(item.assunto)}</td>
-        <td>${escapeHtml(item.ciclo || "")}</td>
-        <td>${escapeHtml(item.dataBase || "")}</td>
-        <td>${escapeHtml(item.dataPrevista || "")}</td>
-        <td>
-          <span class="review-badge ${isDone ? "" : "muted"}">${item.statusInfo.label}</span>
-          <button class="ghost-button compact-button" type="button" data-toggle-review-status="${escapeHtml(item.id)}">${isDone ? "Reabrir" : "Concluir"}</button>
-        </td>
-      </tr>
-    `;
-  }).join("") : `<tr><td colspan="7">Nenhum tema para ${selected}.</td></tr>`;
-  renderAdaptiveReviewControls(reviewRows);
+  const all = reviewScheduleRows("all");
+  renderReviewSubjectFilter(all);
+  const reviewRows = reviewRowsForView();
+  renderReviewSummary(reviewRows);
+  if (!els.reviewsBody) return;
+  const groups = [
+    { key: "available", title: "Dispon\u00edveis agora", icon: "zap", rows: reviewRows.filter((record) => ["overdue", "today"].includes(record.statusInfo.group)).sort((a, b) => reviewSortRank(a) - reviewSortRank(b) || a.dueDate - b.dueDate) },
+    { key: "upcoming", title: "Pr\u00f3ximas revis\u00f5es", icon: "calendar-clock", rows: reviewRows.filter((record) => record.statusInfo.group === "upcoming") },
+    { key: "done", title: "Conclu\u00eddas", icon: "check-circle-2", rows: reviewRows.filter((record) => record.status === "Conclu\u00edda") },
+    { key: "cancelled", title: "Canceladas", icon: "ban", rows: reviewRows.filter((record) => record.status === "Cancelada") },
+  ].filter((group) => group.rows.length);
+  els.reviewsBody.innerHTML = groups.length
+    ? groups.map((group) => `<section class="review-group" data-review-group="${group.key}"><header><div><i data-lucide="${group.icon}"></i><h3>${group.title}</h3></div><span>${group.rows.length}</span></header><div class="review-card-list">${group.rows.map(reviewCardMarkup).join("")}</div></section>`).join("")
+    : `<div class="empty-panel">${reviewRows.length ? "Nenhuma revis\u00e3o nesta categoria." : "Nenhuma revis\u00e3o encontrada para os filtros atuais."}</div>`;
   if (window.lucide) window.lucide.createIcons();
+}
+
+function renderReviewHistoryModal(record) {
+  if (!els.reviewHistoryModal || !record) return;
+  const attempts = reviewHistoryEntries(record);
+  els.reviewHistoryModal.innerHTML = `
+    <button class="review-history-backdrop" type="button" data-close-review-history aria-label="Fechar hist\u00f3rico"></button>
+    <section class="review-history-card" role="dialog" aria-modal="true" aria-labelledby="reviewHistoryTitle">
+      <header><div><span class="section-kicker">Hist\u00f3rico do tema</span><h3 id="reviewHistoryTitle">${escapeHtml(themeTitle(record.assunto) || "Tema")}</h3><p>${escapeHtml(record.materia || "")}</p></div><button class="icon-button" type="button" data-close-review-history aria-label="Fechar hist\u00f3rico"><i data-lucide="x"></i></button></header>
+      <div class="review-history-list">${attempts.length ? attempts.map((attempt) => `<article><time>${reviewAttemptDateLabel(attempt.registradaEm)}</time><div><strong>${escapeHtml(attempt.tipoAtividade || "Atividade registrada")}</strong><span>${Number(attempt.totalQuestoes) || 0} quest\u00f5es \u00b7 ${formatPercent(attempt.percentual || 0)} \u00b7 dificuldade ${escapeHtml(attempt.dificuldade || "n\u00e3o informada")}</span></div><em>${escapeHtml(attempt.statusDepois || "Tentativa registrada")}</em></article>`).join("") : `<p class="muted-note">Nenhuma tentativa registrada para este tema.</p>`}</div>
+      <footer><button class="ghost-button" type="button" data-close-review-history>Fechar</button></footer>
+    </section>
+  `;
+  els.reviewHistoryModal.hidden = false;
+  if (window.lucide) window.lucide.createIcons();
+  els.reviewHistoryModal.querySelector("[data-close-review-history]")?.focus();
+}
+
+function closeReviewHistory() {
+  if (els.reviewHistoryModal) els.reviewHistoryModal.hidden = true;
+}
+
+async function postponeReview(id) {
+  ensureReviewsArray();
+  const record = state.reviews.find((item) => item.id === id);
+  if (!record || ["Conclu\u00edda", "Cancelada"].includes(record.status)) return;
+  const result = await openDialog({
+    title: "Adiar revis\u00e3o",
+    message: "Escolha quando este tema volta a ficar dispon\u00edvel. O pr\u00f3ximo ciclo \u00e9 a op\u00e7\u00e3o recomendada.",
+    fields: [{
+      name: "adiamento",
+      label: "Disponibilidade",
+      type: "select",
+      value: "ciclo",
+      options: [
+        { value: "ciclo", label: "Pr\u00f3ximo ciclo" },
+        { value: "amanha", label: "Amanh\u00e3" },
+        { value: "2dias", label: "Em 2 dias" },
+        { value: "7dias", label: "Em 7 dias" },
+        { value: "data", label: "Escolher data" },
+      ],
+    }],
+    actions: [{ id: "cancel", label: "Cancelar", value: null }, { id: "confirm", label: "Salvar adiamento", variant: "primary" }],
+  });
+  if (!result) return;
+  let type = result.adiamento;
+  let dueDate = null;
+  if (type === "data") {
+    const dateValue = await dialogPrompt("Informe a data no formato DD/MM/AAAA:", record.dataPrevista || formatDateBR(new Date()), { title: "Data da revis\u00e3o", label: "Data" });
+    dueDate = parseBrazilianDate(dateValue);
+    if (!dueDate) {
+      await dialogAlert("Informe uma data v\u00e1lida para adiar a revis\u00e3o.");
+      return;
+    }
+  } else {
+    const days = { amanha: 1, "2dias": 2, "7dias": 7 }[type];
+    if (days) dueDate = addDays(new Date(), days);
+  }
+  record.status = "Pendente";
+  record.adiamentoTipo = type === "ciclo" ? "ciclo" : "data";
+  record.adiamentoValor = type;
+  record.disponivelEm = dueDate ? dueDate.toISOString() : "";
+  record.dataPrevista = dueDate ? formatDateBR(dueDate) : "";
+  record.disponibilidade = dueDate ? `Dispon\u00edvel a partir de ${record.dataPrevista}` : "Dispon\u00edvel no pr\u00f3ximo ciclo poss\u00edvel";
+  record.atualizadaEm = new Date().toISOString();
+  renderReviews();
+  renderContinuePanel();
+  renderEvolution();
+  saveAppStateNow("Adiamento da revis\u00e3o salvo");
 }
 
 function notebookKey(materia, assunto) {
@@ -5536,11 +5891,12 @@ function openDialog({ title = "Atenção", message = "", variant = "info", field
     const overlay = document.createElement("div");
     overlay.className = "app-dialog";
     overlay.setAttribute("role", "presentation");
-    const fieldMarkup = fields.map((field) => `
-      <label class="app-dialog-field">${escapeHtml(field.label || field.name)}
-        <input name="${escapeHtml(field.name)}" type="${field.type || "text"}" value="${escapeHtml(field.value || "")}" ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.max !== undefined ? `max="${field.max}"` : ""} ${field.step !== undefined ? `step="${field.step}"` : ""} />
-      </label>
-    `).join("");
+    const fieldMarkup = fields.map((field) => {
+      const control = field.type === "select"
+        ? `<select name="${escapeHtml(field.name)}">${(field.options || []).map((option) => `<option value="${escapeHtml(option.value)}" ${String(option.value) === String(field.value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>`
+        : `<input name="${escapeHtml(field.name)}" type="${field.type || "text"}" value="${escapeHtml(field.value || "")}" ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.max !== undefined ? `max="${field.max}"` : ""} ${field.step !== undefined ? `step="${field.step}"` : ""} />`;
+      return `<label class="app-dialog-field">${escapeHtml(field.label || field.name)}${control}</label>`;
+    }).join("");
     const actionMarkup = actions.map((action, index) => `<button type="button" class="${action.variant === "danger" ? "danger-button" : action.variant === "primary" ? "primary-button" : "ghost-button"}" data-dialog-action="${escapeHtml(action.id || String(index))}">${escapeHtml(action.label || "Continuar")}</button>`).join("");
     overlay.innerHTML = `<div class="app-dialog-backdrop" data-dialog-dismiss></div><section class="app-dialog-card ${variant === "danger" ? "is-danger" : ""}" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle"><header><h2 id="appDialogTitle">${escapeHtml(title)}</h2></header><div class="app-dialog-message">${escapeHtml(message).replace(/\n/g, "<br>")}</div>${fieldMarkup ? `<div class="app-dialog-fields">${fieldMarkup}</div>` : ""}<footer>${actionMarkup}</footer></section>`;
     document.body.appendChild(overlay);
@@ -6361,7 +6717,7 @@ document.addEventListener("click", (event) => {
   if (reviewButton) {
     const review = reviewScheduleRows("all").find((item) => item.id === reviewButton.dataset.startReview);
     const entry = review ? state.generatedBlocks.map((block, index) => ({ block, index })).find(({ block }) => topicMatches(review, block.materia, block.assunto)) : null;
-    if (entry) openFocusedStudy(entry.index);
+    if (entry) openFocusedStudy(entry.index, { context: "revisao", reviewId: review.id });
     else switchTab("revisoes");
     return;
   }
@@ -6439,6 +6795,10 @@ document.addEventListener("change", (event) => {
   else draft[field.dataset.focusedField] = field.value;
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && els.reviewHistoryModal && !els.reviewHistoryModal.hidden) {
+    closeReviewHistory();
+    return;
+  }
   if (event.key === "Escape" && focusedStudyIndex >= 0) closeFocusedStudy();
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
@@ -7172,7 +7532,47 @@ els.reviewFilter?.addEventListener("change", () => {
   renderReviews();
   saveAppStateNow("Filtro salvo");
 });
-els.reviewsBody?.addEventListener("click", (event) => {
+els.reviewSearch?.addEventListener("input", () => {
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = setTimeout(() => renderReviews(), 180);
+});
+els.reviewSubjectFilter?.addEventListener("change", () => renderReviews());
+els.reviewsBody?.addEventListener("click", async (event) => {
+  const startButton = event.target.closest("[data-start-review]");
+  if (startButton) {
+    const review = reviewScheduleRows("all").find((item) => item.id === startButton.dataset.startReview);
+    const entry = review ? state.generatedBlocks.map((block, index) => ({ block, index })).find(({ block }) => topicMatches(review, block.materia, block.assunto)) : null;
+    if (entry) openFocusedStudy(entry.index, { context: "revisao", reviewId: review.id });
+    else void dialogAlert("Não foi possível localizar o bloco deste tema no ciclo atual.");
+    return;
+  }
+  const historyButton = event.target.closest("[data-review-history]");
+  if (historyButton) {
+    const record = reviewScheduleRows("all").find((item) => item.id === historyButton.dataset.reviewHistory);
+    if (record) renderReviewHistoryModal(record);
+    return;
+  }
+  const postponeButton = event.target.closest("[data-review-postpone]");
+  if (postponeButton) {
+    void postponeReview(postponeButton.dataset.reviewPostpone);
+    return;
+  }
+  const cancelButton = event.target.closest("[data-cancel-review]");
+  if (cancelButton) {
+    const record = state.reviews.find((item) => item.id === cancelButton.dataset.cancelReview);
+    if (record) {
+      const confirmed = await dialogConfirm("Cancelar esta revis\u00e3o? O hist\u00f3rico de tentativas ser\u00e1 preservado.", { confirmLabel: "Cancelar revis\u00e3o", variant: "danger" });
+      if (confirmed) {
+        record.status = "Cancelada";
+        record.canceladaEm = new Date().toISOString();
+        record.atualizadaEm = new Date().toISOString();
+        renderReviews();
+        renderContinuePanel();
+        saveAppStateNow("Revis\u00e3o cancelada");
+      }
+    }
+    return;
+  }
   const adaptiveButton = event.target.closest("[data-adaptive-review-action]");
   if (adaptiveButton) {
     updateAdaptiveReviewAction(adaptiveButton.dataset.adaptiveReviewId, adaptiveButton.dataset.adaptiveReviewAction);
@@ -7189,6 +7589,9 @@ els.reviewsBody?.addEventListener("click", (event) => {
   renderContinuePanel();
   renderEvolution();
   saveAppStateNow("Revis\u00e3o atualizada");
+});
+els.reviewHistoryModal?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-review-history]")) closeReviewHistory();
 });
 els.themeToggleButton?.addEventListener("click", () => {
   const current = document.documentElement.dataset.theme === "night" ? "night" : "day";
