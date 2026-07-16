@@ -11,13 +11,23 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260716-render-fix" />
+    <link rel="stylesheet" href="./styles.css?v=20260716-navigation" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
+    <header class="mobile-topbar" aria-label="Navegação móvel">
+      <button id="mobileMenuButton" class="mobile-topbar-button" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="appSidebar"><i data-lucide="menu"></i></button>
+      <span id="mobilePlanTitle" class="mobile-plan-title">Meu Cronograma</span>
+      <div class="mobile-topbar-actions">
+        <button id="mobileSaveButton" class="mobile-topbar-button" type="button" aria-label="Salvar dados localmente"><i data-lucide="save"></i></button>
+        <button id="mobileSettingsButton" class="mobile-topbar-button" type="button" aria-label="Abrir configurações"><i data-lucide="settings"></i></button>
+      </div>
+    </header>
+    <button id="mobileDrawerBackdrop" class="mobile-drawer-backdrop" type="button" aria-label="Fechar menu" hidden></button>
     <main class="app-shell">
-      <aside class="sidebar">
+      <aside id="appSidebar" class="sidebar" aria-label="Navegação principal">
         <div class="brand sidebar-identity">
           <div class="brand-top">
             <h1 class="brand-logo"><span>Meu Cronograma</span><span>Concursos</span></h1>
@@ -29,25 +39,39 @@
           <p class="brand-tagline">Seu edital em ciclos inteligentes de estudo.</p>
           <div id="settingsMenu" class="settings-popover" hidden>
             <div class="settings-popover-header">
-              <strong>Dados e backup</strong>
-              <span>Configura&ccedil;&otilde;es do arquivo local</span>
+              <strong>Configurações e dados</strong>
+              <span>Seus dados permanecem neste navegador ou no arquivo conectado.</span>
             </div>
             <div class="backup-actions">
-              <button id="saveNowButton" class="backup-button" type="button"><i data-lucide="save"></i><span>Salvar</span></button>
-              <button id="saveDataFileButton" class="backup-button" type="button"><i data-lucide="cloud-upload"></i><span>Salvar no arquivo conectado</span></button>
-              <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Backup</span></button>
+              <section class="settings-section" aria-labelledby="localDataHeading">
+                <h2 id="localDataHeading">Dados locais</h2>
+                <button id="saveNowButton" class="backup-button" type="button"><i data-lucide="save"></i><span>Salvar agora</span></button>
+                <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Exportar backup</span></button>
+                <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar backup</span></label>
+                <input id="importBackupInput" type="file" accept="application/json,.json" />
+              </section>
               <div class="backup-reminder" role="status" aria-live="polite">
                 <span id="backupReminderStatus" class="backup-reminder-text">Nenhum backup registrado neste navegador.</span>
                 <span id="backupReminderNotice" class="backup-reminder-notice" hidden></span>
                 <button id="backupNowButton" class="backup-button backup-now-button" type="button"><i data-lucide="shield-check"></i><span>Fazer backup agora</span></button>
               </div>
-              <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar</span></label>
-              <input id="importBackupInput" type="file" accept="application/json,.json" />
-              <button id="loadDataFileButton" class="backup-button" type="button"><i data-lucide="folder-sync"></i><span>Carregar dados</span></button>
-              <button id="createDataFileButton" class="backup-button" type="button"><i data-lucide="file-plus-2"></i><span>Criar dados</span></button>
-              <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Conectar dados</span></button>
-              <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Ciclo anterior</span></button>
-              <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
+              <section class="settings-section" aria-labelledby="connectedFileHeading">
+                <h2 id="connectedFileHeading">Arquivo conectado</h2>
+                <p id="connectedFileStatus" class="connected-file-status">Arquivo não conectado</p>
+                <div id="fileConnectionActions" class="settings-inline-actions">
+                  <button id="createDataFileButton" class="backup-button" type="button"><i data-lucide="file-plus-2"></i><span>Criar arquivo</span></button>
+                  <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Conectar arquivo</span></button>
+                </div>
+                <button id="saveDataFileButton" class="backup-button" type="button" disabled><i data-lucide="cloud-upload"></i><span>Salvar no arquivo conectado</span></button>
+                <button id="loadDataFileButton" class="backup-button" type="button" disabled><i data-lucide="folder-sync"></i><span>Carregar do arquivo conectado</span></button>
+                <button id="disconnectDataFileButton" class="text-action settings-disconnect-button" type="button" hidden>Desconectar arquivo</button>
+              </section>
+              <section class="settings-section settings-maintenance" aria-labelledby="cycleMaintenanceHeading">
+                <h2 id="cycleMaintenanceHeading">Manutenção do ciclo</h2>
+                <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Restaurar ciclo anterior</span></button>
+                <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
+              </section>
+              <details class="settings-shortcuts-help"><summary>Atalhos do teclado</summary><p>Alt + 1 Continuar · Alt + 2 Ciclo · Alt + 3 Revisões · Alt + 4 Evolução · Ctrl/Cmd + S Salvar</p></details>
               <span id="saveStatus" class="save-status">Dados salvos localmente</span>
             </div>
           </div>
@@ -62,6 +86,7 @@
                 <button id="planMenuButton" class="plan-menu-button" type="button" aria-label="Abrir op&ccedil;&otilde;es do planejamento" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
                 <div id="planMenu" class="plan-menu" hidden>
                   <button type="button" data-rename-plan>Renomear concurso</button>
+                  <button type="button" data-duplicate-plan>Duplicar planejamento</button>
                   <button type="button" class="danger" data-delete-plan>Excluir concurso</button>
                 </div>
               </div>
@@ -69,21 +94,27 @@
           </div>
         </div>
         <nav class="tabs sidebar-flow" aria-label="Se&ccedil;&otilde;es do planejamento">
-          <button class="tab-button active" type="button" data-tab-target="continuar"><i data-lucide="play-circle"></i><span>Continuar</span></button>
-          <button class="tab-button" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span></button>
-          <button class="tab-button" type="button" data-tab-target="conteudo"><i data-lucide="file-text"></i><span>Conte&uacute;do Program&aacute;tico</span></button>
-          <button class="tab-button locked" type="button" data-tab-target="pesos" disabled><i data-lucide="sliders-horizontal"></i><span>Prioridade das Mat&eacute;rias</span></button>
-           <button class="tab-button locked" type="button" data-tab-target="cronograma" disabled><i data-lucide="calendar-range"></i><span>Ciclo Atual</span></button>
-          <button class="tab-button" type="button" data-tab-target="revisoes"><i data-lucide="repeat-2"></i><span>Revis&otilde;es</span></button>
-          <button class="tab-button" type="button" data-tab-target="erros"><i data-lucide="notebook"></i><span>Caderno de Resumos</span></button>
-          <button class="tab-button" type="button" data-tab-target="evolucao"><i data-lucide="trending-up"></i><span>Painel de Evolu&ccedil;&atilde;o</span></button>
+          <section class="sidebar-nav-group" aria-label="Estudo"><h2>Estudo</h2>
+            <button class="tab-button active" type="button" data-tab-target="continuar"><i data-lucide="play-circle"></i><span>Continuar</span><em data-tab-state="continuar"></em></button>
+            <button class="tab-button locked" type="button" data-tab-target="cronograma" aria-disabled="true"><i data-lucide="calendar-range"></i><span>Ciclo Atual</span><em data-tab-state="cronograma"></em></button>
+            <button class="tab-button" type="button" data-tab-target="revisoes"><i data-lucide="repeat-2"></i><span>Revis&otilde;es</span><em data-tab-state="revisoes"></em></button>
+          </section>
+          <section class="sidebar-nav-group" aria-label="Planejamento"><h2>Planejamento</h2>
+            <button class="tab-button" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span><em data-tab-state="concurso"></em></button>
+            <button class="tab-button" type="button" data-tab-target="conteudo"><i data-lucide="file-text"></i><span>Conte&uacute;do Program&aacute;tico</span><em data-tab-state="conteudo"></em></button>
+            <button class="tab-button locked" type="button" data-tab-target="pesos" aria-disabled="true"><i data-lucide="sliders-horizontal"></i><span>Prioridade das Mat&eacute;rias</span><em data-tab-state="pesos"></em></button>
+          </section>
+          <section class="sidebar-nav-group" aria-label="Acompanhamento"><h2>Acompanhamento</h2>
+            <button class="tab-button" type="button" data-tab-target="erros"><i data-lucide="notebook"></i><span>Caderno de Resumos</span><em data-tab-state="erros"></em></button>
+            <button class="tab-button" type="button" data-tab-target="evolucao"><i data-lucide="trending-up"></i><span>Painel de Evolu&ccedil;&atilde;o</span><em data-tab-state="evolucao"></em></button>
+          </section>
         </nav>
         <div class="sidebar-footer">
           <div class="status-pill" id="confirmationStatus">Aguardando cadastro</div>
         </div>
       </aside>
 
-      <section class="content-area">
+      <section id="main-content" class="content-area" tabindex="-1">
         <section class="tab-panel active" id="tab-continuar">
           <div class="panel-heading continue-heading">
             <div>
@@ -511,6 +542,12 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </main>
 
+    <nav class="mobile-bottom-nav" aria-label="Atalhos principais">
+      <button class="mobile-bottom-button active" type="button" data-tab-target="continuar"><i data-lucide="play-circle"></i><span>Continuar</span></button>
+      <button class="mobile-bottom-button" type="button" data-tab-target="cronograma" aria-disabled="true"><i data-lucide="calendar-range"></i><span>Ciclo</span></button>
+      <button class="mobile-bottom-button" type="button" data-tab-target="revisoes"><i data-lucide="repeat-2"></i><span>Revisões</span></button>
+    </nav>
+
     <template id="rowTemplate">
       <tr>
         <td class="select-col"><input class="row-check" type="checkbox" aria-label="Selecionar linha" /></td>
@@ -543,9 +580,29 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
-    <script src="./js/adaptive-review.js?v=20260716-render-fix"></script>
+    <div id="duplicatePlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="duplicatePlanTitle">
+      <button id="cancelDuplicatePlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Cancelar duplicação"></button>
+      <section class="plan-delete-dialog duplicate-plan-dialog">
+        <div>
+          <span class="section-kicker">Duplicar planejamento</span>
+          <h2 id="duplicatePlanTitle">O que deseja copiar?</h2>
+          <p>Os dados do concurso serão copiados. Desempenho, histórico de ciclos e revisões não serão incluídos.</p>
+          <div class="duplicate-plan-options">
+            <label><input id="duplicatePlanContent" type="checkbox" checked /> Conteúdo programático e prioridades</label>
+            <label><input id="duplicatePlanCycleConfig" type="checkbox" /> Configurações do ciclo</label>
+            <label><input id="duplicatePlanNotebook" type="checkbox" /> Caderno de resumos</label>
+          </div>
+        </div>
+        <div class="plan-delete-actions">
+          <button id="cancelDuplicatePlanButton" class="ghost-button" type="button">Cancelar</button>
+          <button id="confirmDuplicatePlanButton" class="primary-button" type="button">Duplicar planejamento</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./js/adaptive-review.js?v=20260716-navigation"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260716-render-fix"></script>
+    <script src="./app.js?v=20260716-navigation"></script>
   </body>
 </html>
 

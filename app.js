@@ -116,6 +116,9 @@ let focusedStudyTimerInterval = null;
 let focusedStudySaving = false;
 let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
+let mobileDrawerOpen = false;
+let mobileDrawerTrigger = null;
+let saveStatusState = { state: "saved", destination: "local", message: "" };
 
 const DATA_FILE_DB = "meuCronogramaFileHandles";
 const DATA_FILE_STORE = "handles";
@@ -128,6 +131,12 @@ const els = {
   themeToggleButton: document.querySelector("#themeToggleButton"),
   settingsToggleButton: document.querySelector("#settingsToggleButton"),
   settingsMenu: document.querySelector("#settingsMenu"),
+  appSidebar: document.querySelector("#appSidebar"),
+  mobileMenuButton: document.querySelector("#mobileMenuButton"),
+  mobileSettingsButton: document.querySelector("#mobileSettingsButton"),
+  mobileSaveButton: document.querySelector("#mobileSaveButton"),
+  mobilePlanTitle: document.querySelector("#mobilePlanTitle"),
+  mobileDrawerBackdrop: document.querySelector("#mobileDrawerBackdrop"),
   planSelect: document.querySelector("#planSelect"),
   newPlanButton: document.querySelector("#newPlanButton"),
   planMenuButton: document.querySelector("#planMenuButton"),
@@ -137,6 +146,13 @@ const els = {
   cancelDeletePlanButton: document.querySelector("#cancelDeletePlanButton"),
   cancelDeletePlanBackdrop: document.querySelector("#cancelDeletePlanBackdrop"),
   confirmDeletePlanButton: document.querySelector("#confirmDeletePlanButton"),
+  duplicatePlanModal: document.querySelector("#duplicatePlanModal"),
+  duplicatePlanContent: document.querySelector("#duplicatePlanContent"),
+  duplicatePlanCycleConfig: document.querySelector("#duplicatePlanCycleConfig"),
+  duplicatePlanNotebook: document.querySelector("#duplicatePlanNotebook"),
+  cancelDuplicatePlanButton: document.querySelector("#cancelDuplicatePlanButton"),
+  cancelDuplicatePlanBackdrop: document.querySelector("#cancelDuplicatePlanBackdrop"),
+  confirmDuplicatePlanButton: document.querySelector("#confirmDuplicatePlanButton"),
   contestName: document.querySelector("#contestName"),
   examBoard: document.querySelector("#examBoard"),
   jobRole: document.querySelector("#jobRole"),
@@ -245,6 +261,9 @@ const els = {
   createDataFileButton: document.querySelector("#createDataFileButton"),
   loadDataFileButton: document.querySelector("#loadDataFileButton"),
   saveDataFileButton: document.querySelector("#saveDataFileButton"),
+  disconnectDataFileButton: document.querySelector("#disconnectDataFileButton"),
+  fileConnectionActions: document.querySelector("#fileConnectionActions"),
+  connectedFileStatus: document.querySelector("#connectedFileStatus"),
   exportBackupButton: document.querySelector("#exportBackupButton"),
   backupNowButton: document.querySelector("#backupNowButton"),
   backupReminderStatus: document.querySelector("#backupReminderStatus"),
@@ -873,6 +892,96 @@ function updateSidebarActiveIndicator(activeButton = document.querySelector(".ta
   nav.classList.add("has-active-indicator");
 }
 
+function isMobileNavigation() {
+  return window.matchMedia?.("(max-width: 860px)").matches;
+}
+
+function mobileDrawerFocusable() {
+  return [...(els.appSidebar?.querySelectorAll('button:not([disabled]), select:not([disabled]), a[href], summary, [tabindex]:not([tabindex="-1"])') || [])]
+    .filter((element) => !element.hidden && element.offsetParent !== null);
+}
+
+function openMobileDrawer(trigger = els.mobileMenuButton, { openSettings = false } = {}) {
+  if (!isMobileNavigation() || !els.appSidebar) return;
+  mobileDrawerOpen = true;
+  mobileDrawerTrigger = trigger || els.mobileMenuButton;
+  els.appSidebar.classList.add("is-mobile-open");
+  document.body.classList.add("mobile-drawer-open");
+  if (els.mobileDrawerBackdrop) {
+    els.mobileDrawerBackdrop.hidden = false;
+    els.mobileDrawerBackdrop.classList.add("is-visible");
+  }
+  els.mobileMenuButton?.setAttribute("aria-expanded", "true");
+  if (openSettings) toggleSettingsMenu();
+  window.setTimeout(() => (openSettings ? els.settingsToggleButton : els.planSelect)?.focus(), 0);
+}
+
+function closeMobileDrawer({ restoreFocus = true } = {}) {
+  if (!mobileDrawerOpen && !els.appSidebar?.classList.contains("is-mobile-open")) return;
+  mobileDrawerOpen = false;
+  els.appSidebar?.classList.remove("is-mobile-open");
+  document.body.classList.remove("mobile-drawer-open");
+  if (els.mobileDrawerBackdrop) {
+    els.mobileDrawerBackdrop.classList.remove("is-visible");
+    els.mobileDrawerBackdrop.hidden = true;
+  }
+  els.mobileMenuButton?.setAttribute("aria-expanded", "false");
+  if (restoreFocus) mobileDrawerTrigger?.focus?.();
+}
+
+function trapMobileDrawerFocus(event) {
+  if (!mobileDrawerOpen || event.key !== "Tab") return;
+  const focusable = mobileDrawerFocusable();
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function updateMobilePlanTitle() {
+  if (!els.mobilePlanTitle) return;
+  const plan = activePlan();
+  els.mobilePlanTitle.textContent = planVisibleName(plan || {}).slice(0, 34) || "Meu Cronograma";
+}
+
+function openReviewCount() {
+  return (Array.isArray(state.reviews) ? state.reviews : []).filter((review) => !["Concluída", "Cancelada"].includes(review.status)).length;
+}
+
+function updateNavigationState() {
+  const hasContest = Boolean(els.contestName?.value.trim() || els.jobRole?.value.trim());
+  const hasContent = state.rows.some((row) => normalizeForMatch(String(row.estudar || "")) === "sim");
+  const hasPriorities = Boolean(state.planningBase?.materias?.length);
+  const pending = state.generatedBlocks.filter(isPendingBlock).length;
+  const reviewCount = openReviewCount();
+  const states = {
+    concurso: hasContest ? "✓" : "",
+    conteudo: state.confirmed ? "✓" : hasContent ? "Em revisão" : "",
+    pesos: hasPriorities ? "✓" : "",
+    cronograma: pending ? `${pending} pendente${pending === 1 ? "" : "s"}` : state.generatedBlocks.length ? "✓" : "",
+    revisoes: reviewCount ? `${reviewCount} disponível${reviewCount === 1 ? "" : "is"}` : "",
+  };
+  Object.entries(states).forEach(([tab, value]) => {
+    document.querySelectorAll(`[data-tab-state="${tab}"]`).forEach((node) => {
+      node.textContent = value;
+      node.hidden = !value;
+    });
+  });
+  els.tabs.forEach((button) => {
+    if (button.classList.contains("active")) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  setTabEnabled("pesos", Boolean(state.confirmed), "Confirme o conteúdo programático antes de definir as prioridades.");
+  setTabEnabled("cronograma", Boolean(state.generatedBlocks.length), "Defina as prioridades e gere o ciclo antes de acessar esta área.");
+  updateMobilePlanTitle();
+}
+
 function animatePanelNumbers(tabName) {
   if (prefersReducedMotion() || animatedMetricPanels.has(tabName)) return;
   const panel = document.querySelector(`#tab-${tabName}`);
@@ -902,10 +1011,11 @@ function animatePanelNumbers(tabName) {
 }
 
 function activateTab(tabName, activeButton = null) {
-  const firstMatch = document.querySelector(`[data-tab-target="${tabName}"]`);
   els.tabs.forEach((button) => {
-    const isActive = activeButton ? button === activeButton : button === firstMatch;
+    const isActive = button.dataset.tabTarget === tabName;
     button.classList.toggle("active", isActive);
+    if (isActive) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
   if (tabName === "continuar") {
@@ -925,6 +1035,14 @@ function activateTab(tabName, activeButton = null) {
 }
 
 function switchTab(tabName, activeButton = null) {
+  const target = [...els.tabs].find((button) => button.dataset.tabTarget === tabName);
+  if (target?.getAttribute("aria-disabled") === "true") {
+    showToast(target.dataset.lockReason || "Conclua a etapa anterior para acessar esta área.");
+    return;
+  }
+  closeSettingsMenu();
+  closePlanMenu();
+  closeMobileDrawer({ restoreFocus: false });
   const run = () => activateTab(tabName, activeButton);
   if (!prefersReducedMotion() && document.startViewTransition) {
     document.startViewTransition(run);
@@ -933,11 +1051,13 @@ function switchTab(tabName, activeButton = null) {
   run();
 }
 
-function setTabEnabled(tabName, enabled) {
-  const button = document.querySelector(`[data-tab-target="${tabName}"]`);
-  if (!button) return;
-  button.disabled = !enabled;
-  button.classList.toggle("locked", !enabled);
+function setTabEnabled(tabName, enabled, reason = "Conclua a etapa anterior para acessar esta área.") {
+  document.querySelectorAll(`[data-tab-target="${tabName}"]`).forEach((button) => {
+    button.classList.toggle("locked", !enabled);
+    button.setAttribute("aria-disabled", enabled ? "false" : "true");
+    button.dataset.lockReason = enabled ? "" : reason;
+    button.setAttribute("aria-label", enabled ? button.textContent.trim() : `${button.textContent.trim()}. ${reason}`);
+  });
 }
 
 function applyThemePreference(theme = localStorage.getItem(APP_THEME_KEY) || "day") {
@@ -951,14 +1071,17 @@ function applyThemePreference(theme = localStorage.getItem(APP_THEME_KEY) || "da
   if (window.lucide) window.lucide.createIcons();
 }
 
-function closeSettingsMenu() {
+function closeSettingsMenu({ restoreFocus = false } = {}) {
   if (!els.settingsMenu) return;
+  const wasOpen = !els.settingsMenu.hidden;
   els.settingsMenu.hidden = true;
   els.settingsToggleButton?.setAttribute("aria-expanded", "false");
+  if (restoreFocus && wasOpen) els.settingsToggleButton?.focus();
 }
 
 function toggleSettingsMenu() {
   if (!els.settingsMenu) return;
+  closePlanMenu();
   const nextOpen = els.settingsMenu.hidden;
   els.settingsMenu.hidden = !nextOpen;
   els.settingsToggleButton?.setAttribute("aria-expanded", nextOpen ? "true" : "false");
@@ -2966,6 +3089,7 @@ function renderAppViews(options = {}) {
   if (settings.notebook) safeRender("Caderno de resumos", renderErrors);
   if (settings.continuePanel) safeRender("Continuar", renderContinuePanel, renderContinueError);
   if (settings.evolution) safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
+  updateNavigationState();
 }
 
 function renderGeneratedSchedule() {
@@ -6617,6 +6741,7 @@ function writePlansIndex(plans = state.plans) {
 function renderPlanSelect() {
   if (!els.planSelect) return;
   els.planSelect.innerHTML = state.plans.map((plan) => `<option value="${plan.id}" ${plan.id === state.currentPlanId ? "selected" : ""}>${escapeHtml(planVisibleName(plan))}</option>`).join("");
+  updateMobilePlanTitle();
 }
 
 function formState() {
@@ -6756,8 +6881,33 @@ function applyAppSnapshot(saved = {}) {
   }
 }
 
+function updateSaveStatus({ state: nextState = "saved", destination = "local", message = "" } = {}) {
+  saveStatusState = { state: nextState, destination, message };
+  const defaultMessages = {
+    saved: destination === "file" ? "Arquivo conectado e salvo" : "Dados salvos localmente",
+    saving: destination === "file" ? "Salvando no arquivo conectado" : "Salvando localmente",
+    pending: "Alterações pendentes",
+    error: destination === "file" ? "Erro ao salvar no arquivo conectado" : "Erro ao salvar localmente",
+    connected: "Arquivo conectado",
+    disconnected: "Arquivo não conectado",
+  };
+  const text = message || defaultMessages[nextState] || "Dados salvos localmente";
+  if (els.saveStatus) {
+    els.saveStatus.textContent = text;
+    els.saveStatus.dataset.state = nextState;
+  }
+  if (els.mobileSaveButton) {
+    els.mobileSaveButton.dataset.state = nextState;
+    els.mobileSaveButton.setAttribute("aria-label", nextState === "saving" ? "Salvando dados" : "Salvar dados localmente");
+  }
+}
+
 function setSaveStatus(text) {
-  if (els.saveStatus) els.saveStatus.textContent = text;
+  const clean = String(text || "");
+  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: /arquivo|drive/i.test(clean) ? "file" : "local", message: clean });
+  if (/autorize|conecte/i.test(clean)) return updateSaveStatus({ state: "disconnected", destination: "file", message: clean });
+  if (/drive|arquivo/i.test(clean)) return updateSaveStatus({ state: "connected", destination: "file", message: clean });
+  updateSaveStatus({ state: "saved", destination: "local", message: clean || "Dados salvos localmente" });
 }
 
 function readBackupMeta() {
@@ -6814,6 +6964,7 @@ function rememberBackupExport(version = 1) {
 function saveAppStateNow(label = "Salvo") {
   if (isRestoring) return;
   if (!state.currentPlanId) return;
+  updateSaveStatus({ state: "saving", destination: "local" });
   const snapshot = captureAppState();
   localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
   localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
@@ -6821,13 +6972,14 @@ function saveAppStateNow(label = "Salvo") {
   state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name: plan.customName || name, updatedAt: new Date().toISOString() } : plan);
   writePlansIndex();
   renderPlanSelect();
-  setSaveStatus(`${label} ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`);
+  updateSaveStatus({ state: "saved", destination: "local", message: `${label} localmente` });
   saveConnectedDataFileSoon();
 }
 
 function scheduleAutoSave() {
   if (isRestoring) return;
   clearTimeout(saveTimer);
+  updateSaveStatus({ state: "pending", destination: "local" });
   saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 350);
 }
 
@@ -6919,6 +7071,28 @@ async function getRememberedDataFileHandle() {
   }
 }
 
+async function forgetDataFileHandle() {
+  try {
+    const db = await openDataHandleDb();
+    const transaction = db.transaction(DATA_FILE_STORE, "readwrite");
+    transaction.objectStore(DATA_FILE_STORE).delete(DATA_FILE_KEY);
+    await finishTransaction(transaction);
+    db.close();
+  } catch (error) {
+    console.warn("Não foi possível esquecer o arquivo conectado.", error);
+  }
+}
+
+function updateConnectedFileControls() {
+  const connected = Boolean(dataFileHandle);
+  const name = connected ? (dataFileHandle.name || "Arquivo conectado") : "Arquivo não conectado";
+  if (els.connectedFileStatus) els.connectedFileStatus.textContent = name;
+  if (els.fileConnectionActions) els.fileConnectionActions.hidden = connected;
+  if (els.saveDataFileButton) els.saveDataFileButton.disabled = !connected;
+  if (els.loadDataFileButton) els.loadDataFileButton.disabled = !connected;
+  if (els.disconnectDataFileButton) els.disconnectDataFileButton.hidden = !connected;
+}
+
 async function verifyDataFilePermission(handle, mode = "readwrite", requestAccess = true) {
   const options = { mode };
   if ((await handle.queryPermission(options)) === "granted") return true;
@@ -6990,18 +7164,19 @@ async function writeSnapshotToDataFile(label = "Arquivo salvo") {
   }
   if (isWritingDataFile) return;
   try {
+    updateSaveStatus({ state: "saving", destination: "file" });
     if (!(await verifyDataFilePermission(dataFileHandle, "readwrite"))) {
-      setSaveStatus("Autorize o arquivo do Drive");
+      setSaveStatus("Autorize o arquivo conectado");
       return;
     }
     isWritingDataFile = true;
     const writable = await dataFileHandle.createWritable();
     await writable.write(JSON.stringify(captureDriveDataSnapshot(), null, 2));
     await writable.close();
-    setSaveStatus(`${label} ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`);
+    updateSaveStatus({ state: "saved", destination: "file", message: label });
   } catch (error) {
     console.error(error);
-    setSaveStatus("Nao consegui salvar no Drive");
+    updateSaveStatus({ state: "error", destination: "file", message: "Erro ao salvar no arquivo conectado" });
   } finally {
     isWritingDataFile = false;
   }
@@ -7020,7 +7195,7 @@ async function loadSnapshotFromDataFile(handle = dataFileHandle) {
   }
   try {
     if (!(await verifyDataFilePermission(handle, "read"))) {
-      setSaveStatus("Autorize o arquivo do Drive");
+      setSaveStatus("Autorize o arquivo conectado");
       return;
     }
     const file = await handle.getFile();
@@ -7032,12 +7207,14 @@ async function loadSnapshotFromDataFile(handle = dataFileHandle) {
     const snapshot = JSON.parse(text);
     dataFileHandle = handle;
     await rememberDataFileHandle(handle);
+    updateConnectedFileControls();
     if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
       applyDriveDataSnapshot(snapshot);
     } else {
       applyAppSnapshot(snapshot);
     }
-    saveAppStateNow("Drive carregado");
+    saveAppStateNow("Arquivo carregado");
+    updateConnectedFileControls();
   } catch (error) {
     console.error(error);
     await dialogAlert("Não consegui carregar esse arquivo de dados. Verifique se ele é um JSON válido do sistema.");
@@ -7057,8 +7234,9 @@ async function connectDataFile() {
     if (!handle) return;
     dataFileHandle = handle;
     await rememberDataFileHandle(handle);
+    updateConnectedFileControls();
     await loadSnapshotFromDataFile(handle);
-    setSaveStatus("Arquivo do Drive conectado");
+    updateSaveStatus({ state: "connected", destination: "file", message: `Arquivo conectado: ${handle.name || "dados"}` });
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
@@ -7079,7 +7257,8 @@ async function createDataFile() {
     });
     dataFileHandle = handle;
     await rememberDataFileHandle(handle);
-    await writeSnapshotToDataFile("Arquivo do Drive criado");
+    updateConnectedFileControls();
+    await writeSnapshotToDataFile("Arquivo conectado criado");
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
@@ -7093,12 +7272,21 @@ async function restoreRememberedDataFile() {
   const handle = await getRememberedDataFileHandle();
   if (!handle) return;
   dataFileHandle = handle;
+  updateConnectedFileControls();
   try {
     const hasPermission = await verifyDataFilePermission(handle, "readwrite", false);
-    setSaveStatus(hasPermission ? "Arquivo do Drive conectado" : "Conecte o arquivo do Drive");
+    updateSaveStatus({ state: hasPermission ? "connected" : "disconnected", destination: "file", message: hasPermission ? `Arquivo conectado: ${handle.name || "dados"}` : "Arquivo conectado: autorize o acesso quando necessário" });
   } catch {
-    setSaveStatus("Conecte o arquivo do Drive");
+    updateSaveStatus({ state: "disconnected", destination: "file", message: "Arquivo não conectado" });
   }
+}
+
+async function disconnectDataFile() {
+  await forgetDataFileHandle();
+  dataFileHandle = null;
+  updateConnectedFileControls();
+  updateSaveStatus({ state: "disconnected", destination: "file", message: "Arquivo desconectado. Seus dados locais continuam salvos." });
+  showToast("Arquivo desconectado.");
 }
 
 function exportBackup() {
@@ -7193,15 +7381,83 @@ function activePlan() {
 
 function closePlanMenu() {
   if (!els.planMenu) return;
+  const wasOpen = !els.planMenu.hidden;
   els.planMenu.hidden = true;
   els.planMenuButton?.setAttribute("aria-expanded", "false");
+  return wasOpen;
 }
 
 function togglePlanMenu() {
   if (!els.planMenu) return;
+  closeSettingsMenu();
   const willOpen = els.planMenu.hidden;
   els.planMenu.hidden = !willOpen;
   els.planMenuButton?.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+
+function openDuplicatePlanModal() {
+  if (!els.duplicatePlanModal || !activePlan()) return;
+  closePlanMenu();
+  if (els.duplicatePlanContent) els.duplicatePlanContent.checked = true;
+  if (els.duplicatePlanCycleConfig) els.duplicatePlanCycleConfig.checked = false;
+  if (els.duplicatePlanNotebook) els.duplicatePlanNotebook.checked = false;
+  els.duplicatePlanModal.hidden = false;
+  els.confirmDuplicatePlanButton?.focus();
+}
+
+function closeDuplicatePlanModal() {
+  if (!els.duplicatePlanModal) return;
+  els.duplicatePlanModal.hidden = true;
+  els.planMenuButton?.focus();
+}
+
+function snapshotClone(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function duplicateCurrentPlan() {
+  const sourcePlan = activePlan();
+  if (!sourcePlan) return;
+  const source = captureAppState();
+  const nextName = `${planVisibleName(sourcePlan)} - cópia`;
+  const plan = createPlanMeta(nextName);
+  plan.customName = nextName;
+  const copyContent = Boolean(els.duplicatePlanContent?.checked);
+  const copyCycleConfig = Boolean(els.duplicatePlanCycleConfig?.checked);
+  const copyNotebook = Boolean(els.duplicatePlanNotebook?.checked);
+  const duplicate = blankAppSnapshot(nextName);
+  duplicate.form = {
+    ...duplicate.form,
+    contestName: nextName,
+    examBoard: source.form?.examBoard || "",
+    jobRole: source.form?.jobRole || "",
+    examDate: source.form?.examDate || "",
+    planStartDate: source.form?.planStartDate || "",
+  };
+  if (copyCycleConfig) {
+    ["weeklyHours", "blockDuration", "referenceWeek", "overrideWeeklyHours", "overrideCycleEnabled", "allowResidualBlock", "dailyHours"].forEach((key) => {
+      if (source.form && key in source.form) duplicate.form[key] = snapshotClone(source.form[key]);
+    });
+  }
+  if (copyContent) {
+    duplicate.programText = source.programText || "";
+    duplicate.rows = snapshotClone(Array.isArray(source.rows) ? source.rows : []);
+    duplicate.confirmed = Boolean(source.confirmed);
+    duplicate.planningBase = snapshotClone(source.planningBase || null);
+  }
+  if (copyNotebook) duplicate.notebook = snapshotClone(source.notebook || {});
+  state.plans.push(plan);
+  state.currentPlanId = plan.id;
+  writePlansIndex();
+  localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
+  localStorage.setItem(planStorageKey(plan.id), JSON.stringify(duplicate));
+  closeDuplicatePlanModal();
+  renderPlanSelect();
+  applyAppSnapshot(duplicate);
+  saveAppStateNow("Planejamento duplicado");
+  showToast("Planejamento duplicado sem desempenho, histórico ou revisões.");
+  switchTab("concurso");
 }
 
 async function renameCurrentPlan() {
@@ -7280,11 +7536,23 @@ els.planMenu?.addEventListener("click", (event) => {
   }
   if (event.target.closest("[data-delete-plan]")) {
     openDeletePlanModal();
+    return;
   }
+  if (event.target.closest("[data-duplicate-plan]")) openDuplicatePlanModal();
 });
 els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
 els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
 els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
+els.cancelDuplicatePlanButton?.addEventListener("click", closeDuplicatePlanModal);
+els.cancelDuplicatePlanBackdrop?.addEventListener("click", closeDuplicatePlanModal);
+els.confirmDuplicatePlanButton?.addEventListener("click", duplicateCurrentPlan);
+els.mobileMenuButton?.addEventListener("click", () => {
+  if (mobileDrawerOpen) closeMobileDrawer();
+  else openMobileDrawer(els.mobileMenuButton);
+});
+els.mobileSettingsButton?.addEventListener("click", () => openMobileDrawer(els.mobileSettingsButton, { openSettings: true }));
+els.mobileSaveButton?.addEventListener("click", () => saveAppStateNow("Dados salvos"));
+els.mobileDrawerBackdrop?.addEventListener("click", () => closeMobileDrawer());
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-focused]")) {
     closeFocusedStudy();
@@ -8271,6 +8539,7 @@ els.connectDataFileButton?.addEventListener("click", connectDataFile);
 els.createDataFileButton?.addEventListener("click", createDataFile);
 els.loadDataFileButton?.addEventListener("click", () => loadSnapshotFromDataFile());
 els.saveDataFileButton?.addEventListener("click", () => writeSnapshotToDataFile("Arquivo salvo"));
+els.disconnectDataFileButton?.addEventListener("click", disconnectDataFile);
 els.saveContestButton?.addEventListener("click", () => saveAppStateNow("Dados do concurso salvos"));
 els.goContentButton?.addEventListener("click", () => switchTab("conteudo"));
 els.backToContentFromPriorityButton?.addEventListener("click", () => switchTab("conteudo"));
@@ -8324,10 +8593,33 @@ document.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
+  trapMobileDrawerFocus(event);
   if (event.key === "Escape") {
-    closeSettingsMenu();
-    closePlanMenu();
+    if (mobileDrawerOpen) {
+      closeMobileDrawer();
+      return;
+    }
+    closeSettingsMenu({ restoreFocus: true });
+    if (closePlanMenu()) els.planMenuButton?.focus();
     closeDeletePlanModal();
+    closeDuplicatePlanModal();
+    return;
+  }
+  const target = event.target;
+  const typing = target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable || Boolean(target.closest(".ql-editor, [contenteditable='true']")));
+  if (typing) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    saveAppStateNow("Dados salvos");
+    showToast("Dados salvos localmente.");
+    return;
+  }
+  if (!event.altKey || event.ctrlKey || event.metaKey) return;
+  const shortcuts = { "1": "continuar", "2": "cronograma", "3": "revisoes", "4": "evolucao" };
+  const tab = shortcuts[event.key];
+  if (tab) {
+    event.preventDefault();
+    switchTab(tab);
   }
 });
 window.addEventListener("resize", () => updateSidebarActiveIndicator());
@@ -8350,6 +8642,7 @@ if (!restoreAppState()) {
 }
 restoreRememberedDataFile();
 renderBackupReminder();
+updateConnectedFileControls();
 ensureGoalTimerInterval();
 if (window.lucide) window.lucide.createIcons();
 requestAnimationFrame(() => {
