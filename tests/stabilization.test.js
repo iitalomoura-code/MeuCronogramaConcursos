@@ -11,7 +11,7 @@ assert.ok(app.includes("function saveStudyResult"), "O registro central de desem
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260716-primary-contrast"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260716-continue-reviews-layout"), "O CSS deve usar o cache-busting atual.");
 assert.ok(index.includes("app.js?v=20260716-import-backup-fix"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(app.includes('snapshot?.dataType === "meu-cronograma-concursos-drive-data"'), "A importação deve reconhecer backups completos de múltiplos planejamentos.");
 

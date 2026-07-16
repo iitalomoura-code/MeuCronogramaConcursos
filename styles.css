@@ -1298,17 +1298,18 @@ textarea:focus {
   padding: 0 16px;
 }
 
-.primary-button {
+.primary-button,
+.primary-button:hover,
+.primary-button:focus-visible {
   border-color: var(--primary);
   background: var(--primary);
-  color: var(--primary-contrast);
+  color: var(--primary-contrast) !important;
   box-shadow: 0 6px 16px rgba(217, 119, 6, 0.24);
 }
 
-.primary-button > span,
-.primary-button > svg,
-.primary-button .lucide {
-  color: inherit;
+.primary-button > *,
+.primary-button > * > * {
+  color: var(--primary-contrast) !important;
 }
 
 .primary-button:hover {
@@ -1496,6 +1497,7 @@ textarea:focus {
 
 .continue-review-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -1538,6 +1540,7 @@ textarea:focus {
 .continue-review-list article {
   display: grid;
   gap: 4px;
+  min-width: 0;
   border: 1px solid var(--divider);
   border-radius: 12px;
   background: var(--bg-main);
@@ -5654,12 +5657,12 @@ details[open] > :not(summary),
   }
 
   .continue-next-steps {
-    grid-column: 1;
-    grid-row: 2;
+    grid-column: 1 / -1;
+    grid-row: 3;
   }
 
   .continue-reviews-card {
-    grid-column: 2;
+    grid-column: 1 / -1;
     grid-row: 2;
   }
 }
