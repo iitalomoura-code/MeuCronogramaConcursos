@@ -1,0 +1,17 @@
+"use strict";
+
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+
+const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
+const index = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
+
+assert.ok(app.includes("function saveStudyResult"), "O registro central de desempenho deve existir.");
+assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
+assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
+assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
+assert.ok(index.includes("styles.css?v=20260716-estabilizacao"), "O CSS deve usar cache-busting da estabilização.");
+assert.ok(index.includes("app.js?v=20260716-estabilizacao"), "O JavaScript deve usar cache-busting da estabilização.");
+
+console.log("OK - estabilização central, extração local e diálogos internos presentes.");

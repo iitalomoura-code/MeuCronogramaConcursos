@@ -94,5 +94,8 @@ const normalized = parser.formatImportedProgramText(tcePeFixture);
 assert.deepEqual(parser.parseProgramContent(normalized), rows, "Texto colado e texto normalizado de arquivo devem gerar o mesmo resultado.");
 assert.ok(!/parseProgramContent\(text\)/.test(source.slice(source.indexOf("els.fileInput"), source.indexOf("els.processButton"))), "Selecionar arquivo nao pode processar state.rows.");
 
+const subjectsInOpenContext = parser.parseProgramContent("L\u00cdNGUA PORTUGUESA\nInterpreta\u00e7\u00e3o de textos: coes\u00e3o e coer\u00eancia\nRACIOC\u00cdNIO L\u00d3GICO-MATEM\u00c1TICO\nProposi\u00e7\u00f5es: conectivos e equival\u00eancias\nMODELOS DE ADMINISTRA\u00c7\u00c3O P\u00daBLICA: gest\u00e3o p\u00fablica e governan\u00e7a");
+assert.deepEqual([...new Set(subjectsInOpenContext.map((row) => row.materia))], ["L\u00cdNGUA PORTUGUESA", "RACIOC\u00cdNIO L\u00d3GICO-MATEM\u00c1TICO"], "Nova materia conhecida deve ser reconhecida com outra materia aberta, sem promover titulo interno.");
+
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
 console.log("OK - marcadores genericos, temas explicitos, virgulas e normalizacao.");

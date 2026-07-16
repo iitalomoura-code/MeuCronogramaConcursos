@@ -5496,6 +5496,96 @@ details[open] > :not(summary),
   line-height: 1.3;
 }
 
+/* Dialogo interno para avisos, confirmacoes e entradas */
+.app-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.app-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.app-dialog-card {
+  position: relative;
+  width: min(460px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow-card);
+  padding: 22px;
+}
+
+.app-dialog-card header,
+.app-dialog-card footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-dialog-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-family: Quicksand, Inter, sans-serif;
+  font-size: 20px;
+}
+
+.app-dialog-message {
+  color: var(--muted);
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.app-dialog-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.app-dialog-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.app-dialog-field input {
+  width: 100%;
+}
+
+.app-dialog-card footer {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.app-dialog-card.is-danger {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+}
+
+:root[data-theme="night"] .app-dialog-backdrop {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+@media (max-width: 480px) {
+  .app-dialog-card {
+    padding: 18px;
+  }
+
+  .app-dialog-card footer > button {
+    flex: 1 1 140px;
+  }
+}
+
 .focused-review-scheduling {
   display: grid;
   gap: 8px;

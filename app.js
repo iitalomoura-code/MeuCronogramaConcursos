@@ -80,13 +80,24 @@ let dataFileHandle = null;
 let isWritingDataFile = false;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
+let performanceSaveSessionId = "";
 let unitDetailIndex = -1;
 let recentTopicFeedback = null;
 let showPendingOnly = false;
 let continueSuggestionOffset = 0;
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
-let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
+let lastProgramParseMeta = {
+  subjects: [],
+  subjectsWithoutTopics: [],
+  genericLabelsIgnored: [],
+  looseTopics: [],
+  suspiciousSubjects: [],
+  duplicatedThemes: [],
+  unusuallyLargeSubjects: [],
+  document: null,
+};
+let lastDocumentExtractionMeta = null;
 let contentSearchTerm = "";
 let contentFilter = "all";
 let contentUndoSnapshot = null;
@@ -635,6 +646,31 @@ function isExplicitSubjectText(value) {
   return words.length <= 10 && uppercaseRatio(clean) > 0.72;
 }
 
+const KNOWN_SUBJECT_NAMES = new Set([
+  "lingua portuguesa",
+  "raciocinio logico",
+  "raciocinio logico matematico",
+  "raciocinio logico-matematico",
+  "nocoes de tecnologia da informacao e de inteligencia artificial",
+  "tecnologia da informacao",
+  "legislacao",
+  "controle externo",
+  "controle externo e legislacao do tce pe",
+  "administracao geral e publica",
+  "governanca publica",
+  "licitacoes e contratos administrativos",
+  "direito financeiro",
+  "administracao de recursos e logistica",
+  "direito administrativo",
+  "direito constitucional",
+  "direito penal",
+  "direito tributario",
+  "contabilidade publica",
+  "auditoria",
+  "etica",
+  "informatica",
+]);
+
 function isIgnoredProgramModule(line) {
   const normalized = normalizeForMatch(stripEnumerator(line).replace(/[:;.]$/, "").trim());
   return /^(modulo|modulo\s+[ivxlcdm]+|conhecimentos gerais|conhecimentos especificos|conhecimentos basicos|prova objetiva|conteudo programatico|programa|anexo|parte\s+[ivxlcdm]+|grupo\s+\d+)$/i.test(normalized);
@@ -642,7 +678,7 @@ function isIgnoredProgramModule(line) {
 
 function splitInlineSubject(line) {
   const clean = stripEnumerator(line).trim();
-  const match = clean.match(/^(?:mat[ée]ria|disciplina)\s*:\s*(.+)$/i);
+  const match = clean.match(/^(?:mat[ée]ria|materia|disciplina)\s*:\s*(.+)$/i);
   if (!match) return null;
   const subject = normalizeTopic(match[1]);
   return subject && !isGenericProgramLabel(subject) ? { subject } : null;
@@ -660,14 +696,17 @@ function splitNamedThemeLine(line) {
 
 function looksLikeSubjectLine(line, hasOpenSubject = false) {
   const clean = stripEnumerator(line).replace(/[:;.]$/, "").trim();
-  if (!clean || clean.includes(";") || clean.includes(":") || hasOpenSubject) return false;
+  if (!clean || clean.includes(";") || clean.includes(":")) return false;
   if (isIgnoredProgramModule(clean) || isGenericProgramLabel(clean)) return false;
   const words = clean.split(/\s+/).filter(Boolean);
   if (words.length > 10) return false;
   const normalized = normalizeForMatch(clean);
+  const exactKnownSubject = KNOWN_SUBJECT_NAMES.has(normalized);
   const knownSubject =
     /\b(portugues|lingua portuguesa|direito|administracao|constitucional|administrativo|controle externo|contabilidade|matematica|raciocinio|informatica|tecnologia|tecnologia da informacao|legislacao|etica|auditoria|orcamento|financas|economia|estatistica|governanca|licitacoes|contratos|discursiva|recursos|logistica)\b/.test(normalized);
-  return knownSubject && (isExplicitSubjectText(clean) || words.length <= 5);
+  if (!knownSubject) return false;
+  if (exactKnownSubject) return true;
+  return isExplicitSubjectText(clean) && !hasOpenSubject;
 }
 
 function tidyProgramLine(value) {
@@ -704,13 +743,15 @@ function splitTopics(text) {
 function parseProgramContent(rawText) {
   const normalized = formatImportedProgramText(rawText);
   if (!normalized) {
-    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
+    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [], genericLabelsIgnored: [], looseTopics: [], suspiciousSubjects: [], duplicatedThemes: [], unusuallyLargeSubjects: [], document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta };
     return [];
   }
 
   const rows = [];
   const subjectNames = new Map();
   const looseTopics = [];
+  const looseTopicsSeen = [];
+  const genericLabelsIgnored = [];
   let currentSubject = "";
 
   const registerSubject = (subject) => {
@@ -720,12 +761,17 @@ function parseProgramContent(rawText) {
   };
   const appendTopic = (materia, assunto, explicit = false) => {
     const topic = normalizeTopic(assunto);
-    if (!topic || isGenericProgramLabel(topic)) return;
+    if (!topic) return;
+    if (isGenericProgramLabel(topic)) {
+      genericLabelsIgnored.push(topic);
+      return;
+    }
     const order = rows.filter((row) => normalizeForMatch(row.materia || "") === normalizeForMatch(materia || "")).length + 1;
     rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit }));
   };
   const flushLooseTopics = () => {
     if (!looseTopics.length) return;
+    looseTopicsSeen.push(...looseTopics);
     const topics = splitTopics(looseTopics.splice(0).join("\n"));
     topics.forEach((topic) => appendTopic(currentSubject, topic, false));
   };
@@ -739,7 +785,7 @@ function parseProgramContent(rawText) {
       return;
     }
 
-    if (!currentSubject && looksLikeSubjectLine(line)) {
+    if (looksLikeSubjectLine(line, Boolean(currentSubject))) {
       flushLooseTopics();
       registerSubject(stripEnumerator(line).replace(/[:;.]$/, ""));
       return;
@@ -756,16 +802,38 @@ function parseProgramContent(rawText) {
     }
 
     const loose = normalizeTopic(stripEnumerator(line));
-    if (loose && !isGenericProgramLabel(loose)) looseTopics.push(loose);
+    if (loose) {
+      if (isGenericProgramLabel(loose)) genericLabelsIgnored.push(loose);
+      else looseTopics.push(loose);
+    }
   });
 
   flushLooseTopics();
   const subjectsWithTopics = new Set(rows.filter((row) => row.materia && row.assunto).map((row) => normalizeForMatch(row.materia)));
+  const duplicatedThemes = [];
+  const unusuallyLargeSubjects = [];
+  const suspiciousSubjects = [];
+  subjectNames.forEach((subject, key) => {
+    const subjectRows = rows.filter((row) => normalizeForMatch(row.materia) === key);
+    const seen = new Set();
+    subjectRows.map((row) => normalizeForMatch(String(row.assunto || "").split(":")[0])).filter(Boolean).forEach((title) => {
+      if (seen.has(title)) duplicatedThemes.push({ materia: subject, tema: title });
+      seen.add(title);
+    });
+    if (subjectRows.length > 30) unusuallyLargeSubjects.push({ materia: subject, temas: subjectRows.length });
+    if (!KNOWN_SUBJECT_NAMES.has(key) && !subjectRows.some((row) => row.temaExplicito)) suspiciousSubjects.push(subject);
+  });
   lastProgramParseMeta = {
     subjects: [...subjectNames.values()],
     subjectsWithoutTopics: [...subjectNames.entries()]
       .filter(([key]) => !subjectsWithTopics.has(key))
       .map(([, subject]) => subject),
+    genericLabelsIgnored,
+    looseTopics: looseTopicsSeen,
+    suspiciousSubjects,
+    duplicatedThemes,
+    unusuallyLargeSubjects,
+    document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta,
   };
   return rows;
 }
@@ -1086,7 +1154,7 @@ function contentFeedbackElement() {
 function notifyContent(message, type = "success") {
   const feedback = contentFeedbackElement();
   if (!feedback) {
-    alert(message);
+    void dialogAlert(message);
     return;
   }
   if (contentUndoSnapshot && type === "success") {
@@ -1113,6 +1181,9 @@ function programParserWarnings(rows) {
   const missingSubject = topics.filter((row) => !row.materia);
   if (missingSubject.length) warnings.push(`${missingSubject.length} tema${missingSubject.length === 1 ? "" : "s"} ficou${missingSubject.length === 1 ? "" : "ram"} sem matéria.`);
   if (lastProgramParseMeta.subjectsWithoutTopics.length) warnings.push(`Matéria${lastProgramParseMeta.subjectsWithoutTopics.length === 1 ? "" : "s"} sem tema: ${lastProgramParseMeta.subjectsWithoutTopics.join(", ")}.`);
+  if (lastProgramParseMeta.suspiciousSubjects?.length) warnings.push(`Revise possíveis matérias identificadas por contexto: ${lastProgramParseMeta.suspiciousSubjects.join(", ")}.`);
+  if (lastProgramParseMeta.duplicatedThemes?.length) warnings.push(`${lastProgramParseMeta.duplicatedThemes.length} tema${lastProgramParseMeta.duplicatedThemes.length === 1 ? "" : "s"} repetido${lastProgramParseMeta.duplicatedThemes.length === 1 ? "" : "s"} na mesma matéria.`);
+  if (lastProgramParseMeta.unusuallyLargeSubjects?.length) warnings.push(`Matéria${lastProgramParseMeta.unusuallyLargeSubjects.length === 1 ? "" : "s"} com muitos temas: ${lastProgramParseMeta.unusuallyLargeSubjects.map((item) => item.materia).join(", ")}.`);
   const titles = topics.map((row) => normalizeForMatch(themeTitle(row.assunto))).filter(Boolean);
   const repeated = titles.filter((title, index) => titles.indexOf(title) !== index).length;
   if (titles.length && repeated / titles.length > 0.2) warnings.push("Mais de 20% dos temas têm nome repetido. Revise a divisão dos conteúdos.");
@@ -1560,7 +1631,7 @@ function renumberRows(options = {}) {
   renderRows();
 }
 
-function mergeSelectedTopicItems(items) {
+async function mergeSelectedTopicItems(items) {
   if (items.length < 2) {
     notifyContent("Selecione pelo menos dois temas para juntar.", "warning");
     return;
@@ -1585,7 +1656,7 @@ function mergeSelectedTopicItems(items) {
   const base = selectedRowsForMerge[0];
   const mergedTitle = titles.join(" + ");
   const mergedDetails = details.join("; ");
-  const confirmed = confirm(`Juntar ${selectedRowsForMerge.length} temas em um unico tema?\n\nNovo tema:\n${mergedTitle}\n\nOs assuntos serao reunidos em uma unica linha.`);
+  const confirmed = await dialogConfirm(`Juntar ${selectedRowsForMerge.length} temas em um unico tema?\n\nNovo tema:\n${mergedTitle}\n\nOs assuntos serao reunidos em uma unica linha.`, { confirmLabel: "Juntar temas" });
   if (!confirmed) return;
 
   const mergedRow = enrichThemeRow({
@@ -1619,21 +1690,25 @@ function organizeRowsByTheme(rows) {
   subjects.forEach(({ materia, rows: subjectRows }) => {
     const studyRows = subjectRows.filter((row) => row.assunto && row.estudar !== "Nao");
     const otherRows = subjectRows.filter((row) => !row.assunto || row.estudar === "Nao");
-    const hasExplicitThemes = studyRows.some((row) => row.temaExplicito);
-    if (hasExplicitThemes) {
-      studyRows.forEach((row, index) => organized.push(enrichThemeRow({ ...row, ordem: index + 1 })));
-    } else {
-      const groupedTopics = groupTopicsByTheme(studyRows.map((row) => row.assunto), { status: "tight" }, { maxAtoms: 6, maxWords: 44, preserveOrder: true });
-      groupedTopics.forEach((assunto, index) => {
-        organized.push(enrichThemeRow({
-          materia,
-          assunto,
-          ordem: index + 1,
-          estudar: "Sim",
-          observacoes: "",
-        }));
-      });
-    }
+    const explicitRows = studyRows.filter((row) => row.temaExplicito);
+    const looseStudyRows = studyRows.filter((row) => !row.temaExplicito);
+    const groupedLooseRows = groupTopicsByTheme(looseStudyRows.map((row) => row.assunto), { status: "tight" }, { maxAtoms: 6, maxWords: 44, preserveOrder: true })
+      .map((assunto) => enrichThemeRow({ materia, assunto, estudar: "Sim", observacoes: "", temaExplicito: false }));
+    const orderedRows = explicitRows.length && looseStudyRows.length
+      ? (() => {
+          const output = [];
+          let looseInserted = false;
+          studyRows.forEach((row) => {
+            if (row.temaExplicito) output.push(row);
+            else if (!looseInserted) {
+              output.push(...groupedLooseRows);
+              looseInserted = true;
+            }
+          });
+          return output;
+        })()
+      : explicitRows.length ? explicitRows : groupedLooseRows;
+    orderedRows.forEach((row, index) => organized.push(enrichThemeRow({ ...row, ordem: index + 1 })));
 
     otherRows.forEach((row) => organized.push(enrichThemeRow({ ...row })));
   });
@@ -1644,7 +1719,7 @@ function organizeRowsByTheme(rows) {
 function organizeThemesFromTable() {
   syncRowsFromTable();
   if (!state.rows.some((row) => row.materia && row.assunto)) {
-    alert("Processar ou inserir temas antes de organizar por pertin\u00eancia.");
+    void dialogAlert("Processar ou inserir temas antes de organizar por pertin\u00eancia.");
     return;
   }
   const before = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
@@ -1678,11 +1753,85 @@ async function readTxt(file) {
   return file.text();
 }
 
+function extractDocxTextFromHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  const root = template.content;
+  const lines = [];
+  const push = (value) => {
+    const text = tidyProgramLine(value);
+    if (text) lines.push(text);
+  };
+  root.querySelectorAll("table").forEach((table) => {
+    table.querySelectorAll("tr").forEach((row) => {
+      const cells = [...row.children].map((cell) => tidyProgramLine(cell.textContent || "")).filter(Boolean);
+      if (cells.length) push(cells.join(" | "));
+    });
+    table.remove();
+  });
+  root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li").forEach((node) => push(node.textContent || ""));
+  return formatImportedProgramText(lines.join("\n"));
+}
+
 async function readDocx(file) {
   if (!window.mammoth) throw new Error("Leitor DOCX indispon\u00edvel no navegador.");
   const arrayBuffer = await file.arrayBuffer();
+  if (typeof window.mammoth.convertToHtml === "function") {
+    const result = await window.mammoth.convertToHtml({ arrayBuffer });
+    const text = extractDocxTextFromHtml(result.value);
+    lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [] };
+    return text;
+  }
   const result = await window.mammoth.extractRawText({ arrayBuffer });
-  return result.value;
+  const text = formatImportedProgramText(result.value);
+  lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [] };
+  return text;
+}
+
+function reconstructPdfPageLines(content, pageNumber, pageWidth = 0) {
+  const items = (content?.items || [])
+    .map((item) => {
+      const text = tidyProgramLine(item.str || "");
+      const transform = Array.isArray(item.transform) ? item.transform : [];
+      return {
+        text,
+        x: Number(transform[4]) || 0,
+        y: Number(transform[5]) || 0,
+        height: Number(item.height) || Math.abs(Number(transform[3])) || 10,
+      };
+    })
+    .filter((item) => item.text);
+  const buckets = [];
+  items.sort((a, b) => b.y - a.y || a.x - b.x).forEach((item) => {
+    const tolerance = Math.max(2, item.height * 0.45);
+    let bucket = buckets.find((candidate) => Math.abs(candidate.y - item.y) <= tolerance);
+    if (!bucket) {
+      bucket = { y: item.y, items: [] };
+      buckets.push(bucket);
+    }
+    bucket.items.push(item);
+    bucket.y = bucket.items.reduce((sum, part) => sum + part.y, 0) / bucket.items.length;
+  });
+  const lines = buckets.map((bucket) => {
+    const parts = bucket.items.sort((a, b) => a.x - b.x);
+    return { y: bucket.y, x: parts[0]?.x || 0, text: parts.map((part) => part.text).join(" ") };
+  }).sort((a, b) => b.y - a.y);
+  if (lines.length < 4 || !pageWidth) return lines.map((line) => line.text);
+
+  const starts = [...new Set(lines.map((line) => Math.round(line.x)))].sort((a, b) => a - b);
+  let largestGap = 0;
+  let splitAt = 0;
+  for (let index = 1; index < starts.length; index += 1) {
+    const gap = starts[index] - starts[index - 1];
+    if (gap > largestGap) {
+      largestGap = gap;
+      splitAt = starts[index];
+    }
+  }
+  if (largestGap < Math.max(120, pageWidth * 0.18)) return lines.map((line) => line.text);
+  const left = lines.filter((line) => line.x < splitAt).sort((a, b) => b.y - a.y || a.x - b.x);
+  const right = lines.filter((line) => line.x >= splitAt).sort((a, b) => b.y - a.y || a.x - b.x);
+  return [...left, ...right].map((line) => line.text);
 }
 
 async function readPdf(file) {
@@ -1692,13 +1841,24 @@ async function readPdf(file) {
   }
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-  const pages = [];
+  const pageLines = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(content.items.map((item) => item.str).join(" "));
+    const viewport = page.getViewport({ scale: 1 });
+    pageLines.push(reconstructPdfPageLines(content, pageNumber, viewport.width));
   }
-  return pages.join("\n");
+  const counts = new Map();
+  pageLines.flat().forEach((line) => {
+    const key = normalizeForMatch(line);
+    if (key) counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  const repeated = new Set([...counts.entries()].filter(([, count]) => count >= Math.max(2, Math.ceil(pdf.numPages / 2))).map(([key]) => key));
+  const pages = pageLines.map((lines) => lines.filter((line) => !/^\d{1,4}$/.test(line.trim()) && !repeated.has(normalizeForMatch(line))));
+  const text = formatImportedProgramText(pages.map((lines) => lines.join("\n")).join("\n\n"));
+  lastDocumentExtractionMeta = { type: "pdf", pages: pdf.numPages, textSearchable: Boolean(text), pageLineCounts: pages.map((lines) => lines.length) };
+  if (!text) throw new Error("Este PDF não possui texto pesquisável. Utilize outra versão ou cole manualmente o conteúdo programático.");
+  return text;
 }
 
 async function readFile(file) {
@@ -1903,7 +2063,7 @@ function confirmRows(options = {}) {
   renumberRows();
   const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
   if (!validRows.length) {
-    alert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
+    void dialogAlert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
     return;
   }
   const problems = contentProblemAnalysis();
@@ -2651,18 +2811,18 @@ function unlockCycle() {
   scheduleAutoSave();
 }
 
-function generateSchedule() {
+async function generateSchedule() {
   if (!state.planningBase) {
-    alert("Confirme as mat\u00e9rias e temas antes de gerar o ciclo.");
+    await dialogAlert("Confirme as mat\u00e9rias e temas antes de gerar o ciclo.");
     return;
   }
   if (state.generatedBlocks.length && liveCycleHasProgress()) {
-    alert("J\u00e1 existe um ciclo em andamento com desempenho, metas conclu\u00eddas, revis\u00f5es ou quest\u00f5es registradas. Para criar outro ciclo, use \"Finalizar ciclo\" ou \"Reiniciar ciclos\". Assim seus dados n\u00e3o s\u00e3o substitu\u00eddos sem querer.");
+    await dialogAlert("J\u00e1 existe um ciclo em andamento com desempenho, blocos conclu\u00eddos, revis\u00f5es ou quest\u00f5es registradas. Para criar outro ciclo, use \"Finalizar ciclo\" ou \"Reiniciar ciclos\". Assim seus dados n\u00e3o s\u00e3o substitu\u00eddos sem querer.");
     switchTab("cronograma");
     return;
   }
   if (state.generatedBlocks.length) {
-    const replace = confirm("J\u00e1 existe um ciclo gerado. Se continuar, as metas atuais ser\u00e3o substitu\u00eddas. Deseja gerar um novo ciclo mesmo assim?");
+    const replace = await dialogConfirm("J\u00e1 existe um ciclo gerado. Se continuar, as metas atuais ser\u00e3o substitu\u00eddas. Deseja gerar um novo ciclo mesmo assim?", { confirmLabel: "Substituir ciclo" });
     if (!replace) {
       switchTab("cronograma");
       return;
@@ -2681,7 +2841,7 @@ function generateSchedule() {
   lockCycle();
   switchTab("cronograma");
   if (analysis.status === "insufficient") {
-    els.scheduleStatus.textContent = `${state.generatedBlocks.length} metas geradas com prazo insuficiente`;
+    els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo com prazo insuficiente`;
   }
 }
 
@@ -2705,17 +2865,17 @@ function renderGeneratedSchedule() {
 
   const config = scheduleConfig();
   updateDeadlineDisplays(config);
-  if (els.scheduleStatus) els.scheduleStatus.textContent = `${state.generatedBlocks.length} metas geradas`;
+  if (els.scheduleStatus) els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo`;
   syncPendingFilterControl();
   const totals = performanceTotals();
   const completedCount = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").length;
   const scheduledReviews = state.generatedBlocks.reduce((sum, block) => sum + reviewCyclesFromBlock(block).length, 0);
   const accuracy = totals.questoes ? totals.acertos / totals.questoes : 0;
   els.summaryGrid.innerHTML = summaryItems([
-    ["Metas geradas", state.generatedBlocks.length],
+    ["Blocos do ciclo", state.generatedBlocks.length],
     ["Carga do ciclo", formatHours(config.horasSemanaCronograma)],
     ["Horas estudadas", formatHours(studiedCycleHours())],
-    ["Metas conclu\u00eddas", completedCount],
+    ["Blocos conclu\u00eddos", completedCount],
     ["Revis\u00f5es agendadas", scheduledReviews],
     ["Aproveitamento geral", formatPercent(accuracy)],
   ]);
@@ -2736,7 +2896,7 @@ function renderGeneratedSchedule() {
         return `
           <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""}">
             <div class="goal-card-index">
-              <span>Meta</span>
+              <span>Bloco</span>
               <strong>${block.bloco}</strong>
             </div>
             <div class="goal-card-main">
@@ -2749,7 +2909,7 @@ function renderGeneratedSchedule() {
               </div>
               <div class="goal-card-meta">
                 <label class="goal-duration-field">Dura\u00e7\u00e3o
-                  <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real da meta ${block.bloco}" />
+                  <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real do bloco ${block.bloco}" />
                 </label>
                 <div>
                   <span>Prioridade</span>
@@ -2989,7 +3149,7 @@ function renderContinuePanelLegacy() {
         </div>
       ` : `
         <div class="continue-actions">
-          <button class="primary-button" type="button" data-open-cycle-goals><i data-lucide="check-circle-2"></i><span>Ver metas do ciclo</span></button>
+          <button class="primary-button" type="button" data-open-cycle-goals><i data-lucide="check-circle-2"></i><span>Ver ciclo atual</span></button>
         </div>
       `}
     </section>
@@ -3034,7 +3194,7 @@ function renderContinuePanelLegacy() {
     <section class="continue-progress-card">
       <div>
         <span class="section-kicker">Progresso do ciclo</span>
-        <h3>${completed} / ${total} metas conclu\u00eddas</h3>
+        <h3>${completed} / ${total} blocos conclu\u00eddos</h3>
         <p>Continue no seu ritmo.</p>
       </div>
       <div class="continue-progress">
@@ -3099,9 +3259,14 @@ function focusedDraftFor(index) {
       observacoes: block.observacoes || "",
       pontosRevisar: Boolean(block.pontosRevisar),
       reviewCycles: reviewCyclesFromBlock(block),
+      sessionId: createStudySessionId(),
     });
   }
   return focusedStudyDrafts.get(index);
+}
+
+function createStudySessionId() {
+  return crypto?.randomUUID?.() || `sessao-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function focusedTimerSeconds() {
@@ -3171,9 +3336,9 @@ function focusedDraftHasChanges(index) {
     focusedTimerSeconds() > 0;
 }
 
-function closeFocusedStudy(options = {}) {
+async function closeFocusedStudy(options = {}) {
   if (focusedStudyIndex < 0) return;
-  if (!options.force && focusedDraftHasChanges(focusedStudyIndex) && !window.confirm("Há dados preenchidos neste estudo. Sair sem salvar?")) return;
+  if (!options.force && focusedDraftHasChanges(focusedStudyIndex) && !(await dialogConfirm("Há dados preenchidos neste estudo. Sair sem salvar?", { confirmLabel: "Sair sem salvar" }))) return;
   stopFocusedTimerInterval();
   focusedStudyIndex = -1;
   focusedStudySession = null;
@@ -3233,7 +3398,7 @@ function focusedStudyMarkup(block, index, draft, suggestion) {
         <div class="focused-study-context">
           <strong>Conteúdo principal</strong>
           <p>${escapeHtml(themeDetails(block.assunto) || block.assunto)}</p>
-          <span>Meta ${index + 1} de ${state.generatedBlocks.length} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
+          <span>Bloco ${index + 1} de ${state.generatedBlocks.length} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
         </div>
         <div class="focused-study-timer">
           <div>
@@ -3316,57 +3481,41 @@ function openFocusedStudy(index) {
 
 function saveFocusedStudy() {
   if (focusedStudySaving || focusedStudyIndex < 0) return;
-  const block = state.generatedBlocks[focusedStudyIndex];
-  const draft = focusedStudyDrafts.get(focusedStudyIndex);
+  const index = focusedStudyIndex;
+  const block = state.generatedBlocks[index];
+  const draft = focusedStudyDrafts.get(index);
   if (!block || !draft) return;
   focusedStudySaving = true;
-  const questionText = String(draft.questoes || "").trim();
-  const correctText = String(draft.acertos || "").trim();
-  const questions = questionText ? Number(questionText) : 0;
-  const correct = correctText ? Number(correctText) : 0;
-  if (!Number.isFinite(questions) || questions < 0 || !Number.isFinite(correct) || correct < 0 || correct > questions) {
-    focusedStudySaving = false;
-    showToast("Confira as questões e os acertos informados.");
-    return;
-  }
   const sessionHours = focusedTimerSeconds() / 3600;
   const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
   const effectiveHours = Number((typedHours || sessionHours || 0).toFixed(2));
-  const nextStatus = normalizeStatus(draft.status);
-  const previousStatus = normalizeStatus(block.status);
-  block.status = nextStatus;
-  block.sessaoId = crypto.randomUUID ? crypto.randomUUID() : "sessao-" + Date.now() + "-" + Math.random().toString(16).slice(2);
-  block.tipoAtividade = draft.tipoAtividade || "Teoria";
-  block.dificuldade = draft.dificuldade || "Média";
-  block.questoes = questions;
-  block.acertos = correct;
-  block.tempoEstudado = effectiveHours;
-  block.observacoes = String(draft.observacoes || "").trim();
-  block.pontosRevisar = Boolean(draft.pontosRevisar);
-  setBlockReviewCycles(block, draft.reviewCycles || []);
-  if (nextStatus === "Concluído") {
-    if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
-    syncCompletedHistoryForBlock(block);
-  } else {
-    block.concluidoEm = "";
+  const outcome = saveStudyResult({
+    blockIndex: index,
+    source: "focused",
+    sessionId: draft.sessionId,
+    status: draft.status,
+    activityType: draft.tipoAtividade,
+    difficulty: draft.dificuldade,
+    studiedHours: effectiveHours,
+    questions: String(draft.questoes || "").trim() ? Number(draft.questoes) : 0,
+    correctAnswers: String(draft.acertos || "").trim() ? Number(draft.acertos) : 0,
+    notes: draft.observacoes,
+    reviewPoints: draft.pontosRevisar,
+    reviewCycles: draft.reviewCycles || [],
+  });
+  if (!outcome.ok) {
+    focusedStudySaving = false;
+    if (!outcome.duplicate) showToast(outcome.message || "Não foi possível salvar o resultado.");
+    return;
   }
-  if (nextStatus === "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
-  syncBlockReviewRecords(block);
-  const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
-  updateBlockAccuracy(block);
+  const { adaptiveOutcome, previousStatus, nextStatus } = outcome;
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
   focusedStudyIndex = -1;
   focusedStudySession = null;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
-  renderContinuePanel();
   renderGeneratedSchedule();
-  renderCompleted();
-  renderReviews();
-  renderEvolution();
-  renderWeeklyResult();
-  saveAppStateNow("Resultado do estudo salvo");
   if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
   else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
   else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");
@@ -3435,7 +3584,7 @@ function renderContinuePanel() {
       ${suggested ? `
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
-          <div><span>Posição no ciclo</span><strong>Meta ${suggested.index + 1} de ${total}</strong></div>
+          <div><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
           <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
         </div>
@@ -3565,7 +3714,7 @@ function performancePanel(block, index) {
       <aside class="performance-drawer">
         <div class="performance-drawer-header">
           <div>
-            <span>Meta ${block.bloco}</span>
+            <span>Bloco ${block.bloco}</span>
             <h3>Atualizar desempenho</h3>
           </div>
           <button class="icon-button" type="button" data-close-performance aria-label="Fechar painel"><i data-lucide="x"></i></button>
@@ -3645,6 +3794,67 @@ function updateBlockAccuracy(block) {
   block.percentual = questions > 0 ? correct / questions : 0;
 }
 
+function saveStudyResult({
+  blockIndex,
+  source = "schedule",
+  sessionId = "",
+  status,
+  activityType,
+  difficulty,
+  studiedHours,
+  questions,
+  correctAnswers,
+  notes,
+  reviewPoints = false,
+  reviewCycles = [],
+} = {}) {
+  const index = Number(blockIndex);
+  const block = Number.isInteger(index) ? state.generatedBlocks[index] : null;
+  if (!block) return { ok: false, message: "Não foi possível localizar este bloco." };
+  const effectiveSessionId = String(sessionId || createStudySessionId());
+  if (block.lastSavedSessionId === effectiveSessionId) return { ok: false, duplicate: true, block };
+
+  const totalQuestions = questions === "" || questions === null || typeof questions === "undefined" ? 0 : Number(questions);
+  const correct = correctAnswers === "" || correctAnswers === null || typeof correctAnswers === "undefined" ? 0 : Number(correctAnswers);
+  if (!Number.isFinite(totalQuestions) || !Number.isFinite(correct) || totalQuestions < 0 || correct < 0 || correct > totalQuestions) {
+    return { ok: false, message: "Confira as questões e os acertos informados." };
+  }
+
+  const previousStatus = normalizeStatus(block.status);
+  const nextStatus = normalizeStatus(status || block.status);
+  const parsedHours = typeof studiedHours === "number" ? studiedHours : parseDurationInput(studiedHours, Number(block.tempoEstudado) || 0);
+  const nextHours = Number.isFinite(parsedHours) && parsedHours >= 0 ? Number(parsedHours.toFixed(2)) : Number(block.tempoEstudado) || 0;
+  block.status = nextStatus;
+  block.sessaoId = effectiveSessionId;
+  block.lastSavedSessionId = effectiveSessionId;
+  block.tipoAtividade = activityType || block.tipoAtividade || "Teoria";
+  block.dificuldade = difficulty || block.dificuldade || "Média";
+  block.questoes = totalQuestions;
+  block.acertos = correct;
+  block.tempoEstudado = nextHours;
+  block.observacoes = String(notes || "").trim();
+  block.pontosRevisar = Boolean(reviewPoints);
+  setBlockReviewCycles(block, Array.isArray(reviewCycles) ? reviewCycles : reviewCyclesFromBlock(block));
+
+  if (nextStatus === "Concluído") {
+    if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
+    syncCompletedHistoryForBlock(block);
+  } else {
+    block.concluidoEm = "";
+  }
+  if (nextStatus === "Reprogramar" && previousStatus !== "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
+  syncBlockReviewRecords(block);
+  const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
+  updateBlockAccuracy(block);
+  renderContinuePanel();
+  renderCompleted();
+  renderReviews();
+  renderEvolution();
+  renderWeeklyResult();
+  saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
+  return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
+}
+
 function alternationScore() {
   let repeats = 0;
   for (let index = 1; index < state.generatedBlocks.length; index += 1) {
@@ -3701,7 +3911,7 @@ function renderWeeklyResult() {
         <td>${formatPercent(percent)}</td>
       </tr>
     `;
-  }).join("") : `<tr><td colspan="5">Preencha as quest\u00f5es feitas e acertos nas metas do ciclo.</td></tr>`;
+  }).join("") : `<tr><td colspan="5">Preencha as quest\u00f5es feitas e acertos no ciclo atual.</td></tr>`;
 }
 
 function renderCompleted() {
@@ -3856,7 +4066,7 @@ function renderCycleClosureSummary() {
           ["Acertos", summary.acertos],
           ["Erros", summary.erros],
           ["% de acerto", formatPercent(summary.percentual)],
-          ["Metas conclu\u00eddas", summary.counts["Conclu\u00eddo"] || 0],
+          ["Blocos conclu\u00eddos", summary.counts["Conclu\u00eddo"] || 0],
           ["Em andamento", summary.counts["Em andamento"] || 0],
           ["N\u00e3o iniciadas", summary.counts["N\u00e3o iniciado"] || 0],
           ["Reprogramadas", summary.counts["Reprogramar"] || 0],
@@ -4241,7 +4451,7 @@ function completeCurrentWeekAndGenerateNext() {
 
 function restorePreviousCycle() {
   if (!state.cycleHistory.length) {
-    alert("N\u00e3o h\u00e1 ciclo anterior salvo para restaurar.");
+    void dialogAlert("N\u00e3o h\u00e1 ciclo anterior salvo para restaurar.");
     return;
   }
   const previous = state.cycleHistory.pop();
@@ -4264,7 +4474,7 @@ function restorePreviousCycle() {
 }
 
 function resetCycles() {
-  const confirmed = confirm("Isso vai limpar metas geradas, temas conclu\u00eddos e hist\u00f3rico de ciclos, mantendo seu cadastro e conte\u00fado program\u00e1tico. Deseja reiniciar?");
+  void dialogConfirm("Isso vai limpar blocos gerados, temas conclu\u00eddos e hist\u00f3rico de ciclos, mantendo seu cadastro e conte\u00fado program\u00e1tico. Deseja reiniciar?", { confirmLabel: "Reiniciar ciclos", variant: "danger" }).then((confirmed) => {
   if (!confirmed) return;
   state.distribution = [];
   state.generatedBlocks = [];
@@ -4277,6 +4487,7 @@ function resetCycles() {
   updateContestSummary();
   if (state.planningBase) switchTab("pesos");
   saveAppStateNow("Ciclos reiniciados");
+  });
 }
 
 function parseBrazilianDate(value) {
@@ -4547,7 +4758,7 @@ function renderAdaptiveReviewControls(reviewRows) {
   });
 }
 
-function updateAdaptiveReviewAction(id, action) {
+async function updateAdaptiveReviewAction(id, action) {
   ensureReviewsArray();
   const record = state.reviews.find((item) => item.id === id && isAdaptiveReview(item));
   if (!record) return;
@@ -4569,7 +4780,7 @@ function updateAdaptiveReviewAction(id, action) {
     record.disponibilidade = "Revisão disponível a partir de " + record.dataPrevista;
   }
   if (action === "questions") {
-    const value = Number(globalThis.prompt("Quantidade sugerida de questões para esta revisão:", String(record.questoesSugeridas || 6)));
+    const value = Number(await dialogPrompt("Quantidade sugerida de questões para esta revisão:", String(record.questoesSugeridas || 6), { title: "Questões da revisão", label: "Quantidade", type: "number", min: 1, step: 1 }));
     if (Number.isFinite(value) && value > 0) record.questoesSugeridas = Math.round(value);
   }
   record.atualizadaEm = new Date().toISOString();
@@ -4966,21 +5177,21 @@ function insertNotebookHtmlAtCursor(html) {
   rememberNotebookHistory();
 }
 
-function insertNotebookImage() {
-  const url = window.prompt("Cole o link (URL) da imagem:\n\nDica: hospede o mapa mental no Google Drive, Imgur ou similar e cole aqui o endere\u00e7o da imagem (deve come\u00e7ar com http).");
+async function insertNotebookImage() {
+  const url = await dialogPrompt("Cole o link (URL) da imagem.\n\nDica: use um endereço que comece com http:// ou https://.", "", { title: "Inserir imagem", label: "URL da imagem" });
   if (!url) return;
   const trimmed = url.trim();
   if (!/^https?:\/\//i.test(trimmed)) {
-    window.alert("O link precisa come\u00e7ar com http:// ou https://");
+    await dialogAlert("O link precisa come\u00e7ar com http:// ou https://");
     return;
   }
   insertNotebookHtmlAtCursor(`<p><img src="${escapeHtml(trimmed)}" alt="imagem" loading="lazy"></p><p><br></p>`);
 }
 
-function insertNotebookTable() {
-  const linhas = Math.max(1, Math.min(20, Number(window.prompt("Quantas linhas? (1 a 20)", "3")) || 0));
+async function insertNotebookTable() {
+  const linhas = Math.max(1, Math.min(20, Number(await dialogPrompt("Quantas linhas? (1 a 20)", "3", { title: "Inserir tabela", label: "Linhas", type: "number", min: 1, max: 20, step: 1 })) || 0));
   if (!linhas) return;
-  const colunas = Math.max(1, Math.min(10, Number(window.prompt("Quantas colunas? (1 a 10)", "3")) || 0));
+  const colunas = Math.max(1, Math.min(10, Number(await dialogPrompt("Quantas colunas? (1 a 10)", "3", { title: "Inserir tabela", label: "Colunas", type: "number", min: 1, max: 10, step: 1 })) || 0));
   if (!colunas) return;
   let html = "<table><thead><tr>";
   for (let c = 0; c < colunas; c += 1) html += "<th><br></th>";
@@ -5314,6 +5525,80 @@ function escapeHtml(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+let dialogRestoreFocus = null;
+
+function openDialog({ title = "Atenção", message = "", variant = "info", fields = [], actions = [], dismissible = true } = {}) {
+  return new Promise((resolve) => {
+    document.querySelector(".app-dialog")?.remove();
+    dialogRestoreFocus = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.className = "app-dialog";
+    overlay.setAttribute("role", "presentation");
+    const fieldMarkup = fields.map((field) => `
+      <label class="app-dialog-field">${escapeHtml(field.label || field.name)}
+        <input name="${escapeHtml(field.name)}" type="${field.type || "text"}" value="${escapeHtml(field.value || "")}" ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.max !== undefined ? `max="${field.max}"` : ""} ${field.step !== undefined ? `step="${field.step}"` : ""} />
+      </label>
+    `).join("");
+    const actionMarkup = actions.map((action, index) => `<button type="button" class="${action.variant === "danger" ? "danger-button" : action.variant === "primary" ? "primary-button" : "ghost-button"}" data-dialog-action="${escapeHtml(action.id || String(index))}">${escapeHtml(action.label || "Continuar")}</button>`).join("");
+    overlay.innerHTML = `<div class="app-dialog-backdrop" data-dialog-dismiss></div><section class="app-dialog-card ${variant === "danger" ? "is-danger" : ""}" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle"><header><h2 id="appDialogTitle">${escapeHtml(title)}</h2></header><div class="app-dialog-message">${escapeHtml(message).replace(/\n/g, "<br>")}</div>${fieldMarkup ? `<div class="app-dialog-fields">${fieldMarkup}</div>` : ""}<footer>${actionMarkup}</footer></section>`;
+    document.body.appendChild(overlay);
+    const card = overlay.querySelector(".app-dialog-card");
+    const focusable = () => [...overlay.querySelectorAll("button, input, select, textarea")].filter((item) => !item.disabled);
+    const finish = (value) => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown, true);
+      dialogRestoreFocus?.focus?.();
+      dialogRestoreFocus = null;
+      resolve(value);
+    };
+    const onKeydown = (event) => {
+      if (event.key === "Escape" && dismissible) {
+        event.preventDefault();
+        finish(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeydown, true);
+    overlay.addEventListener("click", (event) => {
+      if (event.target.closest("[data-dialog-dismiss]") && dismissible) {
+        finish(null);
+        return;
+      }
+      const button = event.target.closest("[data-dialog-action]");
+      if (!button) return;
+      const action = actions.find((item, index) => String(item.id || index) === button.dataset.dialogAction) || {};
+      const values = Object.fromEntries(fields.map((field) => [field.name, overlay.querySelector(`[name="${CSS.escape(field.name)}"]`)?.value || ""]));
+      finish(action.value !== undefined ? action.value : Object.keys(values).length ? values : true);
+    });
+    (overlay.querySelector("input, button") || card).focus();
+  });
+}
+
+function dialogAlert(message, options = {}) {
+  return openDialog({ title: options.title || "Atenção", message, actions: [{ id: "ok", label: "Entendi", variant: "primary", value: true }] });
+}
+
+function dialogConfirm(message, options = {}) {
+  return openDialog({ title: options.title || "Confirme a ação", message, variant: options.variant, actions: [{ id: "cancel", label: "Cancelar", value: false }, { id: "confirm", label: options.confirmLabel || "Confirmar", variant: options.variant === "danger" ? "danger" : "primary", value: true }] }).then((value) => value === true);
+}
+
+function dialogPrompt(message, defaultValue = "", options = {}) {
+  const name = options.name || "value";
+  return openDialog({ title: options.title || "Informe um valor", message, fields: [{ name, label: options.label || "Valor", type: options.type || "text", value: defaultValue, min: options.min, max: options.max, step: options.step }], actions: [{ id: "cancel", label: "Cancelar", value: null }, { id: "confirm", label: options.confirmLabel || "Continuar", variant: "primary" }] }).then((value) => value ? value[name] : null);
 }
 
 function getActiveTabName() {
@@ -5658,7 +5943,7 @@ async function verifyDataFilePermission(handle, mode = "readwrite", requestAcces
 }
 
 function dataFileUnavailableMessage() {
-  alert("Este navegador nao permite salvar direto em arquivo. Use o Chrome ou Edge e mantenha Backup/Importar como alternativa.");
+  void dialogAlert("Este navegador não permite salvar direto em arquivo. Use o Chrome ou Edge e mantenha Backup/Importar como alternativa.");
 }
 
 function captureDriveDataSnapshot() {
@@ -5714,9 +5999,9 @@ function applyDriveDataSnapshot(bundle = {}) {
   renderPlanSelect();
   applyAppSnapshot(snapshots[state.currentPlanId] || blankAppSnapshot(state.plans[0].name));
 }
-async function writeSnapshotToDataFile(label = "Drive salvo") {
+async function writeSnapshotToDataFile(label = "Arquivo salvo") {
   if (!dataFileHandle) {
-    alert("Conecte ou crie um arquivo de dados primeiro.");
+    await dialogAlert("Conecte ou crie um arquivo de dados primeiro.");
     return;
   }
   if (isWritingDataFile) return;
@@ -5741,12 +6026,12 @@ async function writeSnapshotToDataFile(label = "Drive salvo") {
 function saveConnectedDataFileSoon() {
   if (!dataFileHandle || isRestoring) return;
   clearTimeout(dataFileSaveTimer);
-  dataFileSaveTimer = setTimeout(() => writeSnapshotToDataFile("Drive salvo"), 900);
+  dataFileSaveTimer = setTimeout(() => writeSnapshotToDataFile("Arquivo salvo"), 900);
 }
 
 async function loadSnapshotFromDataFile(handle = dataFileHandle) {
   if (!handle) {
-    alert("Conecte ou crie um arquivo de dados primeiro.");
+    await dialogAlert("Conecte ou crie um arquivo de dados primeiro.");
     return;
   }
   try {
@@ -5757,7 +6042,7 @@ async function loadSnapshotFromDataFile(handle = dataFileHandle) {
     const file = await handle.getFile();
     const text = await file.text();
     if (!text.trim()) {
-      alert("O arquivo de dados esta vazio.");
+      await dialogAlert("O arquivo de dados está vazio.");
       return;
     }
     const snapshot = JSON.parse(text);
@@ -5771,7 +6056,7 @@ async function loadSnapshotFromDataFile(handle = dataFileHandle) {
     saveAppStateNow("Drive carregado");
   } catch (error) {
     console.error(error);
-    alert("Nao consegui carregar esse arquivo de dados. Verifique se ele e um JSON valido do sistema.");
+    await dialogAlert("Não consegui carregar esse arquivo de dados. Verifique se ele é um JSON válido do sistema.");
   }
 }
 
@@ -5793,7 +6078,7 @@ async function connectDataFile() {
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
-      alert("Nao consegui conectar o arquivo de dados.");
+      await dialogAlert("Não consegui conectar o arquivo de dados.");
     }
   }
 }
@@ -5814,7 +6099,7 @@ async function createDataFile() {
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
-      alert("Nao consegui criar o arquivo de dados.");
+      await dialogAlert("Não consegui criar o arquivo de dados.");
     }
   }
 }
@@ -5902,9 +6187,9 @@ function switchPlan(planId) {
   setSaveStatus("Planejamento carregado");
 }
 
-function createNewPlan() {
+async function createNewPlan() {
   saveAppStateNow("Salvo");
-  const name = prompt("Nome do novo concurso:", "Novo concurso");
+  const name = await dialogPrompt("Nome do novo concurso:", "Novo concurso", { title: "Novo concurso", label: "Nome exibido" });
   if (name === null) return;
   const plan = createPlanMeta(name.trim() || "Novo concurso");
   plan.customName = plan.name;
@@ -5935,12 +6220,12 @@ function togglePlanMenu() {
   els.planMenuButton?.setAttribute("aria-expanded", willOpen ? "true" : "false");
 }
 
-function renameCurrentPlan() {
+async function renameCurrentPlan() {
   const plan = activePlan();
   if (!plan) return;
   closePlanMenu();
   const currentName = planVisibleName(plan);
-  const nextName = prompt("Novo nome do concurso:", currentName);
+  const nextName = await dialogPrompt("Novo nome do concurso:", currentName, { title: "Renomear concurso", label: "Nome exibido" });
   if (nextName === null) return;
   const cleanName = nextName.trim();
   if (!cleanName || cleanName === currentName) return;
@@ -6168,14 +6453,14 @@ if (els.fileInput) els.fileInput.addEventListener("change", async () => {
     els.programText.value = formatted;
     addHistory(file.name, formatted);
   } catch (error) {
-    alert(error.message);
+    void dialogAlert(error.message, { title: "Não foi possível ler o arquivo" });
   }
 });
 
-els.processButton.addEventListener("click", () => {
+els.processButton.addEventListener("click", async () => {
   const text = formatImportedProgramText(els.programText.value);
   if (!text.trim()) {
-    alert("Informe o conte\u00fado program\u00e1tico antes de processar.");
+    await dialogAlert("Informe o conteúdo programático antes de processar.");
     return;
   }
   els.programText.value = text;
@@ -6285,7 +6570,7 @@ function topicStateIndex(topic) {
   return Number.isInteger(index) ? index : -1;
 }
 
-els.topicsBody.addEventListener("click", (event) => {
+els.topicsBody.addEventListener("click", async (event) => {
   if (event.target.closest("[data-undo-content]")) {
     event.preventDefault();
     restoreContentUndo();
@@ -6322,7 +6607,7 @@ els.topicsBody.addEventListener("click", (event) => {
   if (mergeSelected) {
     event.preventDefault();
     const group = mergeSelected.closest(".subject-group");
-    mergeSelectedTopicItems(selectedTopicItemsForMerge(group));
+    void mergeSelectedTopicItems(selectedTopicItemsForMerge(group));
     return;
   }
 
@@ -6332,7 +6617,7 @@ els.topicsBody.addEventListener("click", (event) => {
     editSubject.closest(".more-actions")?.removeAttribute("open");
     const group = editSubject.closest(".subject-group");
     const oldName = group?.dataset.subjectName || "";
-    const nextName = prompt("Editar nome da mat\u00e9ria:", oldName);
+    const nextName = await dialogPrompt("Editar nome da matéria:", oldName, { title: "Editar matéria", label: "Nome da matéria" });
     if (nextName === null) return;
     rememberContentUndo("Nome da mat\u00e9ria alterado.");
     syncRowsFromTable();
@@ -6378,7 +6663,7 @@ els.topicsBody.addEventListener("click", (event) => {
   if (group && event.target.closest("[data-delete-subject]")) {
     const subject = group.dataset.subjectName;
     const count = state.rows.filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject)).length;
-    if (!confirm("Excluir a mat\u00e9ria " + subject + " e seus " + count + " temas?")) return;
+    if (!(await dialogConfirm("Excluir a matéria " + subject + " e seus " + count + " temas?", { confirmLabel: "Excluir matéria", variant: "danger" }))) return;
     rememberContentUndo("Mat\u00e9ria exclu\u00edda.");
     syncRowsFromTable();
     state.rows = state.rows.filter((row) => normalizeForMatch(row.materia) !== normalizeForMatch(subject));
@@ -6393,7 +6678,7 @@ els.topicsBody.addEventListener("click", (event) => {
       notifyContent("Crie outra mat\u00e9ria antes de unir este grupo.", "warning");
       return;
     }
-    const target = prompt("Unir esta mat\u00e9ria com qual?\n\n" + targets.join("\n"), targets[0]);
+    const target = await dialogPrompt("Unir esta matéria com qual?\n\n" + targets.join("\n"), targets[0], { title: "Unir matéria", label: "Nome da matéria" });
     if (!target || !targets.some((item) => normalizeForMatch(item) === normalizeForMatch(target))) return;
     rememberContentUndo("Mat\u00e9ria unida.");
     syncRowsFromTable();
@@ -6521,7 +6806,7 @@ els.topicsBody.addEventListener("click", (event) => {
       notifyContent("Crie outra mat\u00e9ria antes de mover este tema.", "warning");
       return;
     }
-    const target = prompt("Mover para qual mat\u00e9ria?\n\n" + targets.join("\n"), targets[0]);
+    const target = await dialogPrompt("Mover para qual matéria?\n\n" + targets.join("\n"), targets[0], { title: "Mover tema", label: "Nome da matéria" });
     if (!target) return;
     const targetName = targets.find((item) => normalizeForMatch(item) === normalizeForMatch(target));
     if (!targetName) return;
@@ -6538,7 +6823,7 @@ els.topicsBody.addEventListener("click", (event) => {
     const row = state.rows[index];
     if (!row) return;
     const newSubject = themeTitle(row.assunto || "").trim();
-    if (!newSubject || !confirm("Transformar este tema em uma nova mat\u00e9ria chamada " + newSubject + "?")) return;
+    if (!newSubject || !(await dialogConfirm("Transformar este tema em uma nova matéria chamada " + newSubject + "?", { confirmLabel: "Transformar tema" }))) return;
     rememberContentUndo("Tema transformado em mat\u00e9ria.");
     syncRowsFromTable();
     state.rows[index] = { ...state.rows[index], materia: newSubject, ordem: 1 };
@@ -6666,23 +6951,29 @@ els.scheduleWrap.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-save-performance]")) {
-    let adaptiveOutcome = null;
-    if (performanceEditIndex >= 0) {
-      const block = state.generatedBlocks[performanceEditIndex];
-      if (block) {
-        if (normalizeStatus(block.status) === "Concluído" && !block.concluidoEm) {
-          block.concluidoEm = new Date().toLocaleDateString("pt-BR");
-        }
-        syncCompletedHistoryForBlock(block);
-        syncBlockReviewRecords(block);
-        adaptiveOutcome = syncAdaptiveReviewForBlock(block);
-      }
+    const index = performanceEditIndex;
+    const block = state.generatedBlocks[index];
+    const outcome = block ? saveStudyResult({
+      blockIndex: index,
+      source: "schedule",
+      sessionId: performanceSaveSessionId,
+      status: block.status,
+      activityType: block.tipoAtividade,
+      difficulty: block.dificuldade,
+      studiedHours: block.tempoEstudado,
+      questions: block.questoes,
+      correctAnswers: block.acertos,
+      notes: block.observacoes,
+      reviewPoints: block.pontosRevisar,
+      reviewCycles: reviewCyclesFromBlock(block),
+    }) : { ok: false, message: "Não foi possível localizar este bloco." };
+    if (!outcome.ok) {
+      if (!outcome.duplicate) showToast(outcome.message || "Não foi possível salvar o desempenho.");
+      return;
     }
+    const adaptiveOutcome = outcome.adaptiveOutcome;
+    performanceSaveSessionId = "";
     closePerformancePanelAnimated(() => {
-      renderCompleted();
-      renderReviews();
-      renderEvolution();
-      saveAppStateNow("Desempenho salvo");
       if (adaptiveOutcome?.record?.status === "Concluída") {
         showToast("Bom resultado: a revisão adaptativa deste tema foi concluída.");
       } else if (adaptiveOutcome?.record) {
@@ -6715,6 +7006,7 @@ els.scheduleWrap.addEventListener("click", (event) => {
   if (performanceButton) {
     const index = Number(performanceButton.dataset.togglePerformance);
     performanceEditIndex = performanceEditIndex === index ? -1 : index;
+    if (performanceEditIndex === index) performanceSaveSessionId = createStudySessionId();
     unitDetailIndex = -1;
     renderGeneratedSchedule();
     return;
@@ -6766,9 +7058,10 @@ els.scheduleWrap.addEventListener("change", (event) => {
     renderEvolution();
     updateDeadlineDisplays();
     performanceEditIndex = index;
+    performanceSaveSessionId = createStudySessionId();
     renderGeneratedSchedule();
     if (previousStatus !== "Conclu\u00eddo" && block.status === "Conclu\u00eddo") {
-      showToast("Meta conclu\u00edda. Pr\u00f3ximo passo dispon\u00edvel.");
+      showToast("Bloco conclu\u00eddo. Pr\u00f3ximo passo dispon\u00edvel.");
     }
   }
   if (event.target.matches("[data-review-index]")) {
@@ -6781,6 +7074,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
     renderReviews();
     renderEvolution();
     performanceEditIndex = index;
+    performanceSaveSessionId = createStudySessionId();
     renderGeneratedSchedule();
   }
   if (event.target.matches("[data-score-index]")) {
@@ -6909,7 +7203,7 @@ els.saveNowButton?.addEventListener("click", () => saveAppStateNow("Salvo"));
 els.connectDataFileButton?.addEventListener("click", connectDataFile);
 els.createDataFileButton?.addEventListener("click", createDataFile);
 els.loadDataFileButton?.addEventListener("click", () => loadSnapshotFromDataFile());
-els.saveDataFileButton?.addEventListener("click", () => writeSnapshotToDataFile("Drive salvo"));
+els.saveDataFileButton?.addEventListener("click", () => writeSnapshotToDataFile("Arquivo salvo"));
 els.saveContestButton?.addEventListener("click", () => saveAppStateNow("Dados do concurso salvos"));
 els.goContentButton?.addEventListener("click", () => switchTab("conteudo"));
 els.backToContentFromPriorityButton?.addEventListener("click", () => switchTab("conteudo"));
@@ -6938,7 +7232,7 @@ els.importBackupInput?.addEventListener("change", async () => {
     await importBackup(els.importBackupInput.files[0]);
     els.importBackupInput.value = "";
   } catch {
-    alert("N\u00e3o consegui importar esse backup. Verifique se o arquivo JSON est\u00e1 correto.");
+    void dialogAlert("Não consegui importar esse backup. Verifique se o arquivo JSON está correto.", { title: "Backup inválido" });
   }
 });
 els.generateScheduleButton.addEventListener("click", generateSchedule);
