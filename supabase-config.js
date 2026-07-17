@@ -1,5 +1,5 @@
 const SUPABASE_URL = "https://gupctlwkjffhntmeimug.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "COLE_AQUI_A_PUBLISHABLE_KEY";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_SDdC8zT2k_I4ZV39_MXvPA_DfUYXZYw";
 
 (function initializeSupabaseClient() {
   const placeholders = [
