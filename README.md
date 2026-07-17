@@ -23,6 +23,8 @@ Crie `public.study_plans` com as colunas `id` (UUID), `user_id` (UUID), `name` (
 
 Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
 
+Ao abrir, atualizar a página, trocar de planejamento ou voltar para uma aba em segundo plano, a versão online mais recente é aplicada automaticamente quando não existem alterações locais pendentes. A confirmação só aparece se houver edição local ainda não salva concorrendo com uma versão mais nova da conta.
+
 Na primeira entrada, planejamentos locais são detectados e podem ser enviados pela ação **Enviar dados locais para a conta**. A migração é sempre explícita e nunca apaga os dados deste navegador.
 
 ## Arquivos principais

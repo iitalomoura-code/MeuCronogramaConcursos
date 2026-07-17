@@ -64,6 +64,18 @@
     return data;
   }
 
+  async function getCloudPlanVersion(planId) {
+    const user = await requireCloudUser();
+    const { data, error } = await window.supabaseClient
+      .from("study_plans")
+      .select("id, version, updated_at")
+      .eq("id", planId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
+
   async function createCloudPlan(planOrUserId, possiblePlan) {
     const { expectedUserId, plan } = normalizePlanInput(planOrUserId, possiblePlan);
     const user = await requireCloudUser(expectedUserId);
@@ -146,6 +158,7 @@
 
   window.listCloudPlans = listCloudPlans;
   window.loadCloudPlan = loadCloudPlan;
+  window.getCloudPlanVersion = getCloudPlanVersion;
   window.createCloudPlan = createCloudPlan;
   window.updateCloudPlan = updateCloudPlan;
   window.saveCloudPlan = saveCloudPlan;
