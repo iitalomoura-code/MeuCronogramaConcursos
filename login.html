@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Acessar | Meu Cronograma Concursos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";</script>
+    <link rel="stylesheet" href="./styles.css?v=20260717-auth" />
+  </head>
+  <body class="auth-page" data-auth-page="login">
+    <main class="login-shell">
+      <section class="login-card" aria-labelledby="loginTitle">
+        <div class="login-brand">
+          <span>Meu Cronograma</span>
+          <strong>Concursos</strong>
+        </div>
+        <div>
+          <p class="section-kicker">Acesse seu planejamento</p>
+          <h1 id="loginTitle">Bem-vindo de volta</h1>
+          <p class="login-copy">Entre para continuar seus ciclos de estudo.</p>
+        </div>
+        <form id="loginForm" novalidate>
+          <label for="loginEmail">E-mail</label>
+          <input id="loginEmail" name="email" type="email" inputmode="email" autocomplete="email" required />
+          <label for="loginPassword">Senha</label>
+          <div class="login-password-field">
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+            <button id="togglePasswordButton" type="button" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button>
+          </div>
+          <p id="loginFeedback" class="login-feedback" role="alert" hidden></p>
+          <button id="loginSubmitButton" class="primary-button login-submit" type="submit"><span>Entrar</span></button>
+        </form>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js?v=20260717-auth"></script>
+    <script src="./auth.js?v=20260717-auth"></script>
+  </body>
+</html>

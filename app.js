@@ -130,6 +130,7 @@ const els = {
   confirmationStatus: document.querySelector("#confirmationStatus"),
   themeToggleButton: document.querySelector("#themeToggleButton"),
   settingsToggleButton: document.querySelector("#settingsToggleButton"),
+  signOutButton: document.querySelector("#signOutButton"),
   settingsMenu: document.querySelector("#settingsMenu"),
   appSidebar: document.querySelector("#appSidebar"),
   mobileMenuButton: document.querySelector("#mobileMenuButton"),
@@ -8736,6 +8737,21 @@ els.settingsToggleButton?.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleSettingsMenu();
 });
+els.signOutButton?.addEventListener("click", async () => {
+  if (!window.authGate?.signOutUser) {
+    showToast("A integra\u00e7\u00e3o com o banco ainda n\u00e3o foi configurada.");
+    return;
+  }
+  els.signOutButton.disabled = true;
+  saveAppStateNow("Dados salvos localmente");
+  const { error } = await window.authGate.signOutUser();
+  if (error) {
+    els.signOutButton.disabled = false;
+    showToast(window.authGate.translateAuthError(error));
+    return;
+  }
+  window.location.replace("./login.html");
+});
 els.settingsMenu?.addEventListener("click", (event) => event.stopPropagation());
 els.saveNowButton?.addEventListener("click", () => saveAppStateNow("Salvo"));
 els.connectDataFileButton?.addEventListener("click", connectDataFile);
@@ -8838,24 +8854,37 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
-renderDailyInputs();
-applyThemePreference();
-defaultReferenceWeek();
-renderHistory();
-if (!restoreAppState()) {
-  renderRows();
-  updateContestSummary();
-  renderAppViews();
+let appInitializationStarted = false;
+
+function startMeuCronogramaApp() {
+  if (appInitializationStarted) return;
+  appInitializationStarted = true;
+  renderDailyInputs();
+  applyThemePreference();
+  defaultReferenceWeek();
+  renderHistory();
+  if (!restoreAppState()) {
+    renderRows();
+    updateContestSummary();
+    renderAppViews();
+  }
+  restoreRememberedDataFile();
+  renderBackupReminder();
+  updateConnectedFileControls();
+  ensureGoalTimerInterval();
+  if (window.lucide) window.lucide.createIcons();
+  requestAnimationFrame(() => {
+    updateSidebarActiveIndicator();
+    animatePanelNumbers(getActiveTabName());
+  });
 }
-restoreRememberedDataFile();
-renderBackupReminder();
-updateConnectedFileControls();
-ensureGoalTimerInterval();
-if (window.lucide) window.lucide.createIcons();
-requestAnimationFrame(() => {
-  updateSidebarActiveIndicator();
-  animatePanelNumbers(getActiveTabName());
-});
+
+window.startMeuCronogramaApp = startMeuCronogramaApp;
+if (window.authGate?.isAuthenticated?.()) {
+  startMeuCronogramaApp();
+} else {
+  window.addEventListener("auth:ready", startMeuCronogramaApp, { once: true });
+}
 
 
 

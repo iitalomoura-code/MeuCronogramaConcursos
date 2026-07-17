@@ -4,11 +4,28 @@ Aplicativo estático para organizar estudos para concursos a partir do edital.
 
 O projeto funciona somente com HTML, CSS e JavaScript. Os dados ficam no navegador por `localStorage` e podem ser exportados/importados por arquivo JSON de backup.
 
+## Acesso online
+
+A primeira etapa de autenticação usa Supabase Auth, sem migrar os planejamentos locais nesta fase. Antes de publicar, preencha somente os dois valores públicos em `supabase-config.js`:
+
+- `SUPABASE_URL`: Project URL do projeto Supabase.
+- `SUPABASE_PUBLISHABLE_KEY`: Publishable key do projeto Supabase.
+
+Nunca use uma `service_role`, secret key, senha do banco ou token administrativo no navegador. Com os placeholders mantidos, a tela de login mostra uma mensagem de configuração e o aplicativo permanece protegido.
+
+No painel do Supabase, crie os usuários manualmente para esta primeira etapa. Não há cadastro público, login social ou recuperação de senha implementados ainda.
+
+`cloud-storage.js` já possui consultas isoladas para a futura tabela `public.study_plans`, mas ainda não envia, baixa nem migra dados do aplicativo. O `localStorage` e os backups JSON continuam sendo a fonte de dados do sistema.
+
 ## Arquivos principais
 
 - `index.html`: página principal do sistema.
 - `styles.css`: estilos visuais do sistema.
 - `app.js`: lógica do aplicativo.
+- `login.html`: tela de acesso por e-mail e senha.
+- `auth.js`: sessão, login, proteção da aplicação e logout.
+- `supabase-config.js`: os dois placeholders públicos da integração Supabase.
+- `cloud-storage.js`: consultas online isoladas, ainda não ligadas ao estado local.
 
 ## Funcionalidades mantidas
 
