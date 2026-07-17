@@ -21,8 +21,9 @@ assert.ok(index.indexOf("auth.js") < index.indexOf("cloud-storage.js"), "A auten
 assert.ok(index.indexOf("cloud-storage.js") < index.indexOf("app.js"), "O armazenamento online deve carregar antes do aplicativo.");
 assert.ok(login.includes('autocomplete="email"'), "O e-mail deve usar autocomplete adequado.");
 assert.ok(login.includes('autocomplete="current-password"'), "A senha deve usar autocomplete adequado.");
-assert.ok(config.includes("COLE_AQUI_A_PROJECT_URL"), "A URL deve permanecer como placeholder p\u00fablico.");
+assert.ok(config.includes("https://gupctlwkjffhntmeimug.supabase.co"), "A URL p\u00fablica do projeto deve estar configurada.");
 assert.ok(config.includes("COLE_AQUI_A_PUBLISHABLE_KEY"), "A chave deve permanecer como placeholder p\u00fablico.");
+assert.ok(config.includes("sua_publishable_key"), "Placeholders alternativos tamb\u00e9m devem ser recusados.");
 assert.ok(!/service_role|secret key|SUPABASE_SERVICE/i.test(config), "A configura\u00e7\u00e3o n\u00e3o pode conter chave privilegiada.");
 ["getCurrentSession", "getCurrentUser", "signInWithEmail", "signOutUser", "requireAuthenticatedUser", "redirectAuthenticatedUser", "watchAuthState", "translateAuthError"].forEach((name) => {
   assert.ok(auth.includes(name), `A fun\u00e7\u00e3o ${name} deve existir.`);
