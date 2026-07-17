@@ -2,6 +2,9 @@
 const APP_STATE_KEY = "planejaConcursosEstado";
 const PLANS_INDEX_KEY = "planejaConcursosPlanos";
 const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
+const ACTIVE_CLOUD_PLAN_KEY = "meuCronogramaPlanoNuvemAtivo";
+const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
+const CLOUD_SAVE_DELAY = 1500;
 const LEGACY_APP_STATE_KEY = APP_STATE_KEY;
 const APP_THEME_KEY = "meu-cronograma-theme";
 const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
@@ -55,6 +58,8 @@ const state = {
   rows: [],
   currentPlanId: "",
   plans: [],
+  dataSource: "local-migration",
+  cloudPlanVersion: 0,
   confirmed: false,
   originalHistory: JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"),
   planningBase: null,
@@ -78,6 +83,10 @@ let isLoadingNotebook = false;
 
 let isRestoring = false;
 let saveTimer = 0;
+let cloudSaveTimer = 0;
+let cloudSavePromise = null;
+let cloudSaveQueued = false;
+let cloudConflictOpen = false;
 let dataFileSaveTimer = 0;
 let dataFileHandle = null;
 let isWritingDataFile = false;
@@ -296,6 +305,13 @@ const els = {
   backupReminderStatus: document.querySelector("#backupReminderStatus"),
   backupReminderNotice: document.querySelector("#backupReminderNotice"),
   importBackupInput: document.querySelector("#importBackupInput"),
+  migrateLocalPlansButton: document.querySelector("#migrateLocalPlansButton"),
+  cloudMigrationModal: document.querySelector("#cloudMigrationModal"),
+  cloudMigrationList: document.querySelector("#cloudMigrationList"),
+  cloudMigrationResult: document.querySelector("#cloudMigrationResult"),
+  cancelCloudMigrationBackdrop: document.querySelector("#cancelCloudMigrationBackdrop"),
+  dismissCloudMigrationButton: document.querySelector("#dismissCloudMigrationButton"),
+  confirmCloudMigrationButton: document.querySelector("#confirmCloudMigrationButton"),
   saveStatus: document.querySelector("#saveStatus"),
 };
 
@@ -6744,6 +6760,231 @@ function createPlanMeta(name = "Novo concurso") {
   return { id, name, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 
+function cloudCacheKey(planId) {
+  return `${CLOUD_CACHE_PREFIX}:${planId}`;
+}
+
+function cloudIsAvailable() {
+  return Boolean(window.authGate?.isAuthenticated?.() && window.listCloudPlans && window.loadCloudPlan && window.saveCloudPlan);
+}
+
+function cloudIsPrimary() {
+  return state.dataSource === "cloud" && Boolean(state.currentPlanId && state.cloudPlanVersion > 0);
+}
+
+function cloudPlanMeta(record = {}) {
+  return {
+    id: record.id,
+    name: record.name || "Novo concurso",
+    customName: record.name || "Novo concurso",
+    version: Number(record.version) || 1,
+    createdAt: record.created_at || record.createdAt || new Date().toISOString(),
+    updatedAt: record.updated_at || record.updatedAt || new Date().toISOString(),
+    source: "cloud",
+  };
+}
+
+function saveCloudCache(record, snapshot = record?.data) {
+  if (!record?.id || !snapshot) return;
+  const cache = {
+    source: "cloud-cache",
+    id: record.id,
+    name: record.name || "Novo concurso",
+    version: Number(record.version) || 1,
+    updatedAt: record.updated_at || record.updatedAt || new Date().toISOString(),
+    data: snapshot,
+  };
+  try {
+    localStorage.setItem(cloudCacheKey(record.id), JSON.stringify(cache));
+    localStorage.setItem(planStorageKey(record.id), JSON.stringify(snapshot));
+  } catch {}
+}
+
+function updateCloudPlanMeta(record) {
+  const meta = cloudPlanMeta(record);
+  state.plans = state.plans.map((plan) => plan.id === meta.id ? { ...plan, ...meta } : plan);
+  state.cloudPlanVersion = meta.id === state.currentPlanId ? meta.version : state.cloudPlanVersion;
+  return meta;
+}
+
+function localPlanCandidates() {
+  const plans = readPlansIndex();
+  const candidates = plans.map((plan) => {
+    let snapshot = null;
+    try {
+      const raw = localStorage.getItem(planStorageKey(plan.id));
+      snapshot = raw ? JSON.parse(raw) : null;
+    } catch {}
+    if (!snapshot && plan.id === state.currentPlanId && state.dataSource !== "cloud") snapshot = captureAppState();
+    if (!snapshot || typeof snapshot !== "object") return null;
+    const form = snapshot.form || {};
+    const hasContent = Boolean(form.contestName || form.jobRole || snapshot.programText || snapshot.rows?.length || snapshot.generatedBlocks?.length || snapshot.notebook && Object.keys(snapshot.notebook).length);
+    if (!hasContent) return null;
+    return { localId: plan.id, plan, snapshot, name: planVisibleName(plan) || planDisplayName(snapshot), form };
+  }).filter(Boolean);
+  if (candidates.length) return candidates;
+  try {
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_APP_STATE_KEY) || "null");
+    const form = legacy?.form || {};
+    const hasContent = Boolean(form.contestName || form.jobRole || legacy?.programText || legacy?.rows?.length || legacy?.generatedBlocks?.length || legacy?.notebook && Object.keys(legacy.notebook).length);
+    if (!hasContent) return [];
+    const name = form.contestName?.trim() || form.jobRole?.trim() || "Concurso importado";
+    return [{
+      localId: "legacy-local-plan",
+      plan: { id: "legacy-local-plan", name, createdAt: legacy.savedAt || new Date().toISOString(), updatedAt: legacy.savedAt || new Date().toISOString() },
+      snapshot: legacy,
+      name,
+      form,
+    }];
+  } catch {
+    return [];
+  }
+}
+
+function migrationCandidateMarkup(candidate) {
+  const contest = candidate.form?.contestName || "Concurso sem nome";
+  const role = candidate.form?.jobRole ? ` \u00b7 ${candidate.form.jobRole}` : "";
+  const updated = candidate.plan?.updatedAt || candidate.snapshot?.savedAt;
+  const changed = updated ? new Date(updated).toLocaleDateString("pt-BR") : "Data n\u00e3o informada";
+  return `<label class="cloud-migration-item"><input type="checkbox" value="${escapeHtml(candidate.localId)}" checked /><span><strong>${escapeHtml(candidate.name)}</strong><span>${escapeHtml(contest)}${escapeHtml(role)}</span><small>\u00daltima altera\u00e7\u00e3o: ${escapeHtml(changed)}</small></span></label>`;
+}
+
+function renderLocalMigrationControl() {
+  if (!els.migrateLocalPlansButton) return;
+  const candidates = localPlanCandidates();
+  els.migrateLocalPlansButton.hidden = !cloudIsAvailable() || !candidates.length;
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function openCloudMigrationModal() {
+  const candidates = localPlanCandidates();
+  if (!els.cloudMigrationModal || !candidates.length) {
+    showToast("N\u00e3o h\u00e1 planejamentos locais para enviar.");
+    return;
+  }
+  if (els.cloudMigrationList) els.cloudMigrationList.innerHTML = candidates.map(migrationCandidateMarkup).join("");
+  if (els.cloudMigrationResult) {
+    els.cloudMigrationResult.hidden = true;
+    els.cloudMigrationResult.textContent = "";
+  }
+  els.cloudMigrationModal.hidden = false;
+  window.setTimeout(() => els.cloudMigrationList?.querySelector("input")?.focus(), 0);
+}
+
+function closeCloudMigrationModal() {
+  if (!els.cloudMigrationModal) return;
+  els.cloudMigrationModal.hidden = true;
+  els.migrateLocalPlansButton?.focus();
+}
+
+function uniqueCloudPlanName(name, existingPlans = state.plans) {
+  const base = String(name || "Novo concurso").trim() || "Novo concurso";
+  const names = new Set(existingPlans.map((plan) => normalizeForMatch(planVisibleName(plan))));
+  if (!names.has(normalizeForMatch(base))) return base;
+  let attempt = `${base} \u2014 importado`;
+  let count = 2;
+  while (names.has(normalizeForMatch(attempt))) {
+    attempt = `${base} \u2014 importado ${count}`;
+    count += 1;
+  }
+  return attempt;
+}
+
+async function loadCloudPlanIntoState(planId, { restoreTab = true } = {}) {
+  const record = await window.loadCloudPlan(planId);
+  const meta = cloudPlanMeta(record);
+  state.currentPlanId = meta.id;
+  state.cloudPlanVersion = meta.version;
+  if (!state.plans.some((plan) => plan.id === meta.id)) state.plans.push(meta);
+  else updateCloudPlanMeta(record);
+  localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
+  saveCloudCache(record);
+  renderPlanSelect();
+  applyAppSnapshot(record.data || blankAppSnapshot(meta.name));
+  if (!restoreTab) activateTab("continuar");
+  return record;
+}
+
+async function initializeCloudPlanSource() {
+  if (!cloudIsAvailable()) return false;
+  try {
+    const records = await window.listCloudPlans();
+    if (!records.length) {
+      if (localPlanCandidates().length) return false;
+      state.dataSource = "cloud";
+      state.plans = [];
+      state.currentPlanId = "";
+      state.cloudPlanVersion = 0;
+      renderPlanSelect();
+      applyAppSnapshot(blankAppSnapshot());
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Nenhum planejamento na conta" });
+      return true;
+    }
+    state.dataSource = "cloud";
+    state.plans = records.map(cloudPlanMeta);
+    const rememberedId = localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
+    const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
+    await loadCloudPlanIntoState(active.id, { restoreTab: true });
+    return true;
+  } catch {
+    state.dataSource = "cloud-unavailable";
+    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conex\u00e3o com o banco. Reconecte para continuar." });
+    return false;
+  }
+}
+
+async function migrateSelectedLocalPlans() {
+  if (!cloudIsAvailable()) {
+    showToast("Sem conexão com o banco. Reconecte para continuar.");
+    return;
+  }
+  const selectedIds = [...els.cloudMigrationList?.querySelectorAll("input:checked") || []].map((input) => input.value);
+  if (!selectedIds.length) {
+    if (els.cloudMigrationResult) {
+      els.cloudMigrationResult.hidden = false;
+      els.cloudMigrationResult.textContent = "Selecione pelo menos um planejamento.";
+    }
+    return;
+  }
+  const candidates = localPlanCandidates().filter((candidate) => selectedIds.includes(candidate.localId));
+  const button = els.confirmCloudMigrationButton;
+  if (button) button.disabled = true;
+  if (els.cloudMigrationResult) {
+    els.cloudMigrationResult.hidden = false;
+    els.cloudMigrationResult.textContent = "Enviando planejamentos selecionados...";
+  }
+  const created = [];
+  const failures = [];
+  let names = [...state.plans];
+  for (const candidate of candidates) {
+    try {
+      const name = uniqueCloudPlanName(candidate.name, names);
+      const snapshot = { ...candidate.snapshot, savedAt: new Date().toISOString() };
+      const record = await window.createCloudPlan({ name, data: snapshot, version: 1 });
+      created.push(record);
+      names.push(cloudPlanMeta(record));
+      saveCloudCache(record, snapshot);
+    } catch {
+      failures.push(candidate);
+    }
+  }
+  if (created.length) {
+    const onlinePlans = await window.listCloudPlans();
+    state.dataSource = "cloud";
+    state.plans = onlinePlans.map(cloudPlanMeta);
+    await loadCloudPlanIntoState(created[0].id);
+    renderLocalMigrationControl();
+  }
+  if (els.cloudMigrationResult) {
+    els.cloudMigrationResult.hidden = false;
+    els.cloudMigrationResult.textContent = failures.length
+      ? `${created.length} enviado(s) com sucesso. ${failures.length} não foi(ram) enviado(s); você pode tentar novamente.`
+      : `${created.length} planejamento(s) enviado(s) com sucesso.`;
+  }
+  if (button) button.disabled = false;
+  if (!failures.length) window.setTimeout(closeCloudMigrationModal, 700);
+}
+
 function planDisplayName(snapshot = captureAppState()) {
   const form = snapshot.form || {};
   return form.contestName?.trim() || form.jobRole?.trim() || "Concurso sem nome";
@@ -6785,7 +7026,9 @@ function planRoleFor(plan) {
   if (!plan) return "";
   if (plan.id === state.currentPlanId) return els.jobRole?.value?.trim() || "";
   try {
-    return JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "{}").form?.jobRole?.trim() || "";
+    const cache = JSON.parse(localStorage.getItem(cloudCacheKey(plan.id)) || "null");
+    const snapshot = cache?.data || JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "{}");
+    return snapshot?.form?.jobRole?.trim() || "";
   } catch {
     return "";
   }
@@ -6958,10 +7201,10 @@ function applyAppSnapshot(saved = {}) {
 function updateSaveStatus({ state: nextState = "saved", destination = "local", message = "" } = {}) {
   saveStatusState = { state: nextState, destination, message };
   const defaultMessages = {
-    saved: destination === "file" ? "Arquivo conectado e salvo" : "Dados salvos localmente",
-    saving: destination === "file" ? "Salvando no arquivo conectado" : "Salvando localmente",
+    saved: destination === "file" ? "Arquivo conectado e salvo" : destination === "cloud" ? "Dados salvos na conta" : "Dados salvos localmente",
+    saving: destination === "file" ? "Salvando no arquivo conectado" : destination === "cloud" ? "Salvando na conta" : "Salvando localmente",
     pending: "Alterações pendentes",
-    error: destination === "file" ? "Erro ao salvar no arquivo conectado" : "Erro ao salvar localmente",
+    error: destination === "file" ? "Erro ao salvar no arquivo conectado" : destination === "cloud" ? "Erro ao salvar na conta" : "Erro ao salvar localmente",
     connected: "Arquivo conectado",
     disconnected: "Arquivo não conectado",
   };
@@ -6978,7 +7221,7 @@ function updateSaveStatus({ state: nextState = "saved", destination = "local", m
 
 function setSaveStatus(text) {
   const clean = String(text || "");
-  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: /arquivo|drive/i.test(clean) ? "file" : "local", message: clean });
+  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: /arquivo|drive/i.test(clean) ? "file" : cloudIsPrimary() ? "cloud" : "local", message: clean });
   if (/autorize|conecte/i.test(clean)) return updateSaveStatus({ state: "disconnected", destination: "file", message: clean });
   if (/drive|arquivo/i.test(clean)) return updateSaveStatus({ state: "connected", destination: "file", message: clean });
   updateSaveStatus({ state: "saved", destination: "local", message: clean || "Dados salvos localmente" });
@@ -7035,29 +7278,160 @@ function rememberBackupExport(version = 1) {
   renderBackupReminder();
 }
 
-function saveAppStateNow(label = "Salvo") {
-  if (isRestoring) return;
-  if (!state.currentPlanId) return;
-  updateSaveStatus({ state: "saving", destination: "local" });
-  const snapshot = captureAppState();
-  localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
-  localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
+function saveLocalSafetyCopy(snapshot) {
+  if (!state.currentPlanId || !snapshot) return;
+  try {
+    localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
+    if (!cloudIsPrimary()) localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
+  } catch {}
+}
+
+function refreshCurrentPlanName(snapshot) {
   const name = planDisplayName(snapshot);
   state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name: plan.customName || name, updatedAt: new Date().toISOString() } : plan);
-  writePlansIndex();
+  if (!cloudIsPrimary()) writePlansIndex();
   renderPlanSelect();
+}
+
+function formatCloudSaveTime() {
+  return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+async function handleCloudConflict(snapshot) {
+  if (cloudConflictOpen) return false;
+  cloudConflictOpen = true;
+  try {
+    const choice = await openDialog({
+      title: "Planejamento atualizado em outro aparelho",
+      message: "Este planejamento recebeu uma versão mais nova na sua conta. Escolha como deseja continuar.",
+      actions: [
+        { id: "cancel", label: "Cancelar", value: "cancel" },
+        { id: "load", label: "Carregar versão online", value: "load" },
+        { id: "copy", label: "Salvar este estado como cópia", variant: "primary", value: "copy" },
+      ],
+    });
+    if (choice === "load") {
+      await loadCloudPlanIntoState(state.currentPlanId);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Versão online carregada" });
+      showToast("Versão online carregada.");
+      return true;
+    }
+    if (choice === "copy") {
+      const plan = activePlan();
+      const name = uniqueCloudPlanName(`${planVisibleName(plan || {})} — cópia`);
+      const record = await window.createCloudPlan({ name, data: snapshot, version: 1 });
+      state.plans.push(cloudPlanMeta(record));
+      await loadCloudPlanIntoState(record.id);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Cópia salva na conta" });
+      showToast("Uma cópia foi salva na sua conta.");
+      return true;
+    }
+    return false;
+  } finally {
+    cloudConflictOpen = false;
+  }
+}
+
+async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
+  if (!cloudIsPrimary()) return false;
+  if (cloudSavePromise) {
+    cloudSaveQueued = true;
+    return cloudSavePromise;
+  }
+  clearTimeout(cloudSaveTimer);
+  const data = snapshot || captureAppState();
+  saveLocalSafetyCopy(data);
+  const plan = activePlan();
+  if (!plan) return false;
+  updateSaveStatus({ state: "saving", destination: "cloud" });
+  cloudSavePromise = (async () => {
+    try {
+      const record = await window.saveCloudPlan({
+        id: plan.id,
+        name: planVisibleName(plan),
+        data,
+        version: state.cloudPlanVersion,
+      });
+      updateCloudPlanMeta(record);
+      saveCloudCache(record, data);
+      renderPlanSelect();
+      updateSaveStatus({ state: "saved", destination: "cloud", message: `${label} às ${formatCloudSaveTime()}` });
+      saveConnectedDataFileSoon();
+      return true;
+    } catch (error) {
+      if (error?.code === "cloud_conflict") return handleCloudConflict(data);
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível salvar no banco. Tentar novamente." });
+      return false;
+    } finally {
+      cloudSavePromise = null;
+      if (cloudSaveQueued) {
+        cloudSaveQueued = false;
+        scheduleCloudSave("Salvo");
+      }
+    }
+  })();
+  return cloudSavePromise;
+}
+
+function scheduleCloudSave(label = "Salvo") {
+  if (!cloudIsPrimary() || isRestoring) return;
+  clearTimeout(cloudSaveTimer);
+  const snapshot = captureAppState();
+  saveLocalSafetyCopy(snapshot);
+  if (cloudSavePromise) {
+    cloudSaveQueued = true;
+    return;
+  }
+  updateSaveStatus({ state: "pending", destination: "cloud" });
+  cloudSaveTimer = setTimeout(() => saveCloudPlanNow(label), CLOUD_SAVE_DELAY);
+}
+
+async function flushCloudSave(label = "Salvo") {
+  if (!cloudIsPrimary()) return true;
+  clearTimeout(cloudSaveTimer);
+  if (cloudSavePromise) {
+    const previousResult = await cloudSavePromise;
+    if (!previousResult) return false;
+  }
+  return saveCloudPlanNow(label);
+}
+
+function saveAppStateNow(label = "Salvo") {
+  if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
+  const snapshot = captureAppState();
+  saveLocalSafetyCopy(snapshot);
+  if (state.dataSource === "cloud-unavailable") {
+    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
+    return Promise.resolve(false);
+  }
+  if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot);
+  updateSaveStatus({ state: "saving", destination: "local" });
+  refreshCurrentPlanName(snapshot);
   updateSaveStatus({ state: "saved", destination: "local", message: `${label} localmente` });
   saveConnectedDataFileSoon();
+  return Promise.resolve(true);
 }
 
 function scheduleAutoSave() {
   if (isRestoring) return;
+  if (state.dataSource === "cloud-unavailable") {
+    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
+    return;
+  }
+  if (state.dataSource === "cloud" && cloudIsAvailable()) {
+    scheduleCloudSave("Salvo");
+    return;
+  }
   clearTimeout(saveTimer);
   updateSaveStatus({ state: "pending", destination: "local" });
   saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 350);
 }
 
-function restoreAppState() {
+function restoreAppState({ preserveDataSource = false } = {}) {
+  if (!preserveDataSource) {
+    state.dataSource = "local-migration";
+    state.cloudPlanVersion = 0;
+  }
   state.plans = readPlansIndex();
   const legacyRaw = localStorage.getItem(LEGACY_APP_STATE_KEY);
 
@@ -7380,6 +7754,14 @@ async function importBackup(file) {
   if (!file) return;
   const text = await file.text();
   const snapshot = JSON.parse(text);
+  if (cloudIsPrimary()) {
+    const importedSnapshot = snapshot?.dataType === "meu-cronograma-concursos-drive-data"
+      ? Object.values(snapshot.snapshots || {})[0]
+      : snapshot;
+    if (!importedSnapshot || typeof importedSnapshot !== "object") throw new Error("Backup inválido.");
+    await importSnapshotIntoCloud(importedSnapshot);
+    return;
+  }
   if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
     applyDriveDataSnapshot(snapshot);
     saveAppStateNow("Backup importado");
@@ -7395,6 +7777,51 @@ async function importBackup(file) {
   localStorage.setItem(planStorageKey(state.currentPlanId), text);
   applyAppSnapshot(snapshot);
   saveAppStateNow("Backup importado");
+}
+
+async function importSnapshotIntoCloud(snapshot) {
+  const choice = await openDialog({
+    title: "Importar backup",
+    message: "Escolha como deseja usar este backup na sua conta.",
+    actions: [
+      { id: "cancel", label: "Cancelar", value: "cancel" },
+      { id: "replace", label: "Substituir atual", value: "replace" },
+      { id: "create", label: "Criar novo planejamento", variant: "primary", value: "create" },
+    ],
+  });
+  if (choice === "cancel" || !choice) return;
+  const importedName = snapshot.form?.contestName?.trim() || "Backup importado";
+  if (choice === "create") {
+    const name = uniqueCloudPlanName(importedName);
+    try {
+      const record = await window.createCloudPlan({ name, data: snapshot, version: 1 });
+      state.plans.push(cloudPlanMeta(record));
+      await loadCloudPlanIntoState(record.id);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado como novo planejamento" });
+      showToast("Backup importado como novo planejamento.");
+    } catch {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível importar o backup na conta." });
+      showToast("Não foi possível importar o backup na conta.");
+    }
+    return;
+  }
+  const confirmed = await dialogConfirm("O backup substituirá os dados do planejamento atual na sua conta.", { title: "Confirmar substituição", variant: "danger", confirmLabel: "Substituir planejamento" });
+  if (!confirmed) return;
+  const plan = activePlan();
+  try {
+    const record = await window.saveCloudPlan({ id: plan.id, name: planVisibleName(plan), data: snapshot, version: state.cloudPlanVersion });
+    updateCloudPlanMeta(record);
+    saveCloudCache(record, snapshot);
+    applyAppSnapshot(snapshot);
+    updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado no planejamento atual" });
+    showToast("Backup importado no planejamento atual.");
+  } catch (error) {
+    if (error?.code === "cloud_conflict") await handleCloudConflict(snapshot);
+    else {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível importar o backup na conta." });
+      showToast("Não foi possível importar o backup na conta.");
+    }
+  }
 }
 
 function blankAppSnapshot(name = "") {
@@ -7428,9 +7855,27 @@ function blankAppSnapshot(name = "") {
   };
 }
 
-function switchPlan(planId) {
+async function switchPlan(planId) {
   if (!planId || planId === state.currentPlanId) return;
   const previousTab = getActiveTabName();
+  if (cloudIsPrimary()) {
+    const saved = await flushCloudSave("Salvo antes de trocar");
+    if (!saved) {
+      showToast("Não foi possível salvar no banco. Tentar novamente antes de trocar de planejamento.");
+      return;
+    }
+    try {
+      await loadCloudPlanIntoState(planId);
+      const previousTarget = [...els.tabs].find((button) => button.dataset.tabTarget === previousTab);
+      activateTab(previousTarget?.getAttribute("aria-disabled") === "false" ? previousTab : "continuar");
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Planejamento carregado" });
+      return;
+    } catch {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível carregar o planejamento online." });
+      showToast("Não foi possível carregar o planejamento online.");
+      return;
+    }
+  }
   saveAppStateNow("Salvo");
   state.currentPlanId = planId;
   localStorage.setItem(ACTIVE_PLAN_KEY, planId);
@@ -7464,7 +7909,7 @@ function closeNewPlanModal() {
   els.newPlanButton?.focus();
 }
 
-function createNewPlan() {
+async function createNewPlan() {
   const name = els.newPlanName?.value.trim() || "";
   const hours = Number(els.newPlanWeeklyHours?.value);
   if (!name) {
@@ -7477,7 +7922,13 @@ function createNewPlan() {
     els.newPlanWeeklyHours?.focus();
     return;
   }
-  saveAppStateNow("Salvo");
+  if (cloudIsPrimary()) {
+    const saved = await flushCloudSave("Salvo antes de criar");
+    if (!saved) {
+      showToast("Não foi possível salvar o planejamento atual. Tente novamente.");
+      return;
+    }
+  } else saveAppStateNow("Salvo");
   const plan = createPlanMeta(name);
   plan.customName = plan.name;
   const snapshot = blankAppSnapshot(plan.name);
@@ -7491,6 +7942,26 @@ function createNewPlan() {
     weeklyHours: String(hours),
     blockDuration: els.newPlanBlockDuration?.value || "1.5",
   };
+  if (state.dataSource === "cloud" && cloudIsAvailable()) {
+    try {
+      const record = await window.createCloudPlan({ name: plan.name, data: snapshot, version: 1 });
+      const meta = cloudPlanMeta(record);
+      state.plans.push(meta);
+      state.currentPlanId = meta.id;
+      state.cloudPlanVersion = meta.version;
+      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
+      saveCloudCache(record, snapshot);
+      closeNewPlanModal();
+      renderPlanSelect();
+      applyAppSnapshot(snapshot);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Novo planejamento criado" });
+      switchTab("conteudo");
+    } catch {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível criar o planejamento online." });
+      showToast("Não foi possível criar o planejamento online.");
+    }
+    return;
+  }
   state.plans.push(plan);
   state.currentPlanId = plan.id;
   writePlansIndex();
@@ -7586,9 +8057,16 @@ function snapshotClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function duplicateCurrentPlan() {
+async function duplicateCurrentPlan() {
   const sourcePlan = activePlan();
   if (!sourcePlan) return;
+  if (cloudIsPrimary()) {
+    const saved = await flushCloudSave("Salvo antes de duplicar");
+    if (!saved) {
+      showToast("Não foi possível salvar o planejamento atual. Tente novamente.");
+      return;
+    }
+  }
   const source = captureAppState();
   const nextName = els.duplicatePlanName?.value.trim() || `Cópia de ${planVisibleName(sourcePlan)}`;
   const plan = createPlanMeta(nextName);
@@ -7613,6 +8091,27 @@ function duplicateCurrentPlan() {
     duplicate.planningBase = copyPriorities ? snapshotClone(source.planningBase || null) : null;
   }
   if (copyNotebook) duplicate.notebook = snapshotClone(source.notebook || {});
+  if (cloudIsPrimary()) {
+    try {
+      const record = await window.createCloudPlan({ name: nextName, data: duplicate, version: 1 });
+      const meta = cloudPlanMeta(record);
+      state.plans.push(meta);
+      state.currentPlanId = meta.id;
+      state.cloudPlanVersion = meta.version;
+      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
+      saveCloudCache(record, duplicate);
+      closeDuplicatePlanModal();
+      renderPlanSelect();
+      applyAppSnapshot(duplicate);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Planejamento duplicado" });
+      showToast("Planejamento duplicado sem desempenho, histórico ou revisões.");
+      switchTab("concurso");
+    } catch {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível duplicar o planejamento online." });
+      showToast("Não foi possível duplicar o planejamento online.");
+    }
+    return;
+  }
   state.plans.push(plan);
   state.currentPlanId = plan.id;
   writePlansIndex();
@@ -7637,8 +8136,14 @@ async function renameCurrentPlan() {
   const cleanName = nextName.trim();
   if (!cleanName || cleanName === currentName) return;
   state.plans = state.plans.map((item) => item.id === plan.id ? { ...item, name: cleanName, customName: cleanName, updatedAt: new Date().toISOString() } : item);
-  writePlansIndex();
   renderPlanSelect();
+  if (cloudIsPrimary()) {
+    const saved = await saveCloudPlanNow("Planejamento renomeado");
+    if (!saved) return;
+    showToast("Planejamento renomeado.");
+    return;
+  }
+  writePlansIndex();
   saveConnectedDataFileSoon();
   showToast("Planejamento renomeado.");
 }
@@ -7664,10 +8169,51 @@ function newestPlan(plans = []) {
   return [...plans].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
 }
 
-function deleteCurrentPlan() {
+async function deleteCurrentPlan() {
   const plan = activePlan();
   if (!plan) return;
   const deletedId = plan.id;
+  if (cloudIsPrimary()) {
+    const saved = await flushCloudSave("Salvo antes de excluir");
+    if (!saved) {
+      showToast("Não foi possível salvar o planejamento atual. Tente novamente.");
+      return;
+    }
+    try {
+      await window.deleteCloudPlan(deletedId);
+    } catch {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível excluir o planejamento online." });
+      showToast("Não foi possível excluir o planejamento online.");
+      return;
+    }
+    localStorage.removeItem(cloudCacheKey(deletedId));
+    localStorage.removeItem(planStorageKey(deletedId));
+    const remaining = state.plans.filter((item) => item.id !== deletedId);
+    closeDeletePlanModal();
+    if (remaining.length) {
+      state.plans = remaining;
+      const nextPlan = newestPlan(remaining);
+      await loadCloudPlanIntoState(nextPlan.id);
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Planejamento excluído" });
+      showToast("Planejamento excluído.");
+      switchTab("continuar");
+      return;
+    }
+    const snapshot = blankAppSnapshot("Novo concurso");
+    try {
+      const record = await window.createCloudPlan({ name: "Novo concurso", data: snapshot, version: 1 });
+      state.plans = [cloudPlanMeta(record)];
+      await loadCloudPlanIntoState(record.id);
+      showToast("Planejamento excluído. Um novo planejamento vazio foi criado.");
+      openNewPlanModal();
+    } catch {
+      state.plans = [];
+      state.currentPlanId = "";
+      state.cloudPlanVersion = 0;
+      updateSaveStatus({ state: "error", destination: "cloud", message: "O planejamento foi excluído, mas não foi possível criar o novo planejamento." });
+    }
+    return;
+  }
   localStorage.removeItem(planStorageKey(deletedId));
   let remaining = state.plans.filter((item) => item.id !== deletedId);
   let nextPlan = newestPlan(remaining);
@@ -7746,6 +8292,10 @@ els.managePlanModal?.addEventListener("click", (event) => {
 els.cancelDuplicatePlanButton?.addEventListener("click", closeDuplicatePlanModal);
 els.cancelDuplicatePlanBackdrop?.addEventListener("click", closeDuplicatePlanModal);
 els.confirmDuplicatePlanButton?.addEventListener("click", duplicateCurrentPlan);
+els.migrateLocalPlansButton?.addEventListener("click", openCloudMigrationModal);
+els.dismissCloudMigrationButton?.addEventListener("click", closeCloudMigrationModal);
+els.cancelCloudMigrationBackdrop?.addEventListener("click", closeCloudMigrationModal);
+els.confirmCloudMigrationButton?.addEventListener("click", migrateSelectedLocalPlans);
 els.mobileMenuButton?.addEventListener("click", () => {
   if (mobileDrawerOpen) closeMobileDrawer();
   else openMobileDrawer(els.mobileMenuButton);
@@ -8743,7 +9293,29 @@ els.signOutButton?.addEventListener("click", async () => {
     return;
   }
   els.signOutButton.disabled = true;
-  saveAppStateNow("Dados salvos localmente");
+  let canSignOut = true;
+  if (cloudIsPrimary()) {
+    canSignOut = await flushCloudSave("Dados salvos antes de sair");
+    if (!canSignOut) {
+      const choice = await openDialog({
+        title: "Não foi possível salvar antes de sair",
+        message: "Suas alterações continuam apenas nesta cópia local temporária.",
+        actions: [
+          { id: "cancel", label: "Cancelar", value: "cancel" },
+          { id: "retry", label: "Tentar novamente", value: "retry" },
+          { id: "leave", label: "Sair sem salvar", variant: "danger", value: "leave" },
+        ],
+      });
+      if (choice === "retry") canSignOut = await flushCloudSave("Dados salvos antes de sair");
+      else canSignOut = choice === "leave";
+    }
+  } else {
+    await saveAppStateNow("Dados salvos localmente");
+  }
+  if (!canSignOut) {
+    els.signOutButton.disabled = false;
+    return;
+  }
   const { error } = await window.authGate.signOutUser();
   if (error) {
     els.signOutButton.disabled = false;
@@ -8826,6 +9398,7 @@ document.addEventListener("keydown", (event) => {
     closeDuplicatePlanModal();
     closeNewPlanModal();
     closeManagePlanModal();
+    closeCloudMigrationModal();
     return;
   }
   const target = event.target;
@@ -8834,7 +9407,7 @@ document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
     saveAppStateNow("Dados salvos");
-    showToast("Dados salvos localmente.");
+    showToast(cloudIsPrimary() ? "Salvamento na conta iniciado." : "Dados salvos localmente.");
     return;
   }
   if (!event.altKey || event.ctrlKey || event.metaKey) return;
@@ -8849,24 +9422,42 @@ window.addEventListener("resize", () => updateSidebarActiveIndicator());
 window.addEventListener("beforeunload", () => {
   if (!isRestoring && state.currentPlanId) {
     const snapshot = captureAppState();
-    localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
-    localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
+    saveLocalSafetyCopy(snapshot);
+    if (cloudIsPrimary()) {
+      try {
+        localStorage.setItem(cloudCacheKey(state.currentPlanId), JSON.stringify({
+          source: "cloud-cache",
+          id: state.currentPlanId,
+          name: planVisibleName(activePlan() || {}),
+          version: state.cloudPlanVersion,
+          updatedAt: new Date().toISOString(),
+          data: snapshot,
+        }));
+      } catch {}
+    }
   }
 });
 
 let appInitializationStarted = false;
 
-function startMeuCronogramaApp() {
+async function startMeuCronogramaApp() {
   if (appInitializationStarted) return;
   appInitializationStarted = true;
   renderDailyInputs();
   applyThemePreference();
   defaultReferenceWeek();
   renderHistory();
-  if (!restoreAppState()) {
+  const loadedFromCloud = await initializeCloudPlanSource();
+  const cloudUnavailable = state.dataSource === "cloud-unavailable";
+  if (!loadedFromCloud && !restoreAppState({ preserveDataSource: cloudUnavailable })) {
     renderRows();
     updateContestSummary();
     renderAppViews();
+  }
+  renderLocalMigrationControl();
+  if (cloudUnavailable) updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
+  if (!loadedFromCloud && cloudIsAvailable() && localPlanCandidates().length) {
+    window.setTimeout(openCloudMigrationModal, 180);
   }
   restoreRememberedDataFile();
   renderBackupReminder();

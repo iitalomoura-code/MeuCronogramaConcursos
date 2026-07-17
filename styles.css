@@ -6400,6 +6400,68 @@ body.auth-verified .auth-loading-screen {
   opacity: 0.65;
 }
 
+.cloud-migration-dialog {
+  width: min(680px, 100%);
+}
+
+.cloud-migration-list {
+  display: grid;
+  gap: 9px;
+  max-height: min(360px, 42vh);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.cloud-migration-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-main);
+  padding: 12px;
+  cursor: pointer;
+}
+
+.cloud-migration-item input {
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: var(--primary);
+}
+
+.cloud-migration-item strong,
+.cloud-migration-item span,
+.cloud-migration-item small {
+  display: block;
+}
+
+.cloud-migration-item strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.cloud-migration-item span,
+.cloud-migration-item small,
+.cloud-migration-result {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cloud-migration-item small {
+  margin-top: 3px;
+}
+
+.cloud-migration-result {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--soft);
+  padding: 10px 12px;
+}
+
 .evolution-progress-heading span { color: var(--muted); }
 
 .evolution-progress-track {

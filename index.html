@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260717-auth" />
+    <link rel="stylesheet" href="./styles.css?v=20260717-cloud-sync" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -58,6 +58,7 @@
               </section>
               <section class="settings-section" aria-labelledby="localDataHeading">
                 <h2 id="localDataHeading">Dados</h2>
+                <button id="migrateLocalPlansButton" class="backup-button" type="button" hidden><i data-lucide="cloud-upload"></i><span>Enviar dados locais para a conta</span></button>
                 <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Exportar backup</span></button>
                 <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar backup</span></label>
                 <input id="importBackupInput" type="file" accept="application/json,.json" />
@@ -658,13 +659,30 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       </section>
     </div>
 
+    <div id="cloudMigrationModal" class="plan-delete-modal cloud-migration-modal" hidden role="dialog" aria-modal="true" aria-labelledby="cloudMigrationTitle">
+      <button id="cancelCloudMigrationBackdrop" class="plan-delete-backdrop" type="button" aria-label="Fechar migração"></button>
+      <section class="plan-delete-dialog cloud-migration-dialog">
+        <div>
+          <span class="section-kicker">Dados deste navegador</span>
+          <h2 id="cloudMigrationTitle">Encontramos planejamentos salvos neste navegador.</h2>
+          <p>Selecione os planejamentos que deseja enviar para sua conta. Nada será apagado deste dispositivo.</p>
+        </div>
+        <div id="cloudMigrationList" class="cloud-migration-list"></div>
+        <p id="cloudMigrationResult" class="cloud-migration-result" role="status" hidden></p>
+        <div class="plan-delete-actions">
+          <button id="dismissCloudMigrationButton" class="ghost-button" type="button">Agora não</button>
+          <button id="confirmCloudMigrationButton" class="primary-button" type="button">Enviar para minha conta</button>
+        </div>
+      </section>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="./supabase-config.js?v=20260717-supabase-key"></script>
-    <script src="./auth.js?v=20260717-auth"></script>
-    <script src="./cloud-storage.js?v=20260717-auth"></script>
+    <script src="./supabase-config.js?v=20260717-cloud-sync"></script>
+    <script src="./auth.js?v=20260717-cloud-sync"></script>
+    <script src="./cloud-storage.js?v=20260717-cloud-sync"></script>
     <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260717-auth"></script>
+    <script src="./app.js?v=20260717-cloud-sync"></script>
   </body>
 </html>
 

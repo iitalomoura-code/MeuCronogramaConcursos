@@ -6,7 +6,9 @@ O projeto funciona somente com HTML, CSS e JavaScript. Os dados ficam no navegad
 
 ## Acesso online
 
-A primeira etapa de autenticação usa Supabase Auth, sem migrar os planejamentos locais nesta fase. Antes de publicar, preencha somente os dois valores públicos em `supabase-config.js`:
+O acesso por e-mail e senha usa Supabase Auth. Os planejamentos da conta usam a tabela `public.study_plans`; o navegador continua guardando um cache local temporário e os backups JSON permanecem disponíveis.
+
+Antes de publicar, preencha somente os dois valores públicos em `supabase-config.js`:
 
 - `SUPABASE_URL`: Project URL do projeto Supabase.
 - `SUPABASE_PUBLISHABLE_KEY`: Publishable key do projeto Supabase.
@@ -15,7 +17,13 @@ Nunca use uma `service_role`, secret key, senha do banco ou token administrativo
 
 No painel do Supabase, crie os usuários manualmente para esta primeira etapa. Não há cadastro público, login social ou recuperação de senha implementados ainda.
 
-`cloud-storage.js` já possui consultas isoladas para a futura tabela `public.study_plans`, mas ainda não envia, baixa nem migra dados do aplicativo. O `localStorage` e os backups JSON continuam sendo a fonte de dados do sistema.
+### Estrutura necessária no Supabase
+
+Crie `public.study_plans` com as colunas `id` (UUID), `user_id` (UUID), `name` (text), `data` (jsonb), `version` (integer), `created_at` e `updated_at` (timestamptz). Ative RLS e crie políticas que permitam somente `auth.uid() = user_id` para leitura, criação, alteração e exclusão. O cliente nunca usa `service_role` e sempre obtém o usuário autenticado antes de consultar a tabela.
+
+Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
+
+Na primeira entrada, planejamentos locais são detectados e podem ser enviados pela ação **Enviar dados locais para a conta**. A migração é sempre explícita e nunca apaga os dados deste navegador.
 
 ## Arquivos principais
 
@@ -25,7 +33,7 @@ No painel do Supabase, crie os usuários manualmente para esta primeira etapa. N
 - `login.html`: tela de acesso por e-mail e senha.
 - `auth.js`: sessão, login, proteção da aplicação e logout.
 - `supabase-config.js`: os dois placeholders públicos da integração Supabase.
-- `cloud-storage.js`: consultas online isoladas, ainda não ligadas ao estado local.
+- `cloud-storage.js`: CRUD isolado e seguro de `public.study_plans`.
 
 ## Funcionalidades mantidas
 
@@ -37,7 +45,7 @@ No painel do Supabase, crie os usuários manualmente para esta primeira etapa. N
 - Revisões.
 - Caderno de resumos.
 - Painel de evolução.
-- Salvamento local no navegador.
+- Salvamento online por conta, com cache local temporário de segurança.
 - Backup e importação de backup em JSON.
 
 ## Publicar no GitHub Pages
@@ -56,6 +64,6 @@ Arquivos como `meu-cronograma-concursos-dados.json`, backups e pastas `backup-*`
 
 ## Observação
 
-Ao abrir pelo GitHub Pages, o app funcionará no navegador e salvará os dados localmente naquele navegador. Para transferir dados entre dispositivos, exporte um backup JSON e importe no outro dispositivo.
+Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abertos em outro computador após o login na mesma conta. O cache local não substitui automaticamente a versão online; ele permanece apenas como proteção temporária e fonte para a primeira migração.
 
 Projeto preparado para publicação no GitHub Pages.
