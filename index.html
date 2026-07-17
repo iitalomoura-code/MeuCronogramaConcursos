@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260717-cloud-sync" />
+    <link rel="stylesheet" href="./styles.css?v=20260717-focus-session" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -46,53 +46,27 @@
           <p class="brand-tagline">Seu edital em ciclos inteligentes de estudo.</p>
           <div id="settingsMenu" class="settings-popover" hidden>
             <div class="settings-popover-header">
-              <strong>Configurações e dados</strong>
+              <strong>Configurações</strong>
               <span id="saveStatus" class="save-status">Dados salvos localmente</span>
             </div>
             <div class="backup-actions">
               <section class="settings-section" aria-labelledby="plansSettingsHeading">
-                <h2 id="plansSettingsHeading">Planejamentos</h2>
+                <h2 id="plansSettingsHeading">Planejamento</h2>
                 <button id="newPlanButton" class="backup-button" type="button"><i data-lucide="plus-circle"></i><span>Novo planejamento</span></button>
                 <button id="openPlanSwitcherButton" class="backup-button" type="button"><i data-lucide="repeat-2"></i><span>Trocar planejamento</span></button>
                 <button id="openManagePlanButton" class="backup-button" type="button"><i data-lucide="settings-2"></i><span>Gerenciar atual</span></button>
               </section>
-              <section class="settings-section" aria-labelledby="localDataHeading">
-                <h2 id="localDataHeading">Dados</h2>
-                <button id="migrateLocalPlansButton" class="backup-button" type="button" hidden><i data-lucide="cloud-upload"></i><span>Enviar dados locais para a conta</span></button>
+              <section class="settings-section" aria-labelledby="securitySettingsHeading">
+                <h2 id="securitySettingsHeading">Dados e segurança</h2>
                 <button id="exportBackupButton" class="backup-button" type="button"><i data-lucide="download"></i><span>Exportar backup</span></button>
                 <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar backup</span></label>
                 <input id="importBackupInput" type="file" accept="application/json,.json" />
+                <span id="backupReminderStatus" class="backup-last-export">Nenhum backup exportado neste navegador.</span>
               </section>
-              <div class="backup-reminder" role="status" aria-live="polite">
-                <span id="backupReminderStatus" class="backup-reminder-text">Nenhum backup registrado neste navegador.</span>
-                <span id="backupReminderNotice" class="backup-reminder-notice" hidden></span>
-                <button id="backupNowButton" class="backup-button backup-now-button" type="button"><i data-lucide="shield-check"></i><span>Fazer backup agora</span></button>
-              </div>
-              <section class="settings-section" aria-labelledby="preferencesHeading">
-                <h2 id="preferencesHeading">Preferências</h2>
-                <button id="settingsAppearanceButton" class="backup-button" type="button"><i data-lucide="sun-moon"></i><span>Aparência</span></button>
+              <section class="settings-section" aria-labelledby="accountSettingsHeading">
+                <h2 id="accountSettingsHeading">Conta</h2>
                 <button id="signOutButton" class="backup-button" type="button"><i data-lucide="log-out"></i><span>Sair</span></button>
-                <details class="settings-shortcuts-help"><summary>Atalhos de teclado</summary><p>Alt + 1 Continuar · Alt + 2 Ciclo · Alt + 3 Revisões · Alt + 4 Evolução · Ctrl/Cmd + S Salvar</p></details>
               </section>
-              <details class="settings-advanced">
-                <summary>Opções avançadas</summary>
-                <section class="settings-section" aria-labelledby="connectedFileHeading">
-                  <h2 id="connectedFileHeading">Arquivo externo</h2>
-                  <p id="connectedFileStatus" class="connected-file-status">Arquivo não conectado</p>
-                  <div id="fileConnectionActions" class="settings-inline-actions">
-                    <button id="connectDataFileButton" class="backup-button" type="button"><i data-lucide="link"></i><span>Configurar arquivo externo</span></button>
-                    <button id="createDataFileButton" class="backup-button" type="button" hidden><i data-lucide="file-plus-2"></i><span>Criar arquivo</span></button>
-                  </div>
-                  <button id="saveDataFileButton" class="backup-button" type="button" disabled><i data-lucide="cloud-upload"></i><span>Salvar no arquivo conectado</span></button>
-                  <button id="loadDataFileButton" class="backup-button" type="button" disabled><i data-lucide="folder-sync"></i><span>Carregar do arquivo conectado</span></button>
-                  <button id="disconnectDataFileButton" class="text-action settings-disconnect-button" type="button" hidden>Desconectar arquivo</button>
-                </section>
-                <section class="settings-section settings-maintenance" aria-labelledby="cycleMaintenanceHeading">
-                  <h2 id="cycleMaintenanceHeading">Manutenção do ciclo</h2>
-                  <button id="restoreCycleButton" class="backup-button" type="button"><i data-lucide="rotate-ccw"></i><span>Restaurar ciclo anterior</span></button>
-                  <button id="resetCyclesButton" class="backup-button danger-soft" type="button"><i data-lucide="refresh-cw"></i><span>Reiniciar ciclos</span></button>
-                </section>
-              </details>
             </div>
           </div>
         </div>
@@ -682,7 +656,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./cloud-storage.js?v=20260717-cloud-refresh"></script>
     <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260717-cloud-refresh"></script>
+    <script src="./app.js?v=20260717-focus-session"></script>
   </body>
 </html>
 

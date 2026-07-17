@@ -1,14 +1,18 @@
-﻿const STORAGE_KEY = "conteudoProgramaticoHistorico";
+const STORAGE_KEY = "conteudoProgramaticoHistorico";
 const APP_STATE_KEY = "planejaConcursosEstado";
 const PLANS_INDEX_KEY = "planejaConcursosPlanos";
 const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
 const ACTIVE_CLOUD_PLAN_KEY = "meuCronogramaPlanoNuvemAtivo";
 const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
 const CLOUD_SAVE_DELAY = 1500;
+const FOCUS_SESSION_SAVE_DELAY = 700;
+const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
+const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
+const CLOUD_MIGRATION_RECORD_KEY = "meuCronogramaMigracoesNuvem";
+const CLOUD_MIGRATION_DISMISSED_KEY = "meuCronogramaMigracaoNuvemDispensada";
 const LEGACY_APP_STATE_KEY = APP_STATE_KEY;
 const APP_THEME_KEY = "meu-cronograma-theme";
 const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
-const BACKUP_REMINDER_DAYS = 7;
 const EVOLUTION_MIN_SAMPLE_QUESTIONS = 10;
 const EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS = 30;
 const EVOLUTION_TREND_MARGIN = 0.03;
@@ -73,6 +77,7 @@ const state = {
   reviews: [],
   errors: [],
   notebook: {},
+  activeFocusSession: null,
   locked: false,
 };
 
@@ -92,9 +97,6 @@ let cloudConflictOpen = false;
 let cloudRefreshPromise = null;
 let lastCloudVersionCheckAt = 0;
 const CLOUD_VERSION_CHECK_INTERVAL = 20000;
-let dataFileSaveTimer = 0;
-let dataFileHandle = null;
-let isWritingDataFile = false;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
 let performanceSaveSessionId = "";
@@ -127,16 +129,15 @@ let focusedStudyIndex = -1;
 let focusedStudySession = null;
 let focusedStudyDrafts = new Map();
 let focusedStudyTimerInterval = null;
+let focusedStudyPersistenceTimer = null;
+let focusedStudyPeriodicSaveTimer = null;
+let focusedLongSessionNoticeId = "";
 let focusedStudySaving = false;
 let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "local", message: "" };
-
-const DATA_FILE_DB = "meuCronogramaFileHandles";
-const DATA_FILE_STORE = "handles";
-const DATA_FILE_KEY = "driveDataFile";
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -296,21 +297,9 @@ const els = {
   attentionSubjects: document.querySelector("#attentionSubjects"),
   evolutionCompletedBody: document.querySelector("#evolutionCompletedBody"),
   saveNowButton: document.querySelector("#saveNowButton"),
-  restoreCycleButton: document.querySelector("#restoreCycleButton"),
-  resetCyclesButton: document.querySelector("#resetCyclesButton"),
-  connectDataFileButton: document.querySelector("#connectDataFileButton"),
-  createDataFileButton: document.querySelector("#createDataFileButton"),
-  loadDataFileButton: document.querySelector("#loadDataFileButton"),
-  saveDataFileButton: document.querySelector("#saveDataFileButton"),
-  disconnectDataFileButton: document.querySelector("#disconnectDataFileButton"),
-  fileConnectionActions: document.querySelector("#fileConnectionActions"),
-  connectedFileStatus: document.querySelector("#connectedFileStatus"),
   exportBackupButton: document.querySelector("#exportBackupButton"),
-  backupNowButton: document.querySelector("#backupNowButton"),
   backupReminderStatus: document.querySelector("#backupReminderStatus"),
-  backupReminderNotice: document.querySelector("#backupReminderNotice"),
   importBackupInput: document.querySelector("#importBackupInput"),
-  migrateLocalPlansButton: document.querySelector("#migrateLocalPlansButton"),
   cloudMigrationModal: document.querySelector("#cloudMigrationModal"),
   cloudMigrationList: document.querySelector("#cloudMigrationList"),
   cloudMigrationResult: document.querySelector("#cloudMigrationResult"),
@@ -1092,6 +1081,7 @@ function switchTab(tabName, activeButton = null) {
   closePlanMenu();
   closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
+  if (focusedStudySession && tabName !== "continuar") void closeFocusedStudy({ silent: true });
   const run = () => activateTab(tabName, activeButton);
   if (!prefersReducedMotion() && document.startViewTransition) {
     document.startViewTransition(run);
@@ -3534,25 +3524,74 @@ function continueAvailableReviews() {
     .slice(0, 3);
 }
 
+function focusBlockKey(block, index) {
+  return String(block?.id || `${block?.ciclo || "ciclo"}::${topicKey(block?.materia, block?.assunto)}::${index}`);
+}
+
+function resolveFocusedBlockIndex(session = state.activeFocusSession) {
+  if (!session || !state.generatedBlocks.length) return -1;
+  const storedIndex = Number(session.blockIndex);
+  if (Number.isInteger(storedIndex) && state.generatedBlocks[storedIndex] &&
+    (!session.blockId || focusBlockKey(state.generatedBlocks[storedIndex], storedIndex) === session.blockId)) return storedIndex;
+  const byId = state.generatedBlocks.findIndex((block, index) => focusBlockKey(block, index) === session.blockId);
+  if (byId >= 0) return byId;
+  return state.generatedBlocks.findIndex((block) => block.materia === session.materia && block.assunto === session.assunto);
+}
+
+function normalizeFocusDraft(draft = {}, block = {}) {
+  return {
+    status: normalizeStatus(draft.status || block.status),
+    dificuldade: draft.dificuldade || block.dificuldade || "Média",
+    tipoAtividade: draft.tipoAtividade || draft.activityType || block.tipoAtividade || "Teoria",
+    tempoEstudado: String(draft.tempoEstudado ?? (block.tempoEstudado ? formatDuration(block.tempoEstudado) : "")),
+    questoes: draft.questoes ?? draft.questions ?? (block.questoes ? String(block.questoes) : ""),
+    acertos: draft.acertos ?? draft.correctAnswers ?? (block.acertos ? String(block.acertos) : ""),
+    observacoes: String(draft.observacoes ?? draft.notes ?? block.observacoes ?? ""),
+    pontosRevisar: Boolean(draft.pontosRevisar ?? draft.weakPoints ?? block.pontosRevisar),
+    reviewCycles: Array.isArray(draft.reviewCycles) ? draft.reviewCycles : reviewCyclesFromBlock(block),
+    context: draft.context || "estudo",
+    reviewId: String(draft.reviewId || ""),
+    sessionId: String(draft.sessionId || createStudySessionId()),
+  };
+}
+
+function normalizeActiveFocusSession(session) {
+  if (!session || typeof session !== "object") return null;
+  const index = resolveFocusedBlockIndex(session);
+  const block = index >= 0 ? state.generatedBlocks[index] : {};
+  if (index < 0 && !session.materia && !session.assunto) return null;
+  const status = session.status === "running" || session.running === true ? "running" : "paused";
+  const startedAt = status === "running" && session.startedAt ? new Date(session.startedAt) : null;
+  const validStartedAt = startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt.toISOString() : null;
+  return {
+    id: String(session.id || session.draft?.sessionId || createStudySessionId()),
+    context: session.context?.context || session.context || session.draft?.context || "estudo",
+    reviewId: String(session.reviewId || session.context?.reviewId || session.draft?.reviewId || ""),
+    blockId: String(session.blockId || focusBlockKey(block, index)),
+    blockIndex: index,
+    materia: String(session.materia || block.materia || ""),
+    assunto: String(session.assunto || block.assunto || ""),
+    status,
+    startedAt: validStartedAt,
+    accumulatedSeconds: Math.max(0, Number(session.accumulatedSeconds ?? session.elapsedSeconds) || 0),
+    createdAt: session.createdAt || new Date().toISOString(),
+    lastUpdatedAt: session.lastUpdatedAt || new Date().toISOString(),
+    draft: normalizeFocusDraft(session.draft || session, block),
+  };
+}
+
 function focusedDraftFor(index, context = {}) {
   const block = state.generatedBlocks[index];
   if (!block) return null;
-  if (!focusedStudyDrafts.has(index)) {
-    focusedStudyDrafts.set(index, {
-      status: normalizeStatus(block.status),
-      dificuldade: block.dificuldade || "Média",
-      tipoAtividade: block.tipoAtividade || "Teoria",
-      tempoEstudado: block.tempoEstudado ? formatDuration(block.tempoEstudado) : "",
-      questoes: block.questoes ? String(block.questoes) : "",
-      acertos: block.acertos ? String(block.acertos) : "",
-      observacoes: block.observacoes || "",
-      pontosRevisar: Boolean(block.pontosRevisar),
-      reviewCycles: reviewCyclesFromBlock(block),
-      context: context.context || "estudo",
-      reviewId: context.reviewId || "",
-      sessionId: createStudySessionId(),
-    });
+  const activeIndex = resolveFocusedBlockIndex(state.activeFocusSession);
+  if (state.activeFocusSession && activeIndex === index) {
+    const draft = state.activeFocusSession.draft = normalizeFocusDraft(state.activeFocusSession.draft, block);
+    if (context.context) draft.context = context.context;
+    if (context.reviewId) draft.reviewId = context.reviewId;
+    focusedStudyDrafts.set(index, draft);
+    return draft;
   }
+  if (!focusedStudyDrafts.has(index)) focusedStudyDrafts.set(index, normalizeFocusDraft({}, block));
   const draft = focusedStudyDrafts.get(index);
   if (context.context) draft.context = context.context;
   if (context.reviewId) draft.reviewId = context.reviewId;
@@ -3564,21 +3603,88 @@ function createStudySessionId() {
 }
 
 function focusedTimerSeconds() {
-  if (!focusedStudySession) return 0;
-  const current = focusedStudySession.running && focusedStudySession.startedAt
-    ? (Date.now() - focusedStudySession.startedAt) / 1000
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return 0;
+  const current = session.status === "running" && session.startedAt
+    ? (Date.now() - new Date(session.startedAt).getTime()) / 1000
     : 0;
-  return Math.max(0, Math.floor(focusedStudySession.elapsedSeconds + current));
+  return Math.max(0, Math.floor((Number(session.accumulatedSeconds) || 0) + current));
+}
+
+function syncFocusedSessionToState() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return null;
+  const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
+  const block = state.generatedBlocks[index];
+  if (!block) return null;
+  const draft = focusedStudyDrafts.get(index) || session.draft || normalizeFocusDraft({}, block);
+  session.blockIndex = index;
+  session.blockId = focusBlockKey(block, index);
+  session.materia = block.materia;
+  session.assunto = block.assunto;
+  session.context = draft.context || session.context || "estudo";
+  session.reviewId = draft.reviewId || session.reviewId || "";
+  session.draft = normalizeFocusDraft(draft, block);
+  session.lastUpdatedAt = new Date().toISOString();
+  state.activeFocusSession = session;
+  focusedStudySession = session;
+  return session;
+}
+
+function clearFocusedSessionPersistenceTimers() {
+  clearTimeout(focusedStudyPersistenceTimer);
+  focusedStudyPersistenceTimer = null;
+  clearInterval(focusedStudyPeriodicSaveTimer);
+  focusedStudyPeriodicSaveTimer = null;
+}
+
+function ensureFocusedSessionPeriodicSave() {
+  clearInterval(focusedStudyPeriodicSaveTimer);
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.status !== "running") return;
+  focusedStudyPeriodicSaveTimer = window.setInterval(() => {
+    persistFocusedSession({ label: "Sessão em andamento" });
+  }, FOCUS_SESSION_PERSIST_INTERVAL);
+}
+
+function persistFocusedSession({ immediate = false, label = "Sessão atualizada" } = {}) {
+  if (!syncFocusedSessionToState() || isRestoring || !state.currentPlanId) return Promise.resolve(false);
+  clearTimeout(focusedStudyPersistenceTimer);
+  if (immediate) return saveAppStateNow(label);
+  focusedStudyPersistenceTimer = window.setTimeout(() => saveAppStateNow(label), FOCUS_SESSION_SAVE_DELAY);
+  return Promise.resolve(true);
+}
+
+function restoreFocusedSessionFromSnapshot(session) {
+  clearFocusedSessionPersistenceTimers();
+  focusedStudyDrafts.clear();
+  focusedStudyIndex = -1;
+  focusedStudySession = normalizeActiveFocusSession(session);
+  state.activeFocusSession = focusedStudySession;
+  if (!focusedStudySession) return;
+  const index = resolveFocusedBlockIndex(focusedStudySession);
+  if (index < 0) {
+    state.activeFocusSession = null;
+    focusedStudySession = null;
+    return;
+  }
+  focusedStudyIndex = index;
+  focusedStudyDrafts.set(index, focusedStudySession.draft);
+  ensureFocusedSessionPeriodicSave();
+  ensureFocusedTimerInterval();
 }
 
 function updateFocusedTimerDisplay() {
   const display = document.querySelector("[data-focused-timer]");
   if (display) display.textContent = formatTimerSeconds(focusedTimerSeconds());
+  const activeDisplay = document.querySelector("[data-active-focus-timer]");
+  if (activeDisplay) activeDisplay.textContent = formatTimerSeconds(focusedTimerSeconds());
   const status = document.querySelector("[data-focused-timer-status]");
-  if (status && focusedStudySession) status.textContent = focusedStudySession.running ? "Cronômetro em andamento" : focusedTimerSeconds() ? "Cronômetro pausado" : "Cronômetro opcional";
+  const session = focusedStudySession || state.activeFocusSession;
+  if (status && session) status.textContent = session.status === "running" ? "Cronômetro em andamento" : focusedTimerSeconds() ? "Cronômetro pausado" : "Cronômetro opcional";
   const toggle = document.querySelector("[data-focused-timer-toggle]");
-  if (toggle && focusedStudySession) {
-    toggle.innerHTML = "<i data-lucide=\"" + (focusedStudySession.running ? "pause" : "play") + "\"></i><span>" + (focusedStudySession.running ? "Pausar cronômetro" : focusedTimerSeconds() ? "Continuar cronômetro" : "Iniciar cronômetro") + "</span>";
+  if (toggle && session) {
+    toggle.innerHTML = "<i data-lucide=\"" + (session.status === "running" ? "pause" : "play") + "\"></i><span>" + (session.status === "running" ? "Pausar cronômetro" : focusedTimerSeconds() ? "Continuar cronômetro" : "Iniciar cronômetro") + "</span>";
     if (window.lucide) window.lucide.createIcons();
   }
 }
@@ -3590,30 +3696,51 @@ function stopFocusedTimerInterval() {
   }
 }
 
-function startFocusedTimer() {
-  if (!focusedStudySession || focusedStudySession.running) return;
-  focusedStudySession.running = true;
-  focusedStudySession.startedAt = Date.now();
-  stopFocusedTimerInterval();
+function ensureFocusedTimerInterval() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.status !== "running" || focusedStudyTimerInterval) return;
   focusedStudyTimerInterval = window.setInterval(updateFocusedTimerDisplay, 1000);
+}
+
+function startFocusedTimer() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.status === "running") return;
+  session.status = "running";
+  session.startedAt = new Date().toISOString();
+  session.lastUpdatedAt = new Date().toISOString();
+  focusedStudySession = session;
+  stopFocusedTimerInterval();
+  ensureFocusedTimerInterval();
+  ensureFocusedSessionPeriodicSave();
+  persistFocusedSession({ immediate: true, label: "Cronômetro iniciado" });
   updateFocusedTimerDisplay();
 }
 
 function pauseFocusedTimer() {
-  if (!focusedStudySession || !focusedStudySession.running) return;
-  focusedStudySession.elapsedSeconds = focusedTimerSeconds();
-  focusedStudySession.running = false;
-  focusedStudySession.startedAt = 0;
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.status !== "running") return;
+  session.accumulatedSeconds = focusedTimerSeconds();
+  session.status = "paused";
+  session.startedAt = null;
+  session.lastUpdatedAt = new Date().toISOString();
+  focusedStudySession = session;
   stopFocusedTimerInterval();
+  ensureFocusedSessionPeriodicSave();
+  persistFocusedSession({ immediate: true, label: "Cronômetro pausado" });
   updateFocusedTimerDisplay();
 }
 
 function resetFocusedTimer() {
-  if (!focusedStudySession) return;
-  focusedStudySession.running = false;
-  focusedStudySession.startedAt = 0;
-  focusedStudySession.elapsedSeconds = 0;
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return;
+  session.status = "paused";
+  session.startedAt = null;
+  session.accumulatedSeconds = 0;
+  session.lastUpdatedAt = new Date().toISOString();
+  focusedStudySession = session;
   stopFocusedTimerInterval();
+  ensureFocusedSessionPeriodicSave();
+  persistFocusedSession({ immediate: true, label: "Cronômetro zerado" });
   updateFocusedTimerDisplay();
 }
 
@@ -3631,12 +3758,13 @@ function focusedDraftHasChanges(index) {
 }
 
 async function closeFocusedStudy(options = {}) {
-  if (focusedStudyIndex < 0) return;
-  if (!options.force && focusedDraftHasChanges(focusedStudyIndex) && !(await dialogConfirm("Há dados preenchidos neste estudo. Sair sem salvar?", { confirmLabel: "Sair sem salvar" }))) return;
+  if (focusedStudyIndex < 0 && !state.activeFocusSession) return;
+  if (!options.discard) await persistFocusedSession({ immediate: true, label: "Sessão salva" });
   stopFocusedTimerInterval();
+  removeFocusedStudyOverlay();
   focusedStudyIndex = -1;
   focusedStudySession = null;
-  renderContinuePanel();
+  if (!options.silent) renderContinuePanel();
 }
 
 function removeFocusedStudyOverlay() {
@@ -3649,7 +3777,8 @@ function renderFocusedStudyOverlay() {
   const panel = document.querySelector("#tab-continuar");
   if (!panel || !panel.classList.contains("active")) return;
   const block = state.generatedBlocks[focusedStudyIndex];
-  const context = focusedStudySession?.context || { context: "estudo" };
+  const session = focusedStudySession || state.activeFocusSession;
+  const context = { context: session?.context || "estudo", reviewId: session?.reviewId || "" };
   const review = context.reviewId ? state.reviews.find((record) => record.id === context.reviewId) : null;
   document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex, context), explainStudySuggestion(block), { ...context, review }));
   if (window.lucide) window.lucide.createIcons();
@@ -3762,10 +3891,38 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   `;
 }
 
-function openFocusedStudy(index, context = { context: "estudo" }) {
+async function openFocusedStudy(index, context = { context: "estudo" }) {
   if (!state.generatedBlocks[index]) return;
-  focusedStudyIndex = index;
-  focusedStudySession = { index, context, elapsedSeconds: 0, startedAt: 0, running: false };
+  const existing = normalizeActiveFocusSession(state.activeFocusSession);
+  if (existing && resolveFocusedBlockIndex(existing) === index) {
+    focusedStudySession = existing;
+    focusedStudyIndex = index;
+  } else if (existing) {
+    showToast("Há uma sessão em andamento. Retome ou descarte a sessão atual antes de iniciar outra.");
+    return;
+  } else {
+    const block = state.generatedBlocks[index];
+    const draft = normalizeFocusDraft({ context: context.context || "estudo", reviewId: context.reviewId || "" }, block);
+    focusedStudySession = {
+      id: draft.sessionId,
+      context: draft.context,
+      reviewId: draft.reviewId,
+      blockId: focusBlockKey(block, index),
+      blockIndex: index,
+      materia: block.materia,
+      assunto: block.assunto,
+      status: "paused",
+      startedAt: null,
+      accumulatedSeconds: 0,
+      createdAt: new Date().toISOString(),
+      lastUpdatedAt: new Date().toISOString(),
+      draft,
+    };
+    state.activeFocusSession = focusedStudySession;
+    focusedStudyIndex = index;
+    focusedStudyDrafts.set(index, draft);
+    void persistFocusedSession({ immediate: true, label: "Sessão iniciada" });
+  }
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
   renderContinuePanel();
@@ -3776,7 +3933,7 @@ function openFocusedStudy(index, context = { context: "estudo" }) {
       renderFocusedStudyOverlay();
     }
   });
-  showToast(context.context === "revisao" ? "Revisão iniciada." : "Estudo iniciado.");
+  showToast((focusedStudySession?.context || context.context) === "revisao" ? "Revisão iniciada." : "Estudo iniciado.");
 }
 
 function recordReviewAttempt(reviewId, block, draft, outcome) {
@@ -3818,12 +3975,12 @@ function recordReviewAttempt(reviewId, block, draft, outcome) {
   }
 }
 
-function saveFocusedStudy() {
+async function saveFocusedStudy() {
   if (focusedStudySaving || focusedStudyIndex < 0) return;
   const index = focusedStudyIndex;
   const block = state.generatedBlocks[index];
   const draft = focusedStudyDrafts.get(index);
-  const context = focusedStudySession?.context || draft?.context || { context: "estudo" };
+  const context = { context: focusedStudySession?.context || draft?.context || "estudo", reviewId: focusedStudySession?.reviewId || draft?.reviewId || "" };
   if (!block || !draft) return;
   focusedStudySaving = true;
   const sessionHours = focusedTimerSeconds() / 3600;
@@ -3842,6 +3999,7 @@ function saveFocusedStudy() {
     notes: draft.observacoes,
     reviewPoints: draft.pontosRevisar,
     reviewCycles: draft.reviewCycles || [],
+    persist: false,
   });
   if (!outcome.ok) {
     focusedStudySaving = false;
@@ -3850,10 +4008,24 @@ function saveFocusedStudy() {
   }
   const { adaptiveOutcome, previousStatus, nextStatus } = outcome;
   if (context.context === "revisao" && context.reviewId) recordReviewAttempt(context.reviewId, block, draft, outcome);
+  const completedSession = focusedStudySession;
+  state.activeFocusSession = null;
+  focusedStudySession = null;
+  const persisted = await saveAppStateNow("Resultado do estudo salvo");
+  if (!persisted) {
+    state.activeFocusSession = completedSession;
+    focusedStudySession = completedSession;
+    block.lastSavedSessionId = "";
+    saveLocalSafetyCopy(captureAppState());
+    focusedStudySaving = false;
+    renderFocusedStudyOverlay();
+    showToast("Não foi possível salvar o resultado. A sessão foi mantida para nova tentativa.");
+    return;
+  }
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
+  clearFocusedSessionPersistenceTimers();
   focusedStudyIndex = -1;
-  focusedStudySession = null;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
   renderAppViews();
@@ -3864,8 +4036,99 @@ function saveFocusedStudy() {
   else showToast("Resultado salvo.");
 }
 
+function activeFocusSessionMarkup() {
+  const session = normalizeActiveFocusSession(state.activeFocusSession);
+  if (!session) return "";
+  const index = resolveFocusedBlockIndex(session);
+  if (index < 0) return "";
+  const running = session.status === "running";
+  const contextLabel = session.context === "revisao" ? "Revisão" : "Estudo";
+  return `<section class="continue-active-session" aria-label="Sessão em andamento">
+    <div><span class="section-kicker">Sessão em andamento</span><strong>${escapeHtml(session.materia)}</strong><p>${escapeHtml(themeTitle(session.assunto))}</p><small>${contextLabel} · ${running ? "Cronômetro em andamento" : "Cronômetro pausado"} · <span data-active-focus-timer>${formatTimerSeconds(focusedTimerSeconds())}</span></small></div>
+    <div class="continue-active-session-actions">
+      <button class="primary-button compact-button" type="button" data-resume-focused><i data-lucide="play"></i><span>Retomar</span></button>
+      ${running ? `<button class="ghost-button compact-button" type="button" data-pause-active-focused><i data-lucide="pause"></i><span>Pausar</span></button>` : ""}
+      <button class="text-action" type="button" data-finalize-active-focused>Finalizar</button>
+      <button class="text-action danger-text" type="button" data-discard-active-focused>Descartar</button>
+    </div>
+  </section>`;
+}
+
+async function resolveLongFocusedSession() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.status !== "running" || !session.startedAt) return true;
+  const elapsed = focusedTimerSeconds();
+  if (elapsed <= FOCUS_SESSION_LONG_RUNNING_LIMIT || focusedLongSessionNoticeId === session.id) return true;
+  focusedLongSessionNoticeId = session.id;
+  const choice = await openDialog({
+    title: "Sessão aberta por muito tempo",
+    message: "Esta sessão permaneceu aberta por um período prolongado.",
+    actions: [
+      { id: "discard", label: "Descartar sessão", variant: "danger", value: "discard" },
+      { id: "manual", label: "Informar outro tempo", value: "manual" },
+      { id: "calculated", label: "Usar tempo calculado", variant: "primary", value: "calculated" },
+    ],
+  });
+  if (choice === "discard") {
+    await discardFocusedStudySession();
+    return false;
+  }
+  if (choice === "manual") {
+    const value = await dialogPrompt("Informe o tempo efetivamente estudado.", formatTimerSeconds(elapsed), { title: "Tempo da sessão", label: "Tempo", confirmLabel: "Usar este tempo" });
+    if (value === null) return false;
+    session.accumulatedSeconds = Math.max(0, Math.round(parseDurationInput(value, 0) * 3600));
+    session.status = "paused";
+    session.startedAt = null;
+  }
+  session.lastUpdatedAt = new Date().toISOString();
+  await persistFocusedSession({ immediate: true, label: "Sessão atualizada" });
+  return true;
+}
+
+async function resumeFocusedStudySession() {
+  const session = normalizeActiveFocusSession(state.activeFocusSession);
+  if (!session) return;
+  const index = resolveFocusedBlockIndex(session);
+  if (index < 0) return;
+  focusedStudySession = session;
+  focusedStudyIndex = index;
+  focusedStudyDrafts.set(index, session.draft);
+  if (!(await resolveLongFocusedSession())) return;
+  await openFocusedStudy(index, { context: session.context, reviewId: session.reviewId });
+  if (session.status === "running") {
+    ensureFocusedTimerInterval();
+    ensureFocusedSessionPeriodicSave();
+  }
+}
+
+async function discardFocusedStudySession() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return;
+  const confirmed = await dialogConfirm("Descartar esta sessão? O tempo e o rascunho preenchido serão removidos, sem registrar desempenho.", { title: "Descartar sessão", variant: "danger", confirmLabel: "Descartar sessão" });
+  if (!confirmed) return;
+  const index = resolveFocusedBlockIndex(session);
+  state.activeFocusSession = null;
+  focusedStudySession = null;
+  if (index >= 0) focusedStudyDrafts.delete(index);
+  focusedStudyIndex = -1;
+  stopFocusedTimerInterval();
+  clearFocusedSessionPersistenceTimers();
+  removeFocusedStudyOverlay();
+  const persisted = await saveAppStateNow("Sessão descartada");
+  if (!persisted) {
+    state.activeFocusSession = session;
+    focusedStudySession = session;
+    if (index >= 0) focusedStudyDrafts.set(index, session.draft);
+    showToast("Não foi possível descartar agora. A sessão foi mantida.");
+    return;
+  }
+  renderContinuePanel();
+  showToast("Sessão descartada.");
+}
+
 function renderContinuePanel() {
   removeFocusedStudyOverlay();
+  if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -3919,6 +4182,7 @@ function renderContinuePanel() {
   const nextSteps = pending.filter((entry) => entry.index !== suggested?.index).slice(0, 3);
 
   els.continuePanel.innerHTML = `
+    ${activeFocusSessionMarkup()}
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
         <div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
@@ -4160,6 +4424,7 @@ function saveStudyResult({
   notes,
   reviewPoints = false,
   reviewCycles = [],
+  persist = true,
 } = {}) {
   const index = Number(blockIndex);
   const block = Number.isInteger(index) ? state.generatedBlocks[index] : null;
@@ -4205,7 +4470,7 @@ function saveStudyResult({
   renderReviews();
   renderEvolution();
   renderWeeklyResult();
-  saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
+  if (persist) saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
   return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
 }
 
@@ -6824,7 +7089,27 @@ function clearUnsavedChanges() {
   state.hasUnsavedChanges = false;
 }
 
+function readCloudMigrationRecord() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CLOUD_MIGRATION_RECORD_KEY) || "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function markLocalPlanMigrated(localId, cloudId) {
+  const record = readCloudMigrationRecord();
+  record[localId] = { cloudId, migratedAt: new Date().toISOString() };
+  try { localStorage.setItem(CLOUD_MIGRATION_RECORD_KEY, JSON.stringify(record)); } catch {}
+}
+
+function migrationCandidateSignature(candidates) {
+  return candidates.map((candidate) => candidate.localId).sort().join("|");
+}
+
 function localPlanCandidates() {
+  const migrated = readCloudMigrationRecord();
   const plans = readPlansIndex();
   const candidates = plans.map((plan) => {
     let snapshot = null;
@@ -6839,14 +7124,15 @@ function localPlanCandidates() {
     if (!hasContent) return null;
     return { localId: plan.id, plan, snapshot, name: planVisibleName(plan) || planDisplayName(snapshot), form };
   }).filter(Boolean);
-  if (candidates.length) return candidates;
+  const pending = candidates.filter((candidate) => !migrated[candidate.localId]);
+  if (pending.length) return pending;
   try {
     const legacy = JSON.parse(localStorage.getItem(LEGACY_APP_STATE_KEY) || "null");
     const form = legacy?.form || {};
     const hasContent = Boolean(form.contestName || form.jobRole || legacy?.programText || legacy?.rows?.length || legacy?.generatedBlocks?.length || legacy?.notebook && Object.keys(legacy.notebook).length);
     if (!hasContent) return [];
     const name = form.contestName?.trim() || form.jobRole?.trim() || "Concurso importado";
-    return [{
+    return migrated["legacy-local-plan"] ? [] : [{
       localId: "legacy-local-plan",
       plan: { id: "legacy-local-plan", name, createdAt: legacy.savedAt || new Date().toISOString(), updatedAt: legacy.savedAt || new Date().toISOString() },
       snapshot: legacy,
@@ -6866,11 +7152,12 @@ function migrationCandidateMarkup(candidate) {
   return `<label class="cloud-migration-item"><input type="checkbox" value="${escapeHtml(candidate.localId)}" checked /><span><strong>${escapeHtml(candidate.name)}</strong><span>${escapeHtml(contest)}${escapeHtml(role)}</span><small>\u00daltima altera\u00e7\u00e3o: ${escapeHtml(changed)}</small></span></label>`;
 }
 
-function renderLocalMigrationControl() {
-  if (!els.migrateLocalPlansButton) return;
+function scheduleLocalMigrationPrompt() {
   const candidates = localPlanCandidates();
-  els.migrateLocalPlansButton.hidden = !cloudIsAvailable() || !candidates.length;
-  if (window.lucide) window.lucide.createIcons();
+  if (!cloudIsAvailable() || !candidates.length) return;
+  const signature = migrationCandidateSignature(candidates);
+  if (localStorage.getItem(CLOUD_MIGRATION_DISMISSED_KEY) === signature) return;
+  window.setTimeout(openCloudMigrationModal, 180);
 }
 
 function openCloudMigrationModal() {
@@ -6888,10 +7175,14 @@ function openCloudMigrationModal() {
   window.setTimeout(() => els.cloudMigrationList?.querySelector("input")?.focus(), 0);
 }
 
-function closeCloudMigrationModal() {
+function closeCloudMigrationModal({ dismiss = true } = {}) {
   if (!els.cloudMigrationModal) return;
+  if (dismiss) {
+    const candidates = localPlanCandidates();
+    try { localStorage.setItem(CLOUD_MIGRATION_DISMISSED_KEY, migrationCandidateSignature(candidates)); } catch {}
+  }
   els.cloudMigrationModal.hidden = true;
-  els.migrateLocalPlansButton?.focus();
+  els.settingsToggleButton?.focus();
 }
 
 function uniqueCloudPlanName(name, existingPlans = state.plans) {
@@ -7016,6 +7307,7 @@ async function migrateSelectedLocalPlans() {
       const snapshot = { ...candidate.snapshot, savedAt: new Date().toISOString() };
       const record = await window.createCloudPlan({ name, data: snapshot, version: 1 });
       created.push(record);
+      markLocalPlanMigrated(candidate.localId, record.id);
       names.push(cloudPlanMeta(record));
       saveCloudCache(record, snapshot);
     } catch {
@@ -7027,7 +7319,7 @@ async function migrateSelectedLocalPlans() {
     state.dataSource = "cloud";
     state.plans = onlinePlans.map(cloudPlanMeta);
     await loadCloudPlanIntoState(created[0].id);
-    renderLocalMigrationControl();
+    localStorage.removeItem(CLOUD_MIGRATION_DISMISSED_KEY);
   }
   if (els.cloudMigrationResult) {
     els.cloudMigrationResult.hidden = false;
@@ -7036,7 +7328,7 @@ async function migrateSelectedLocalPlans() {
       : `${created.length} planejamento(s) enviado(s) com sucesso.`;
   }
   if (button) button.disabled = false;
-  if (!failures.length) window.setTimeout(closeCloudMigrationModal, 700);
+  if (!failures.length) window.setTimeout(() => closeCloudMigrationModal({ dismiss: false }), 700);
 }
 
 function planDisplayName(snapshot = captureAppState()) {
@@ -7161,6 +7453,7 @@ function applyFormState(data = {}) {
 function captureAppState() {
   syncRowsFromTable();
   syncPlanningSliders();
+  syncFocusedSessionToState();
   return {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -7178,6 +7471,7 @@ function captureAppState() {
     reviews: state.reviews,
     errors: state.errors,
     notebook: state.notebook,
+    activeFocusSession: state.activeFocusSession,
     locked: state.locked,
     showPendingOnly,
   };
@@ -7228,6 +7522,7 @@ function applyAppSnapshot(saved = {}) {
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
+  restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
   state.locked = Boolean(saved.locked);
   showPendingOnly = Boolean(saved.showPendingOnly);
 
@@ -7256,12 +7551,10 @@ function applyAppSnapshot(saved = {}) {
 function updateSaveStatus({ state: nextState = "saved", destination = "local", message = "" } = {}) {
   saveStatusState = { state: nextState, destination, message };
   const defaultMessages = {
-    saved: destination === "file" ? "Arquivo conectado e salvo" : destination === "cloud" ? "Dados salvos na conta" : "Dados salvos localmente",
-    saving: destination === "file" ? "Salvando no arquivo conectado" : destination === "cloud" ? "Salvando na conta" : "Salvando localmente",
+    saved: destination === "cloud" ? "Dados sincronizados" : "Dados salvos localmente",
+    saving: destination === "cloud" ? "Salvando" : "Salvando localmente",
     pending: "Alterações pendentes",
-    error: destination === "file" ? "Erro ao salvar no arquivo conectado" : destination === "cloud" ? "Erro ao salvar na conta" : "Erro ao salvar localmente",
-    connected: "Arquivo conectado",
-    disconnected: "Arquivo não conectado",
+    error: destination === "cloud" ? "Erro ao sincronizar" : "Erro ao salvar localmente",
   };
   const text = message || defaultMessages[nextState] || "Dados salvos localmente";
   if (els.saveStatus) {
@@ -7276,9 +7569,7 @@ function updateSaveStatus({ state: nextState = "saved", destination = "local", m
 
 function setSaveStatus(text) {
   const clean = String(text || "");
-  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: /arquivo|drive/i.test(clean) ? "file" : cloudIsPrimary() ? "cloud" : "local", message: clean });
-  if (/autorize|conecte/i.test(clean)) return updateSaveStatus({ state: "disconnected", destination: "file", message: clean });
-  if (/drive|arquivo/i.test(clean)) return updateSaveStatus({ state: "connected", destination: "file", message: clean });
+  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: cloudIsPrimary() ? "cloud" : "local", message: clean });
   updateSaveStatus({ state: "saved", destination: "local", message: clean || "Dados salvos localmente" });
 }
 
@@ -7302,21 +7593,12 @@ function renderBackupReminder() {
   const meta = readBackupMeta();
   const date = backupMetaDate(meta);
   if (!date) {
-    els.backupReminderStatus.textContent = "Nenhum backup registrado neste navegador.";
-    if (els.backupReminderNotice) {
-      els.backupReminderNotice.hidden = true;
-      els.backupReminderNotice.textContent = "";
-    }
+    els.backupReminderStatus.textContent = "Nenhum backup exportado neste navegador.";
     return;
   }
   const formattedDate = date.toLocaleDateString("pt-BR");
   const formattedTime = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   els.backupReminderStatus.textContent = `\u00daltimo backup: ${formattedDate} \u00e0s ${formattedTime}`;
-  const isOutdated = Date.now() - date.getTime() > BACKUP_REMINDER_DAYS * 24 * 60 * 60 * 1000;
-  if (els.backupReminderNotice) {
-    els.backupReminderNotice.hidden = !isOutdated;
-    els.backupReminderNotice.textContent = isOutdated ? "Recomendamos realizar um novo backup dos seus dados." : "";
-  }
 }
 
 function rememberBackupExport(version = 1) {
@@ -7412,7 +7694,6 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
       renderPlanSelect();
       clearUnsavedChanges();
       updateSaveStatus({ state: "saved", destination: "cloud", message: `${label} às ${formatCloudSaveTime()}` });
-      saveConnectedDataFileSoon();
       return true;
     } catch (error) {
       if (error?.code === "cloud_conflict") {
@@ -7478,7 +7759,6 @@ function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
   updateSaveStatus({ state: "saving", destination: "local" });
   refreshCurrentPlanName(snapshot);
   updateSaveStatus({ state: "saved", destination: "local", message: `${label} localmente` });
-  saveConnectedDataFileSoon();
   return Promise.resolve(true);
 }
 
@@ -7535,123 +7815,6 @@ function restoreAppState({ preserveDataSource = false } = {}) {
   return true;
 }
 
-function supportsDataFileSync() {
-  return "showOpenFilePicker" in window && "showSaveFilePicker" in window && "indexedDB" in window;
-}
-
-function dataFileTypeOptions() {
-  return [{ description: "Dados do Meu Cronograma Concursos", accept: { "application/json": [".json"] } }];
-}
-
-function openDataHandleDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATA_FILE_DB, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(DATA_FILE_STORE);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function finishTransaction(transaction) {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
-  });
-}
-
-async function rememberDataFileHandle(handle) {
-  try {
-    const db = await openDataHandleDb();
-    const transaction = db.transaction(DATA_FILE_STORE, "readwrite");
-    transaction.objectStore(DATA_FILE_STORE).put(handle, DATA_FILE_KEY);
-    await finishTransaction(transaction);
-    db.close();
-  } catch (error) {
-    console.warn("Nao foi possivel lembrar o arquivo de dados.", error);
-  }
-}
-
-async function getRememberedDataFileHandle() {
-  try {
-    const db = await openDataHandleDb();
-    const transaction = db.transaction(DATA_FILE_STORE, "readonly");
-    const request = transaction.objectStore(DATA_FILE_STORE).get(DATA_FILE_KEY);
-    const handle = await new Promise((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return handle;
-  } catch (error) {
-    console.warn("Nao foi possivel recuperar o arquivo de dados.", error);
-    return null;
-  }
-}
-
-async function forgetDataFileHandle() {
-  try {
-    const db = await openDataHandleDb();
-    const transaction = db.transaction(DATA_FILE_STORE, "readwrite");
-    transaction.objectStore(DATA_FILE_STORE).delete(DATA_FILE_KEY);
-    await finishTransaction(transaction);
-    db.close();
-  } catch (error) {
-    console.warn("Não foi possível esquecer o arquivo conectado.", error);
-  }
-}
-
-function updateConnectedFileControls() {
-  const connected = Boolean(dataFileHandle);
-  const name = connected ? (dataFileHandle.name || "Arquivo conectado") : "Arquivo não conectado";
-  if (els.connectedFileStatus) els.connectedFileStatus.textContent = name;
-  if (els.fileConnectionActions) els.fileConnectionActions.hidden = connected;
-  if (els.saveDataFileButton) els.saveDataFileButton.disabled = !connected;
-  if (els.loadDataFileButton) els.loadDataFileButton.disabled = !connected;
-  if (els.disconnectDataFileButton) els.disconnectDataFileButton.hidden = !connected;
-}
-
-async function verifyDataFilePermission(handle, mode = "readwrite", requestAccess = true) {
-  const options = { mode };
-  if ((await handle.queryPermission(options)) === "granted") return true;
-  if (!requestAccess) return false;
-  return (await handle.requestPermission(options)) === "granted";
-}
-
-function dataFileUnavailableMessage() {
-  void dialogAlert("Este navegador não permite salvar direto em arquivo. Use o Chrome ou Edge e mantenha Backup/Importar como alternativa.");
-}
-
-function captureDriveDataSnapshot() {
-  const currentSnapshot = state.currentPlanId ? captureAppState() : null;
-  const now = new Date().toISOString();
-  const plans = state.plans.map((plan) => {
-    if (plan.id !== state.currentPlanId || !currentSnapshot) return plan;
-    return { ...plan, name: plan.customName || planDisplayName(currentSnapshot), updatedAt: now };
-  });
-  const planSnapshots = {};
-  plans.forEach((plan) => {
-    if (plan.id === state.currentPlanId && currentSnapshot) {
-      planSnapshots[plan.id] = currentSnapshot;
-      return;
-    }
-    try {
-      const raw = localStorage.getItem(planStorageKey(plan.id));
-      planSnapshots[plan.id] = raw ? JSON.parse(raw) : blankAppSnapshot(plan.name);
-    } catch {
-      planSnapshots[plan.id] = blankAppSnapshot(plan.name);
-    }
-  });
-  return {
-    dataType: "meu-cronograma-concursos-drive-data",
-    version: 1,
-    savedAt: now,
-    activePlanId: state.currentPlanId,
-    plans,
-    planSnapshots,
-  };
-}
-
 function applyDriveDataSnapshot(bundle = {}) {
   const snapshots = bundle.planSnapshots && typeof bundle.planSnapshots === "object" ? bundle.planSnapshots : {};
   const snapshotIds = Object.keys(snapshots);
@@ -7675,138 +7838,6 @@ function applyDriveDataSnapshot(bundle = {}) {
   renderPlanSelect();
   applyAppSnapshot(snapshots[state.currentPlanId] || blankAppSnapshot(state.plans[0].name));
 }
-async function writeSnapshotToDataFile(label = "Arquivo salvo") {
-  if (!dataFileHandle) {
-    await dialogAlert("Conecte ou crie um arquivo de dados primeiro.");
-    return;
-  }
-  if (isWritingDataFile) return;
-  try {
-    updateSaveStatus({ state: "saving", destination: "file" });
-    if (!(await verifyDataFilePermission(dataFileHandle, "readwrite"))) {
-      setSaveStatus("Autorize o arquivo conectado");
-      return;
-    }
-    isWritingDataFile = true;
-    const writable = await dataFileHandle.createWritable();
-    await writable.write(JSON.stringify(captureDriveDataSnapshot(), null, 2));
-    await writable.close();
-    updateSaveStatus({ state: "saved", destination: "file", message: label });
-  } catch (error) {
-    console.error(error);
-    updateSaveStatus({ state: "error", destination: "file", message: "Erro ao salvar no arquivo conectado" });
-  } finally {
-    isWritingDataFile = false;
-  }
-}
-
-function saveConnectedDataFileSoon() {
-  if (!dataFileHandle || isRestoring) return;
-  clearTimeout(dataFileSaveTimer);
-  dataFileSaveTimer = setTimeout(() => writeSnapshotToDataFile("Arquivo salvo"), 900);
-}
-
-async function loadSnapshotFromDataFile(handle = dataFileHandle) {
-  if (!handle) {
-    await dialogAlert("Conecte ou crie um arquivo de dados primeiro.");
-    return;
-  }
-  try {
-    if (!(await verifyDataFilePermission(handle, "read"))) {
-      setSaveStatus("Autorize o arquivo conectado");
-      return;
-    }
-    const file = await handle.getFile();
-    const text = await file.text();
-    if (!text.trim()) {
-      await dialogAlert("O arquivo de dados está vazio.");
-      return;
-    }
-    const snapshot = JSON.parse(text);
-    dataFileHandle = handle;
-    await rememberDataFileHandle(handle);
-    updateConnectedFileControls();
-    if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
-      applyDriveDataSnapshot(snapshot);
-    } else {
-      applyAppSnapshot(snapshot);
-    }
-    saveAppStateNow("Arquivo carregado");
-    updateConnectedFileControls();
-  } catch (error) {
-    console.error(error);
-    await dialogAlert("Não consegui carregar esse arquivo de dados. Verifique se ele é um JSON válido do sistema.");
-  }
-}
-
-async function connectDataFile() {
-  if (!supportsDataFileSync()) {
-    dataFileUnavailableMessage();
-    return;
-  }
-  try {
-    const [handle] = await window.showOpenFilePicker({
-      multiple: false,
-      types: dataFileTypeOptions(),
-    });
-    if (!handle) return;
-    dataFileHandle = handle;
-    await rememberDataFileHandle(handle);
-    updateConnectedFileControls();
-    await loadSnapshotFromDataFile(handle);
-    updateSaveStatus({ state: "connected", destination: "file", message: `Arquivo conectado: ${handle.name || "dados"}` });
-  } catch (error) {
-    if (error?.name !== "AbortError") {
-      console.error(error);
-      await dialogAlert("Não consegui conectar o arquivo de dados.");
-    }
-  }
-}
-
-async function createDataFile() {
-  if (!supportsDataFileSync()) {
-    dataFileUnavailableMessage();
-    return;
-  }
-  try {
-    const handle = await window.showSaveFilePicker({
-      suggestedName: "meu-cronograma-concursos-dados.json",
-      types: dataFileTypeOptions(),
-    });
-    dataFileHandle = handle;
-    await rememberDataFileHandle(handle);
-    updateConnectedFileControls();
-    await writeSnapshotToDataFile("Arquivo conectado criado");
-  } catch (error) {
-    if (error?.name !== "AbortError") {
-      console.error(error);
-      await dialogAlert("Não consegui criar o arquivo de dados.");
-    }
-  }
-}
-
-async function restoreRememberedDataFile() {
-  if (!supportsDataFileSync()) return;
-  const handle = await getRememberedDataFileHandle();
-  if (!handle) return;
-  dataFileHandle = handle;
-  updateConnectedFileControls();
-  try {
-    const hasPermission = await verifyDataFilePermission(handle, "readwrite", false);
-    updateSaveStatus({ state: hasPermission ? "connected" : "disconnected", destination: "file", message: hasPermission ? `Arquivo conectado: ${handle.name || "dados"}` : "Arquivo conectado: autorize o acesso quando necessário" });
-  } catch {
-    updateSaveStatus({ state: "disconnected", destination: "file", message: "Arquivo não conectado" });
-  }
-}
-
-async function disconnectDataFile() {
-  await forgetDataFileHandle();
-  dataFileHandle = null;
-  updateConnectedFileControls();
-  updateSaveStatus({ state: "disconnected", destination: "file", message: "Arquivo desconectado. Seus dados locais continuam salvos." });
-  showToast("Arquivo desconectado.");
-}
-
 function exportBackup() {
   saveAppStateNow("Salvo", { changes: false });
   const snapshot = captureAppState();
@@ -7921,6 +7952,7 @@ function blankAppSnapshot(name = "") {
     cycleResults: [],
     reviews: [],
     errors: [],
+    activeFocusSession: null,
     showPendingOnly: false,
   };
 }
@@ -7928,6 +7960,7 @@ function blankAppSnapshot(name = "") {
 async function switchPlan(planId) {
   if (!planId || planId === state.currentPlanId) return;
   const previousTab = getActiveTabName();
+  if (state.activeFocusSession) await persistFocusedSession({ immediate: true, label: "Sessão salva antes de trocar" });
   if (cloudIsPrimary()) {
     const saved = await flushCloudSave("Salvo antes de trocar");
     if (!saved) {
@@ -8214,7 +8247,6 @@ async function renameCurrentPlan() {
     return;
   }
   writePlansIndex();
-  saveConnectedDataFileSoon();
   showToast("Planejamento renomeado.");
 }
 
@@ -8362,7 +8394,6 @@ els.managePlanModal?.addEventListener("click", (event) => {
 els.cancelDuplicatePlanButton?.addEventListener("click", closeDuplicatePlanModal);
 els.cancelDuplicatePlanBackdrop?.addEventListener("click", closeDuplicatePlanModal);
 els.confirmDuplicatePlanButton?.addEventListener("click", duplicateCurrentPlan);
-els.migrateLocalPlansButton?.addEventListener("click", openCloudMigrationModal);
 els.dismissCloudMigrationButton?.addEventListener("click", closeCloudMigrationModal);
 els.cancelCloudMigrationBackdrop?.addEventListener("click", closeCloudMigrationModal);
 els.confirmCloudMigrationButton?.addEventListener("click", migrateSelectedLocalPlans);
@@ -8383,8 +8414,30 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  if (event.target.closest("[data-resume-focused]")) {
+    resumeFocusedStudySession();
+    return;
+  }
+
+  if (event.target.closest("[data-pause-active-focused]")) {
+    focusedStudySession = normalizeActiveFocusSession(state.activeFocusSession);
+    pauseFocusedTimer();
+    renderContinuePanel();
+    return;
+  }
+
+  if (event.target.closest("[data-finalize-active-focused]")) {
+    resumeFocusedStudySession();
+    return;
+  }
+
+  if (event.target.closest("[data-discard-active-focused]")) {
+    discardFocusedStudySession();
+    return;
+  }
+
   if (event.target.closest("[data-focused-timer-toggle]")) {
-    if (focusedStudySession?.running) pauseFocusedTimer();
+    if (focusedStudySession?.status === "running") pauseFocusedTimer();
     else startFocusedTimer();
     return;
   }
@@ -8500,12 +8553,14 @@ document.addEventListener("input", (event) => {
   const draft = focusedDraftFor(focusedStudyIndex);
   if (field.type === "checkbox") draft[field.dataset.focusedField] = field.checked;
   else draft[field.dataset.focusedField] = field.value;
+  persistFocusedSession({ label: "Rascunho atualizado" });
 });
 document.addEventListener("change", (event) => {
   const reviewField = event.target.closest("[data-focused-review]");
   if (reviewField && focusedStudyIndex >= 0) {
     const draft = focusedDraftFor(focusedStudyIndex);
     draft.reviewCycles = [...document.querySelectorAll(".focused-study-panel [data-focused-review]:checked")].map((input) => input.dataset.focusedReview);
+    persistFocusedSession({ label: "Rascunho atualizado" });
     return;
   }
   const field = event.target.closest("[data-focused-field]");
@@ -8513,6 +8568,7 @@ document.addEventListener("change", (event) => {
   const draft = focusedDraftFor(focusedStudyIndex);
   if (field.type === "checkbox") draft[field.dataset.focusedField] = field.checked;
   else draft[field.dataset.focusedField] = field.value;
+  persistFocusedSession({ label: "Rascunho atualizado" });
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && els.evolutionTopicModal && !els.evolutionTopicModal.hidden) {
@@ -9364,6 +9420,7 @@ els.signOutButton?.addEventListener("click", async () => {
   }
   els.signOutButton.disabled = true;
   let canSignOut = true;
+  if (state.activeFocusSession) await persistFocusedSession({ immediate: true, label: "Sessão salva antes de sair" });
   if (cloudIsPrimary() && (state.hasUnsavedChanges || cloudSavePromise || cloudSaveTimer)) {
     canSignOut = await flushCloudSave("Dados salvos antes de sair");
     if (!canSignOut) {
@@ -9396,11 +9453,6 @@ els.signOutButton?.addEventListener("click", async () => {
 });
 els.settingsMenu?.addEventListener("click", (event) => event.stopPropagation());
 els.saveNowButton?.addEventListener("click", () => saveAppStateNow("Salvo"));
-els.connectDataFileButton?.addEventListener("click", connectDataFile);
-els.createDataFileButton?.addEventListener("click", createDataFile);
-els.loadDataFileButton?.addEventListener("click", () => loadSnapshotFromDataFile());
-els.saveDataFileButton?.addEventListener("click", () => writeSnapshotToDataFile("Arquivo salvo"));
-els.disconnectDataFileButton?.addEventListener("click", disconnectDataFile);
 els.saveContestButton?.addEventListener("click", () => saveAppStateNow("Dados do concurso salvos"));
 els.goContentButton?.addEventListener("click", () => switchTab("conteudo"));
 els.backToContentFromPriorityButton?.addEventListener("click", () => switchTab("conteudo"));
@@ -9420,10 +9472,7 @@ els.pendingOnlyToggle?.addEventListener("click", () => {
   renderGeneratedSchedule();
   saveAppStateNow(showPendingOnly ? "Mostrando metas pendentes" : "Mostrando todas as metas");
 });
-els.restoreCycleButton?.addEventListener("click", restorePreviousCycle);
-els.resetCyclesButton?.addEventListener("click", resetCycles);
 els.exportBackupButton?.addEventListener("click", exportBackup);
-els.backupNowButton?.addEventListener("click", exportBackup);
 els.importBackupInput?.addEventListener("change", async () => {
   try {
     await importBackup(els.importBackupInput.files[0]);
@@ -9487,10 +9536,16 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", () => updateSidebarActiveIndicator());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") refreshCloudPlanIfNeeded();
+  if (document.visibilityState === "visible") {
+    refreshCloudPlanIfNeeded();
+    if (state.activeFocusSession?.status === "running") ensureFocusedSessionPeriodicSave();
+  } else if (state.activeFocusSession) {
+    void persistFocusedSession({ immediate: true, label: "Sessão salva ao sair" });
+  }
 });
 window.addEventListener("beforeunload", () => {
   if (!isRestoring && state.currentPlanId) {
+    syncFocusedSessionToState();
     const snapshot = captureAppState();
     saveLocalSafetyCopy(snapshot);
     if (cloudIsPrimary()) {
@@ -9506,6 +9561,9 @@ window.addEventListener("beforeunload", () => {
       } catch {}
     }
   }
+});
+window.addEventListener("pagehide", () => {
+  if (!isRestoring && state.activeFocusSession) void persistFocusedSession({ immediate: true, label: "Sessão salva" });
 });
 
 let appInitializationStarted = false;
@@ -9524,14 +9582,9 @@ async function startMeuCronogramaApp() {
     updateContestSummary();
     renderAppViews();
   }
-  renderLocalMigrationControl();
   if (cloudUnavailable) updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
-  if (!loadedFromCloud && cloudIsAvailable() && localPlanCandidates().length) {
-    window.setTimeout(openCloudMigrationModal, 180);
-  }
-  restoreRememberedDataFile();
+  scheduleLocalMigrationPrompt();
   renderBackupReminder();
-  updateConnectedFileControls();
   ensureGoalTimerInterval();
   if (window.lucide) window.lucide.createIcons();
   requestAnimationFrame(() => {

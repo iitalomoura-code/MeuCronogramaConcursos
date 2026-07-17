@@ -630,40 +630,6 @@ svg {
   padding: 8px;
 }
 
-.backup-reminder {
-  display: grid;
-  gap: 7px;
-  padding: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.backup-reminder-text,
-.backup-reminder-notice {
-  display: block;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.backup-reminder-text {
-  color: var(--sidebar-text);
-  font-weight: 600;
-}
-
-.backup-reminder-notice {
-  color: #FFE5A3;
-}
-
-.backup-reminder-notice[hidden] {
-  display: none;
-}
-
-.backup-now-button {
-  min-height: 34px;
-  background: rgba(74, 144, 178, 0.20);
-}
-
 .backup-button,
 .sidebar-plan #newPlanButton {
   width: 100%;
@@ -1369,6 +1335,7 @@ textarea:focus {
 
 .continue-main-card,
 .continue-side-card,
+.continue-active-session,
 .continue-progress-card,
 .continue-insights-card,
 .continue-empty-card {
@@ -1380,6 +1347,7 @@ textarea:focus {
 
 .continue-main-card,
 .continue-side-card,
+.continue-active-session,
 .continue-insights-card,
 .continue-progress-card,
 .continue-empty-card {
@@ -1501,6 +1469,25 @@ textarea:focus {
   gap: 10px;
   margin-bottom: 14px;
 }
+
+.continue-active-session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 18px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: var(--radius-card);
+  background: var(--primary-soft);
+  box-shadow: var(--shadow-card);
+}
+
+.continue-active-session > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.continue-active-session strong { color: var(--text); font-size: 13px; }
+.continue-active-session p { margin: 0; overflow: hidden; color: var(--text); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.continue-active-session small { color: var(--muted); font-size: 12px; }
+.continue-active-session-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.continue-active-session-actions .danger-text { color: var(--danger, #B42318); }
 
 .continue-next-steps {
   order: 3;
@@ -5790,13 +5777,7 @@ details[open] > :not(summary),
   text-transform: uppercase;
 }
 .settings-section:first-child { border-top: 0; padding-top: 0; }
-.settings-inline-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.connected-file-status { margin: 0 2px; color: var(--sidebar-text); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
-.settings-disconnect-button { justify-self: start; min-height: 30px; color: #ffd6d1; font-size: 12px; }
-.settings-maintenance { margin-top: 2px; border-top-color: rgba(255, 214, 209, .22); }
-.settings-shortcuts-help { border-top: 1px solid var(--sidebar-border); padding-top: 9px; color: var(--sidebar-muted); font-size: 11px; }
-.settings-shortcuts-help summary { cursor: pointer; font-weight: 650; }
-.settings-shortcuts-help p { margin: 7px 0 0; line-height: 1.5; }
+.backup-last-export { display: block; padding: 2px 2px 0; color: var(--sidebar-muted); font-size: 11px; line-height: 1.35; }
 .backup-button:disabled { cursor: not-allowed; opacity: .48; }
 .save-status[data-state="error"] { color: #ffd6d1; }
 .save-status[data-state="pending"] { color: #ffe5a3; }
@@ -5901,7 +5882,6 @@ details[open] > :not(summary),
 }
 
 @media (max-width: 420px) {
-  .settings-inline-actions { grid-template-columns: 1fr; }
   .tab-button em { max-width: 78px; }
 }
 
@@ -6004,11 +5984,6 @@ details[open] > :not(summary),
 .plan-popover-manage:hover { background: var(--sidebar-hover); }
 .plan-popover-divider { height: 1px; margin: 7px 3px; background: var(--sidebar-border); }
 .plan-popover-manage { color: var(--sidebar-text); font-weight: 700; }
-
-.settings-advanced { border-top: 1px solid var(--sidebar-border); padding-top: 9px; }
-.settings-advanced > summary { cursor: pointer; color: var(--sidebar-muted); font-size: 12px; font-weight: 700; }
-.settings-advanced[open] > summary { margin-bottom: 4px; color: var(--sidebar-text); }
-.settings-advanced .settings-section:last-child { padding-bottom: 0; }
 
 .contest-plan-context { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
 .header-menu-button {
@@ -6130,6 +6105,8 @@ details[open] > :not(summary),
 .review-history-card > footer { display: flex; justify-content: flex-end; }
 
 @media (max-width: 820px) {
+  .continue-active-session { align-items: flex-start; flex-direction: column; }
+  .continue-active-session-actions { justify-content: flex-start; }
   .review-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .reviews-toolbar { grid-template-columns: 1fr 1fr; }
   .review-search-wrap { grid-column: 1 / -1; }
