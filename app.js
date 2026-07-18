@@ -16,6 +16,14 @@ const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
 const EVOLUTION_MIN_SAMPLE_QUESTIONS = 10;
 const EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS = 30;
 const EVOLUTION_TREND_MARGIN = 0.03;
+const ALLOWED_BLOCK_MINUTES = [30, 45, 60, 90, 120];
+const MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT = 2;
+const MAX_RECENT_SHARE_PER_SUBJECT = 0.4;
+const DURATION_HISTORY_MIN_SAMPLES = 2;
+const MAX_RELIABLE_SESSION_MINUTES = 240;
+const CYCLE_RECENCY_WEIGHT = 18;
+const CURRENT_CYCLE_COVERAGE_WEIGHT = 28;
+const DURATION_FIT_MARGIN_MINUTES = 5;
 const STATUS_OPTIONS = ["N\u00e3o iniciado", "Em andamento", "Conclu\u00eddo", "Reprogramar"];
 const REVIEW_INTERVALS = [
   { key: "24h", label: "24h", days: 1 },
@@ -105,6 +113,7 @@ let unitDetailIndex = -1;
 let recentTopicFeedback = null;
 let showPendingOnly = false;
 let continueSuggestionOffset = 0;
+let continueRecommendationFilters = { minutes: 0, activity: "" };
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
 let lastProgramParseMeta = {
@@ -2143,7 +2152,7 @@ function deadlineAnalysis(config = scheduleConfig()) {
   const daysToExam = exam ? Math.max(0, daysBetween(start, exam)) : 0;
   const weeksToExam = exam ? Math.max(1, Math.ceil(daysToExam / 7)) : 1;
   const weeklyHours = Number(config.horasSemanaCronograma || config.horasSemana) || 0;
-  const blockDuration = Number(config.duracaoBloco) || 1.5;
+  const blockDuration = estimatedPlanningBlockMinutes(config) / 60;
   const totalHours = weeksToExam * weeklyHours;
   const totalBlocks = Math.floor(totalHours / blockDuration);
   const weeklyBlocks = Math.floor(weeklyHours / blockDuration);
@@ -2168,6 +2177,7 @@ function deadlineAnalysis(config = scheduleConfig()) {
     weeklyBlocks,
     weeklyPace,
     weeksToExam,
+    estimatedBlockMinutes: Math.round(blockDuration * 60),
   };
 }
 
@@ -2517,6 +2527,9 @@ function adaptiveHistoryEntries() {
       acertos,
       percentual: questoes ? acertos / questoes : Number(block.percentual) || 0,
       dificuldade: block.dificuldade || "",
+      tipoAtividade: block.tipoAtividade || block.activityType || block.tipo || "",
+      tempoEstudado: Number(block.tempoEstudado) || 0,
+      duracao: Number(block.duracao) || 0,
       status: normalizeStatus(block.status),
       concluidoEm: block.concluidoEm || "",
       completedAt: block.completedAt || block.savedAt || "",
@@ -2732,6 +2745,134 @@ function adaptivePriorityForTarget(target = {}) {
   };
 }
 
+function subjectPlanningData(materia = "") {
+  return state.planningBase?.materias?.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia)) || {};
+}
+
+function topicPlanningData(materia = "", assunto = "") {
+  const matching = state.rows
+    .map(enrichThemeRow)
+    .filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(materia));
+  return matching.find((row) => topicMatches({ materia: row.materia, assunto: row.assunto }, materia, assunto)) || {};
+}
+
+function nearestAllowedDuration(minutes, mode = "nearest") {
+  const safe = Math.max(ALLOWED_BLOCK_MINUTES[0], Number(minutes) || ALLOWED_BLOCK_MINUTES[0]);
+  if (mode === "down") return [...ALLOWED_BLOCK_MINUTES].reverse().find((value) => value <= safe) || ALLOWED_BLOCK_MINUTES[0];
+  return ALLOWED_BLOCK_MINUTES.reduce((best, value) => Math.abs(value - safe) < Math.abs(best - safe) ? value : best, ALLOWED_BLOCK_MINUTES[0]);
+}
+
+function validRecordedDurationMinutes(entry = {}, activityType = "") {
+  const hours = Number(entry.tempoEstudado) || 0;
+  const minutes = Math.round(hours * 60);
+  if (minutes < 15 || minutes > MAX_RELIABLE_SESSION_MINUTES) return 0;
+  if (activityType && entry.tipoAtividade && normalizeForMatch(entry.tipoAtividade) !== normalizeForMatch(activityType)) return 0;
+  return minutes;
+}
+
+function median(values = []) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function durationHistoryFor(materia = "", assunto = "", activityType = "") {
+  const topicValues = adaptivePerformanceForTopic(materia, assunto)
+    .map((entry) => validRecordedDurationMinutes(entry, activityType))
+    .filter(Boolean);
+  if (topicValues.length >= DURATION_HISTORY_MIN_SAMPLES) return { minutes: median(topicValues), samples: topicValues.length, basis: "tema" };
+  const subjectValues = adaptivePerformanceForSubject(materia)
+    .map((entry) => validRecordedDurationMinutes(entry, activityType))
+    .filter(Boolean);
+  if (subjectValues.length >= DURATION_HISTORY_MIN_SAMPLES) return { minutes: median(subjectValues), samples: subjectValues.length, basis: "matéria" };
+  return { minutes: 0, samples: 0, basis: "" };
+}
+
+function estimateBlockDuration({ subject = {}, topic = "", activityType = "Teoria e questões", performance = null, priority = 0, difficulty = "", estimatedSize = "", suggestedBlocks = 0, reviewContext = null, referenceDuration = 0 } = {}) {
+  const materia = subject.materia || "";
+  const topicData = topicPlanningData(materia, topic);
+  const size = estimatedSize || topicData.tamanhoEstimado || estimateThemeSize(topic);
+  const topicDifficulty = difficulty || topicData.dificuldadeEstimada || estimateThemeDifficulty(topic);
+  const referenceMinutes = Math.max(30, Math.round((Number(referenceDuration) || getContestConfig().duracaoBloco || 1.5) * 60));
+  const review = Boolean(reviewContext?.hasAttention || normalizeForMatch(activityType).includes("revis"));
+  const normalizedActivity = normalizeForMatch(activityType);
+  const questionsOnly = normalizedActivity === "questoes";
+  const adaptive = performance || adaptivePriorityAdjustment({ materia, assunto: topic, prioridade: priority });
+  const recentAccuracy = adaptive?.accuracy;
+  const history = durationHistoryFor(materia, topic, activityType);
+  const reasons = [];
+  let minutes;
+
+  if (review || normalizedActivity.includes("correcao")) {
+    minutes = 30;
+    reasons.push("revisão ou correção curta");
+  } else if (questionsOnly) {
+    minutes = size === "Longo" || topicDifficulty === "Alta" ? 45 : 30;
+    reasons.push("atividade de questões");
+  } else if (normalizedActivity.includes("leitura")) {
+    minutes = size === "Longo" ? 60 : 45;
+    reasons.push("leitura de lei");
+  } else {
+    minutes = size === "Longo" ? 90 : size === "Médio" ? 60 : 45;
+    reasons.push(`tema estimado como ${size.toLowerCase()}`);
+  }
+
+  const subjectDifficulty = Number(subject.dominio) || 0;
+  const lowPerformance = recentAccuracy !== null && recentAccuracy < 0.6;
+  if (!review && !questionsOnly && (topicDifficulty === "Alta" || subjectDifficulty >= 4 || lowPerformance)) {
+    minutes = Math.max(minutes, 90);
+    reasons.push(lowPerformance ? `acerto recente de ${Math.round(recentAccuracy * 100)}%` : "dificuldade alta");
+  }
+
+  if (history.samples >= DURATION_HISTORY_MIN_SAMPLES) {
+    minutes = nearestAllowedDuration(history.minutes);
+    reasons.unshift(`tempo habitual registrado nesta ${history.basis}`);
+  }
+
+  const multiBlockTopic = Number(suggestedBlocks || topicData.blocosSugeridos) > 1 || size === "Longo";
+  if (multiBlockTopic && minutes >= 90) reasons.push("tema distribuído em mais de um bloco quando necessário");
+  if (!review && minutes > referenceMinutes && !(multiBlockTopic || topicDifficulty === "Alta" || lowPerformance)) minutes = nearestAllowedDuration(referenceMinutes, "down");
+  minutes = nearestAllowedDuration(minutes);
+
+  return {
+    minutes,
+    hours: minutes / 60,
+    reason: [...new Set(reasons)].slice(0, 3),
+    confidence: history.samples >= DURATION_HISTORY_MIN_SAMPLES ? "high" : topicData.tamanhoEstimado ? "medium" : "low",
+    size,
+    suggestedBlocks: Number(suggestedBlocks || topicData.blocosSugeridos) || 1,
+  };
+}
+
+function estimatedPlanningBlockMinutes(config = scheduleConfig()) {
+  const samples = (state.planningBase?.materias || []).flatMap((subject) => (subject.assuntos || []).slice(0, 8).map((topic) => {
+    const estimate = estimateBlockDuration({
+      subject,
+      topic: typeof topic === "string" ? topic : topic.assunto,
+      priority: priorityScore(subject),
+      referenceDuration: config.duracaoBloco,
+    });
+    return estimate.minutes;
+  }));
+  return samples.length ? nearestAllowedDuration(median(samples)) : Math.max(30, Math.round((Number(config.duracaoBloco) || 1.5) * 60));
+}
+
+function cycleAbsenceForSubject(materia = "") {
+  const cycles = state.cycleHistory || [];
+  for (let offset = 0; offset < cycles.length; offset += 1) {
+    const cycle = cycles[cycles.length - 1 - offset] || {};
+    const blocks = [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])];
+    if (blocks.some((block) => normalizeForMatch(block.materia) === normalizeForMatch(materia))) return offset;
+  }
+  return cycles.length + 1;
+}
+
+function subjectHasUrgentReview(materia = "") {
+  const review = reviewAttentionFor(materia);
+  return review.overdue.length > 0 || review.today.length > 0;
+}
+
 function scheduleConfig() {
   const base = getContestConfig();
   const override = Number(els.overrideWeeklyHours.value);
@@ -2828,7 +2969,9 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
   const minimum = totalBlocks >= scored.length ? 1 : 0;
   let used = minimum * scored.length;
   const distribution = scored.map((item) => {
-    const raw = ((totalBlocks - used) * item.prioridade) / totalPriority;
+    const absenceBonus = Math.min(0.22, cycleAbsenceForSubject(item.materia) * 0.035);
+    const fairWeight = item.prioridade + absenceBonus;
+    const raw = ((totalBlocks - used) * fairWeight) / (totalPriority + distributionRecencyWeight(scored));
     return { ...item, blocos: minimum + Math.floor(raw), sobra: raw - Math.floor(raw) };
   });
 
@@ -2837,25 +2980,45 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
     item.blocos += 1;
   });
 
-  return distribution.map(({ sobra, ...item }) => item).sort((a, b) => b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
+  return distribution.map(({ sobra, ...item }) => ({ ...item, foraDoCiclo: item.blocos === 0 })).sort((a, b) => b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
 }
 
-function buildAlternatingQueue(distribution, analysis) {
+function distributionRecencyWeight(items = []) {
+  return items.reduce((sum, item) => sum + Math.min(0.22, cycleAbsenceForSubject(item.materia) * 0.035), 0);
+}
+
+function buildAlternatingQueue(distribution, analysis, options = {}) {
   const pool = distribution.map((item) => ({
     ...item,
     remaining: item.blocos,
+    exposures: 0,
     topicCursor: 0,
     studyUnits: rankStudyUnitsByAdaptivePriority(item, availableStudyUnits(item, analysis)),
   }));
   const queue = [];
-  let previous = "";
+  const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
 
-  while (pool.some((item) => item.remaining > 0)) {
-    const candidates = pool
-      .filter((item) => item.remaining > 0 && item.materia !== previous)
-      .sort((a, b) => b.remaining - a.remaining || b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
-    const fallback = pool.filter((item) => item.remaining > 0).sort((a, b) => b.remaining - a.remaining || b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
-    const chosen = candidates[0] || fallback[0];
+  while (queue.length < totalBlocks && pool.length) {
+    const recentSubjects = queue.slice(-Math.max(3, pool.length * 2)).map((item) => item.materia);
+    const lastSubject = queue.length ? queue[queue.length - 1].materia : "";
+    const recentSequence = queue.slice(-MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT);
+    const consecutive = recentSequence.length === MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT && recentSequence.every((item) => item.materia === lastSubject) ? lastSubject : "";
+    const candidates = pool.map((item) => {
+      const recentCount = recentSubjects.filter((materia) => materia === item.materia).length;
+      const recentShare = recentSubjects.length ? recentCount / recentSubjects.length : 0;
+      const urgent = subjectHasUrgentReview(item.materia);
+      const excludedBySequence = pool.length > 2 && consecutive === item.materia && !urgent;
+      const excludedByShare = pool.length > 2 && recentSubjects.length >= 3 && recentShare > MAX_RECENT_SHARE_PER_SUBJECT && !urgent;
+      const rotation = Math.min(32, cycleAbsenceForSubject(item.materia) * CYCLE_RECENCY_WEIGHT) + (item.exposures === 0 ? CURRENT_CYCLE_COVERAGE_WEIGHT : 0);
+      const quota = item.remaining > 0 ? 22 : 0;
+      const concentrationPenalty = recentShare > MAX_RECENT_SHARE_PER_SUBJECT ? 34 : recentCount * 5;
+      return { item, urgent, excludedBySequence, excludedByShare, score: item.prioridade * 40 + rotation + quota - concentrationPenalty };
+    });
+    const eligible = candidates.filter((candidate) => !candidate.excludedBySequence && !candidate.excludedByShare);
+    const chosenCandidate = (eligible.length ? eligible : candidates)
+      .sort((a, b) => b.score - a.score || a.item.materia.localeCompare(b.item.materia))[0];
+    const chosen = chosenCandidate?.item;
+    if (!chosen) break;
     const topic = chooseTopicForBlock(chosen);
     const topicAdaptive = adaptivePriorityForTarget({
       materia: chosen.materia,
@@ -2870,9 +3033,10 @@ function buildAlternatingQueue(distribution, analysis) {
       prioridadeBase: chosen.prioridadeBase,
       adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicAdaptive.adjustment || 0),
       adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
+      rotationReason: chosen.exposures === 0 ? "a matéria ainda não apareceu neste ciclo" : cycleAbsenceForSubject(chosen.materia) > 1 ? "a matéria voltou após ciclos sem aparecer" : "",
     });
-    chosen.remaining -= 1;
-    previous = chosen.materia;
+    chosen.remaining = Math.max(0, chosen.remaining - 1);
+    chosen.exposures += 1;
   }
 
   return queue;
@@ -2931,6 +3095,61 @@ function distributeAcrossSlots(queue, slots) {
   return slots.map((slot, index) => blockRow(slot.bloco, slot.duracao, queue[index], slot.tipo));
 }
 
+function activityForQueueItem(item = {}) {
+  const review = reviewAttentionFor(item.materia, item.assunto);
+  if (review.hasAttention) return "Revisão";
+  return "Teoria e questões";
+}
+
+function fittedDurationMinutes(estimate, remainingMinutes) {
+  if (estimate.minutes <= remainingMinutes + DURATION_FIT_MARGIN_MINUTES) return estimate.minutes;
+  return [...ALLOWED_BLOCK_MINUTES].reverse().find((minutes) => minutes <= remainingMinutes) || 0;
+}
+
+function createAdaptiveCycleBlocks(materias, config, analysis) {
+  const capacityMinutes = Math.max(0, Math.round((Number(config.horasSemanaCronograma) || 0) * 60));
+  if (!capacityMinutes) return { blocks: [], distribution: [] };
+  const activeSubjects = materias.filter((subject) => availableStudyUnits(subject, analysis).length);
+  if (!activeSubjects.length) return { blocks: [], distribution: [] };
+  const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
+  const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
+  const queue = buildAlternatingQueue(plannedDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
+  const blocks = [];
+  let remainingMinutes = capacityMinutes;
+
+  for (const item of queue) {
+    if (remainingMinutes < ALLOWED_BLOCK_MINUTES[0]) break;
+    const subject = subjectPlanningData(item.materia);
+    const activityType = activityForQueueItem(item);
+    const reviewContext = reviewAttentionFor(item.materia, item.assunto);
+    const estimate = estimateBlockDuration({
+      subject,
+      topic: item.assunto,
+      activityType,
+      priority: item.prioridade,
+      reviewContext,
+      referenceDuration: config.duracaoBloco,
+    });
+    const durationMinutes = fittedDurationMinutes(estimate, remainingMinutes);
+    if (!durationMinutes) continue;
+    const duration = durationMinutes / 60;
+    const adjustedEstimate = durationMinutes === estimate.minutes
+      ? estimate
+      : { ...estimate, minutes: durationMinutes, hours: duration, reason: [...estimate.reason, "encaixe na carga restante"].slice(0, 3) };
+    blocks.push(blockRow(blocks.length + 1, duration, item, activityType, adjustedEstimate));
+    remainingMinutes -= durationMinutes;
+  }
+
+  const actualCounts = new Map();
+  blocks.forEach((block) => actualCounts.set(block.materia, (actualCounts.get(block.materia) || 0) + 1));
+  const distribution = plannedDistribution.map((item) => ({
+    ...item,
+    blocos: actualCounts.get(item.materia) || 0,
+    foraDoCiclo: !(actualCounts.get(item.materia) || 0),
+  }));
+  return { blocks, distribution, remainingMinutes };
+}
+
 function rebalanceGoalDurations(blocks, weeklyHours, baseDuration) {
   if (!blocks.length) return blocks;
   const totalHours = Number(weeklyHours) || blocks.reduce((sum, block) => sum + block.duracao, 0);
@@ -2966,7 +3185,7 @@ function rebalanceGoalDurations(blocks, weeklyHours, baseDuration) {
   return blocks;
 }
 
-function blockRow(number, duration, item, type) {
+function blockRow(number, duration, item, type, estimate = {}) {
   return {
     bloco: number,
     duracao: duration,
@@ -2976,6 +3195,7 @@ function blockRow(number, duration, item, type) {
     prioridadeBase: item.prioridadeBase ?? item.prioridade,
     adaptiveAdjustment: item.adaptiveAdjustment || 0,
     adaptiveReason: item.adaptiveReason || "",
+    rotationReason: item.rotationReason || "",
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
     status: "N\u00e3o iniciado",
@@ -2983,7 +3203,14 @@ function blockRow(number, duration, item, type) {
     acertos: 0,
     percentual: 0,
     dificuldade: "M\u00e9dia",
-    tipoAtividade: "",
+    tipoAtividade: type,
+    atividadeSugerida: type,
+    tamanhoEstimado: estimate.size || "",
+    blocosSugeridos: Number(estimate.suggestedBlocks) || 1,
+    duracaoSugerida: Number(estimate.hours) || duration,
+    duracaoMotivos: Array.isArray(estimate.reason) ? estimate.reason : [],
+    duracaoConfianca: estimate.confidence || "low",
+    duracaoAjustadaManual: false,
     tempoEstudado: 0,
     pontosRevisar: false,
     reprogramacoes: 0,
@@ -3064,11 +3291,9 @@ async function generateSchedule() {
   syncPlanningSliders();
   const config = scheduleConfig();
   const analysis = updateDeadlineDisplays(config);
-  const slots = createWeeklySlots(config);
-  const totalBlocks = Math.max(1, slots.length);
-  state.distribution = distributeBlocks(state.planningBase.materias, totalBlocks, { adaptive: true });
-  const queue = buildAlternatingQueue(state.distribution, analysis);
-  state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots), config.horasSemanaCronograma, config.duracaoBloco);
+  const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis);
+  state.distribution = cycle.distribution;
+  state.generatedBlocks = cycle.blocks;
   setTabEnabled("cronograma", true);
   renderAppViews();
   lockCycle();
@@ -3228,28 +3453,70 @@ function pendingCycleEntries() {
     .filter(({ block }) => isPendingBlock(block));
 }
 
+function activeCycleSubjectNames() {
+  return [...new Set((state.planningBase?.materias || []).filter((subject) => availableStudyUnits(subject, {}).length).map((subject) => subject.materia))];
+}
+
+function recommendationRotationFor(entry = {}) {
+  const block = entry.block || {};
+  const activeSubjects = activeCycleSubjectNames();
+  if (activeSubjects.length <= 2) return { score: 0, reason: "" };
+  const subject = block.materia;
+  const cycleBlocks = state.generatedBlocks || [];
+  const completedOrActive = cycleBlocks.filter((item) => ["Concluído", "Em andamento"].includes(normalizeStatus(item.status)));
+  const studiedSubjects = new Set(completedOrActive.map((item) => item.materia));
+  const priorCount = cycleBlocks.slice(0, entry.index).filter((item) => item.materia === subject).length;
+  const recent = completedOrActive.slice(-Math.max(3, activeSubjects.length * 2));
+  const recentCount = recent.filter((item) => item.materia === subject).length;
+  const share = recent.length ? recentCount / recent.length : 0;
+  const absence = cycleAbsenceForSubject(subject);
+  let score = 0;
+  let reason = "";
+  if (!studiedSubjects.has(subject) || priorCount === 0) {
+    score += CURRENT_CYCLE_COVERAGE_WEIGHT;
+    reason = "a matéria ainda não apareceu neste ciclo";
+  }
+  if (absence > 1) {
+    score += Math.min(30, absence * CYCLE_RECENCY_WEIGHT);
+    reason = "a matéria voltou após ciclos sem aparecer";
+  }
+  if (share > MAX_RECENT_SHARE_PER_SUBJECT) score -= 30;
+  return { score, reason, recentShare: share };
+}
+
+function blockMatchesContinueFilters(block = {}) {
+  const filters = continueRecommendationFilters || {};
+  if (Number(filters.minutes) && Math.round((Number(block.duracao) || 0) * 60) > Number(filters.minutes)) return false;
+  if (filters.activity && !normalizeForMatch(block.tipoAtividade || block.tipo || "").includes(normalizeForMatch(filters.activity))) return false;
+  return true;
+}
+
 function continueSuggestionScore(entry) {
   const block = entry.block || {};
   const adaptive = adaptivePriorityForTarget(block);
   const review = reviewAttentionFor(block.materia, block.assunto);
   const status = normalizeStatus(block.status);
+  const rotation = recommendationRotationFor(entry);
   let score = 0;
   if (review.overdue.length) score += 120;
   else if (review.today.length) score += 90;
   if (status === "Em andamento") score += 45;
-  score -= Math.min(80, (Number(block.reprogramacoes) || 0) * 40);
-  score += (adaptive.adjustment || 0) * 100;
-  score += (Number(block.prioridade) || 0) * 30;
-  return { score, adaptive, review };
+  score -= Math.min(30, (Number(block.reprogramacoes) || 0) * 12);
+  score += (adaptive.adjustment || 0) * 55;
+  score += (Number(block.prioridade) || 0) * 35;
+  score += rotation.score;
+  return { score, adaptive, review, rotation };
 }
 
 function rankedContinueEntries() {
-  return pendingCycleEntries()
+  const entries = pendingCycleEntries()
     .map((entry) => ({ ...entry, suggestion: continueSuggestionScore(entry) }))
     .sort((a, b) =>
       b.suggestion.score - a.suggestion.score ||
       a.index - b.index
     );
+  const filtered = entries.filter((entry) => blockMatchesContinueFilters(entry.block));
+  return filtered.length ? filtered : entries;
 }
 
 function splitPerformanceGroups(entries = []) {
@@ -3494,6 +3761,7 @@ function explainStudySuggestion(block, context = {}) {
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
+  if (context.rotation?.reason || block.rotationReason) factors.push(context.rotation?.reason || block.rotationReason);
   if (adaptive.reasons?.length) {
     adaptive.reasons.slice(0, 2).forEach((reason) => {
       if (reason.includes("acerto recente")) factors.push("desempenho recente indica reforço");
@@ -3508,9 +3776,19 @@ function explainStudySuggestion(block, context = {}) {
 }
 
 function continueAlternativeEntries(suggested) {
-  return rankedContinueEntries()
-    .filter((entry) => entry.index !== suggested?.index)
-    .slice(0, 5);
+  const remaining = rankedContinueEntries().filter((entry) => entry.index !== suggested?.index);
+  const diversified = [];
+  const subjects = new Set();
+  remaining.forEach((entry) => {
+    if (diversified.length >= 5 || subjects.has(entry.block.materia)) return;
+    diversified.push(entry);
+    subjects.add(entry.block.materia);
+  });
+  remaining.forEach((entry) => {
+    if (diversified.length >= 5 || diversified.some((item) => item.index === entry.index)) return;
+    diversified.push(entry);
+  });
+  return diversified;
 }
 
 function continueAvailableReviews() {
@@ -4190,12 +4468,14 @@ function renderContinuePanel() {
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
           <div><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
+          <div><span>Atividade sugerida</span><strong>${escapeHtml(suggested.block.atividadeSugerida || suggested.block.tipoAtividade || suggested.block.tipo || "Teoria e questões")}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
           <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
         </div>
-        ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". Desempenho e revisões relacionados são considerados apenas quando existem dados registrados.</p></div>" : ""}
+        <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-duration=\"" + suggested.index + "\" data-duration-minutes=\"" + minutes + "\">" + (minutes >= 60 ? (minutes / 60) + "h" + (minutes % 60 ? String(minutes % 60).padStart(2, "0") : "") : minutes + " min") + "</button>").join("")}</div></div>
+        ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
         <div class="continue-actions"><button class="primary-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
-        ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : priorityInfo(entry.block.prioridade).label + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
+        ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + (minutes >= 60 ? (minutes / 60) + "h" + (minutes % 60 ? String(minutes % 60).padStart(2, "0") : "") : minutes + " min") + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
     <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
@@ -8469,6 +8749,40 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-toggle-alternatives]")) {
     continueAlternativesOpen = !continueAlternativesOpen;
+    renderContinuePanel();
+    return;
+  }
+
+  const durationButton = event.target.closest("[data-continue-duration]");
+  if (durationButton) {
+    const index = Number(durationButton.dataset.continueDuration);
+    const minutes = Number(durationButton.dataset.durationMinutes);
+    const block = state.generatedBlocks[index];
+    if (!block || !ALLOWED_BLOCK_MINUTES.includes(minutes)) return;
+    block.duracao = minutes / 60;
+    block.duracaoAjustadaManual = true;
+    block.duracaoMotivos = ["Duração ajustada por você antes do estudo."];
+    if (!block.timerRunning) resetBlockTimer(block);
+    scheduleAutoSave();
+    renderContinuePanel();
+    showToast("Duração ajustada para este estudo.");
+    return;
+  }
+
+  const minutesFilter = event.target.closest("[data-continue-filter-minutes]");
+  if (minutesFilter) {
+    const minutes = Number(minutesFilter.dataset.continueFilterMinutes);
+    continueRecommendationFilters.minutes = Number(continueRecommendationFilters.minutes) === minutes ? 0 : minutes;
+    continueSuggestionOffset = 0;
+    renderContinuePanel();
+    return;
+  }
+
+  const activityFilter = event.target.closest("[data-continue-filter-activity]");
+  if (activityFilter) {
+    const activity = activityFilter.dataset.continueFilterActivity || "";
+    continueRecommendationFilters.activity = continueRecommendationFilters.activity === activity ? "" : activity;
+    continueSuggestionOffset = 0;
     renderContinuePanel();
     return;
   }

@@ -1429,7 +1429,7 @@ textarea:focus {
 
 .continue-meta-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -1468,6 +1468,54 @@ textarea:focus {
   grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.continue-duration-adjust,
+.continue-quick-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -4px 0 16px;
+}
+
+.continue-duration-adjust > span,
+.continue-quick-filters > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.continue-duration-adjust > div {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.continue-filter-chip {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--text);
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.continue-filter-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.continue-filter-chip.is-active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
 }
 
 .continue-active-session {
