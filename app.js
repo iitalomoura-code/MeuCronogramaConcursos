@@ -8139,13 +8139,22 @@ function exportBackup() {
   rememberBackupExport(snapshot.version || 1);
 }
 
+function snapshotFromDriveDataBundle(bundle = {}) {
+  const snapshots = bundle.planSnapshots && typeof bundle.planSnapshots === "object"
+    ? bundle.planSnapshots
+    : bundle.snapshots && typeof bundle.snapshots === "object"
+      ? bundle.snapshots
+      : {};
+  return snapshots[bundle.activePlanId] || Object.values(snapshots)[0] || null;
+}
+
 async function importBackup(file) {
   if (!file) return;
   const text = await file.text();
   const snapshot = JSON.parse(text);
   if (cloudIsPrimary()) {
     const importedSnapshot = snapshot?.dataType === "meu-cronograma-concursos-drive-data"
-      ? Object.values(snapshot.snapshots || {})[0]
+      ? snapshotFromDriveDataBundle(snapshot)
       : snapshot;
     if (!importedSnapshot || typeof importedSnapshot !== "object") throw new Error("Backup inválido.");
     await importSnapshotIntoCloud(importedSnapshot);

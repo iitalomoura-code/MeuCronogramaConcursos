@@ -26,5 +26,7 @@ assert.ok(app.includes("refreshCloudPlanIfNeeded"), "A vers\u00e3o online deve p
 assert.ok(app.includes("visibilitychange"), "O retorno para a aba deve verificar atualiza\u00e7\u00f5es online.");
 assert.ok(cloud.includes("getCloudPlanVersion"), "A checagem de retorno deve consultar apenas a vers\u00e3o remota.");
 assert.ok(index.includes("cloudMigrationModal"), "A interface deve oferecer a migra\u00e7\u00e3o local controlada.");
+assert.ok(app.includes("function snapshotFromDriveDataBundle"), "O importador deve reconhecer o formato completo de dados salvos.");
+assert.ok(app.includes("bundle.planSnapshots"), "O importador deve usar planSnapshots nos backups completos.");
 
 console.log("OK - camada online, migra\u00e7\u00e3o controlada e versionamento otimista presentes.");
