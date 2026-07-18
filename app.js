@@ -228,7 +228,6 @@ const els = {
   rowTemplate: document.querySelector("#rowTemplate"),
   selectAll: document.querySelector("#selectAll"),
   selectAllTopicsButton: document.querySelector("#selectAllTopicsButton"),
-  restorePedagogicalButton: document.querySelector("#restorePedagogicalButton"),
   expandAllSubjectsButton: document.querySelector("#expandAllSubjectsButton"),
   collapseAllSubjectsButton: document.querySelector("#collapseAllSubjectsButton"),
   contentSearch: document.querySelector("#contentSearch"),
@@ -1136,8 +1135,8 @@ function toggleSettingsMenu() {
   els.settingsToggleButton?.setAttribute("aria-expanded", nextOpen ? "true" : "false");
 }
 
-function rowFromInputs(container, baseRow = {}) {
-  const row = { ...baseRow };
+function rowFromInputs(container) {
+  const row = {};
   container.querySelectorAll("[data-field]").forEach((input) => {
     row[input.dataset.field] = input.type === "checkbox" ? (input.checked ? "Sim" : "Nao") : input.value.trim();
   });
@@ -1171,7 +1170,7 @@ function syncRowsFromTable() {
     items.forEach((item) => {
       const index = Number(item.dataset.rowIndex);
       if (!Number.isInteger(index) || !state.rows[index]) return;
-      const next = rowFromInputs(item, state.rows[index]);
+      const next = rowFromInputs(item);
       next.editadoManualmente = item.dataset.manual === "true" || state.rows[index].editadoManualmente === true;
       nextRows[index] = next;
     });
@@ -1601,9 +1600,6 @@ function renderRowsLegacy() {
   els.topicsBody.closest(".content-organizer-card")?.toggleAttribute("hidden", !hasRows);
   if (!hasRows) els.topicsBody.innerHTML = "";
   updateSelectAllControl();
-  if (els.restorePedagogicalButton) {
-    els.restorePedagogicalButton.hidden = !state.rows.some((row) => row.agrupamentoPedagogico && Array.isArray(row.originalRows) && row.originalRows.length);
-  }
   renderContentSummary();
   updateContentFlowSteps();
   if (window.lucide) window.lucide.createIcons();
@@ -1684,7 +1680,6 @@ function renderRows(options = {}) {
             <div class="theme-card-heading">
               <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
               <div class="theme-card-badges">
-                ${row.agrupamentoPedagogico ? `<span class="content-badge pedagogical" title="Agrupamento pedagógico sugerido a partir do edital">Agrupamento sugerido${row.agrupamentoConfianca ? ` · confiança ${escapeHtml(row.agrupamentoConfianca)}` : ""}</span>` : ""}
                 ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
                 ${problem ? '<span class="content-badge problem" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> Revisar</span>' : ""}
                 ${topicFeedbackBadge(row)}
@@ -1706,7 +1701,6 @@ function renderRows(options = {}) {
               <button class="text-action" type="button" data-move-topic>Mover para outra mat\u00e9ria</button>
               <button class="text-action" type="button" data-promote-topic>Transformar em nova mat\u00e9ria</button>
               <button class="text-action" type="button" data-duplicate-topic>Duplicar tema</button>
-              ${row.agrupamentoPedagogico && Array.isArray(row.originalRows) && row.originalRows.length ? '<button class="text-action" type="button" data-undo-pedagogical-group>Desfazer agrupamento</button>' : ""}
               <button class="text-action danger" type="button" data-delete-topic>Excluir tema</button>
             </div>
           </details>
@@ -1764,9 +1758,6 @@ function renderRows(options = {}) {
   els.topicsBody.hidden = !hasRows;
   els.topicsBody.closest(".content-organizer-card")?.toggleAttribute("hidden", !hasRows);
   updateSelectAllControl();
-  if (els.restorePedagogicalButton) {
-    els.restorePedagogicalButton.hidden = !state.rows.some((row) => row.agrupamentoPedagogico && Array.isArray(row.originalRows) && row.originalRows.length);
-  }
   renderContentSummary();
   updateContentFlowSteps();
   if (window.lucide) window.lucide.createIcons();
@@ -1921,36 +1912,6 @@ function organizeRowsByTheme(rows) {
   return [...organized, ...looseRows];
 }
 
-function pedagogicallyOrganizeRows(rows) {
-  const grouping = window.PedagogicalGrouping;
-  const groupedRows = grouping?.groupRows ? grouping.groupRows(rows) : rows;
-  return organizeRowsByTheme(groupedRows).map((row) => enrichThemeRow(row));
-}
-
-function restorePedagogicalOriginalRows() {
-  syncRowsFromTable();
-  const grouping = window.PedagogicalGrouping;
-  const canRestore = grouping?.restoreOriginalRows && state.rows.some((row) => row.agrupamentoPedagogico && Array.isArray(row.originalRows) && row.originalRows.length);
-  if (!canRestore) {
-    notifyContent("Não há agrupamentos pedagógicos para restaurar.", "warning");
-    return;
-  }
-  rememberContentUndo("Leitura original do edital restaurada.");
-  state.rows = grouping.restoreOriginalRows(state.rows).map((row) => enrichThemeRow(row));
-  renumberRows({ sync: false });
-  notifyContent("A leitura original do edital foi restaurada para revisão manual.");
-}
-
-function undoPedagogicalGroup(index) {
-  const grouping = window.PedagogicalGrouping;
-  const row = state.rows[index];
-  if (!grouping?.restoreOriginalRows || !row?.agrupamentoPedagogico || !Array.isArray(row.originalRows) || !row.originalRows.length) return;
-  rememberContentUndo("Agrupamento pedagógico desfeito.");
-  state.rows.splice(index, 1, ...grouping.restoreOriginalRows([row]).map((item) => enrichThemeRow(item)));
-  renumberRows({ sync: false });
-  notifyContent("Agrupamento desfeito. Os itens originais voltaram para conferência.");
-}
-
 function organizeThemesFromTable() {
   syncRowsFromTable();
   if (!state.rows.some((row) => row.materia && row.assunto)) {
@@ -1958,11 +1919,10 @@ function organizeThemesFromTable() {
     return;
   }
   const before = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
-  rememberContentUndo("Temas organizados pedagogicamente.");
-  state.rows = pedagogicallyOrganizeRows(state.rows);
+  state.rows = organizeRowsByTheme(state.rows);
   renderRows();
   const after = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
-  els.confirmationStatus.textContent = `Temas organizados por pertin\u00eancia pedagógica (${before} para ${after} temas)`;
+  els.confirmationStatus.textContent = `Temas organizados por pertin\u00eancia tem\u00e1tica (${before} para ${after} temas)`;
   els.confirmationStatus.classList.remove("confirmed");
 }
 
@@ -8969,7 +8929,7 @@ els.processButton.addEventListener("click", async () => {
   addHistory("colagem manual", text);
   const parsedRows = parseProgramContent(text);
   const warnings = programParserWarnings(parsedRows);
-  state.rows = pedagogicallyOrganizeRows(parsedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  state.rows = organizeRowsByTheme(parsedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
   showContentParserWarnings(warnings);
   renderRows();
   notifyContent(warnings.length ? "Conte\u00fado organizado. Revise os avisos antes de confirmar." : "Conte\u00fado organizado para confer\u00eancia.", warnings.length ? "warning" : "success");
@@ -8991,8 +8951,6 @@ els.addRowButton?.addEventListener("click", () => {
 });
 
 els.organizeThemesButton?.addEventListener("click", organizeThemesFromTable);
-
-els.restorePedagogicalButton?.addEventListener("click", restorePedagogicalOriginalRows);
 
 els.selectAllTopicsButton?.addEventListener("click", () => {
   syncRowsFromTable();
@@ -9195,14 +9153,6 @@ els.topicsBody.addEventListener("click", async (event) => {
   const topic = event.target.closest(".topic-item");
   if (!topic) return;
 
-  if (event.target.closest("[data-undo-pedagogical-group]")) {
-    event.preventDefault();
-    const index = topicStateIndex(topic);
-    syncRowsFromTable();
-    undoPedagogicalGroup(index);
-    return;
-  }
-
   if (event.target.closest("[data-focus-topic]")) {
     event.preventDefault();
     topic.querySelector("[data-theme-title]")?.focus();
@@ -9272,7 +9222,7 @@ els.topicsBody.addEventListener("click", async (event) => {
   if (event.target.closest("[data-confirm-split]")) {
     event.preventDefault();
     const input = topic.querySelector("[data-split-input]");
-    const row = rowFromInputs(topic, state.rows[topicStateIndex(topic)]);
+    const row = rowFromInputs(topic);
     const parts = rowsFromManualSplit(row, input?.value || "");
     if (parts.length < 2) {
       notifyContent("Informe pelo menos dois temas para separar.", "warning");
