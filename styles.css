@@ -5625,23 +5625,17 @@ details[open] > :not(summary),
 }
 
 .app-dialog-card.is-danger .danger-button {
-  min-width: 148px;
-  border-color: color-mix(in srgb, var(--danger) 52%, var(--border));
-  background: color-mix(in srgb, var(--danger) 9%, var(--card));
+  border-color: var(--border);
+  background: var(--card);
   color: var(--danger);
   box-shadow: none;
 }
 
 .app-dialog-card.is-danger .danger-button:hover {
-  border-color: var(--danger);
-  background: var(--danger);
-  color: #FFFFFF;
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--danger) 24%, transparent);
-}
-
-.app-dialog-card.is-danger .danger-button:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--danger) 28%, transparent);
-  outline-offset: 2px;
+  border-color: var(--primary);
+  background: var(--soft);
+  color: var(--danger);
+  box-shadow: none;
 }
 
 :root[data-theme="night"] .app-dialog-backdrop {
