@@ -4382,7 +4382,7 @@ async function resumeFocusedStudySession() {
 async function discardFocusedStudySession() {
   const session = focusedStudySession || state.activeFocusSession;
   if (!session) return;
-  const confirmed = await dialogConfirm("Descartar esta sessão? O tempo e o rascunho preenchido serão removidos, sem registrar desempenho.", { title: "Descartar sessão", variant: "danger", confirmLabel: "Descartar sessão" });
+  const confirmed = await dialogConfirm("Descartar esta sessão? O tempo e o rascunho preenchido serão removidos, sem registrar desempenho.", { title: "Descartar sessão", variant: "danger", confirmLabel: "Descartar sem salvar" });
   if (!confirmed) return;
   const index = resolveFocusedBlockIndex(session);
   state.activeFocusSession = null;
