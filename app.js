@@ -7245,7 +7245,7 @@ function openDialog({ title = "Atenção", message = "", variant = "info", field
         : `<input name="${escapeHtml(field.name)}" type="${field.type || "text"}" value="${escapeHtml(field.value || "")}" ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.max !== undefined ? `max="${field.max}"` : ""} ${field.step !== undefined ? `step="${field.step}"` : ""} />`;
       return `<label class="app-dialog-field">${escapeHtml(field.label || field.name)}${control}</label>`;
     }).join("");
-    const actionMarkup = actions.map((action, index) => `<button type="button" class="${action.variant === "danger" ? "danger-button" : action.variant === "primary" ? "primary-button" : "ghost-button"}" data-dialog-action="${escapeHtml(action.id || String(index))}">${escapeHtml(action.label || "Continuar")}</button>`).join("");
+    const actionMarkup = actions.map((action, index) => `<button type="button" class="${action.variant === "danger" ? "ghost-button danger-button" : action.variant === "primary" ? "primary-button" : "ghost-button"}" data-dialog-action="${escapeHtml(action.id || String(index))}">${escapeHtml(action.label || "Continuar")}</button>`).join("");
     overlay.innerHTML = `<div class="app-dialog-backdrop" data-dialog-dismiss></div><section class="app-dialog-card ${variant === "danger" ? "is-danger" : ""}" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle"><header><h2 id="appDialogTitle">${escapeHtml(title)}</h2></header><div class="app-dialog-message">${escapeHtml(message).replace(/\n/g, "<br>")}</div>${fieldMarkup ? `<div class="app-dialog-fields">${fieldMarkup}</div>` : ""}<footer>${actionMarkup}</footer></section>`;
     document.body.appendChild(overlay);
     const card = overlay.querySelector(".app-dialog-card");
