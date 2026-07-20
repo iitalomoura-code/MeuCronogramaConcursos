@@ -5086,19 +5086,119 @@ function cycleResultHasRecordedActivity(result = {}) {
     (Array.isArray(result.completed) && result.completed.length > 0);
 }
 
+function cycleActivitySignature(blocks = []) {
+  return (blocks || [])
+    .filter((block) => normalizeStatus(block?.status) !== "Não iniciado" || Number(block?.questoes) > 0 || Number(block?.acertos) > 0 || Number(block?.tempoEstudado) > 0 || Boolean(block?.concluidoEm))
+    .map((block) => [
+      topicKey(block.materia, block.assunto),
+      normalizeStatus(block.status),
+      Number(block.questoes) || 0,
+      Number(block.acertos) || 0,
+      Number(block.tempoEstudado) || 0,
+      block.concluidoEm || "",
+    ].join("::"))
+    .sort()
+    .join("||");
+}
+
+function cycleResultSignature(result = {}) {
+  const completedSignature = cycleActivitySignature(result.completed || []);
+  if (completedSignature) return `completed::${completedSignature}`;
+  const counts = result.counts || {};
+  return [
+    "metrics",
+    Number(result.questoes) || 0,
+    Number(result.acertos) || 0,
+    Number(result.horasEstudadas) || 0,
+    Number(counts["Em andamento"]) || 0,
+    Number(counts.Reprogramar) || 0,
+  ].join("::");
+}
+
 function pruneTrailingEmptyCycleClosures() {
   let removed = 0;
+  const historySignatures = new Set();
   state.cycleHistory = (state.cycleHistory || []).filter((cycle) => {
-    if (hasRecordedCycleActivity(cycle?.generatedBlocks)) return true;
+    const signature = cycleActivitySignature(cycle?.generatedBlocks);
+    if (signature && !historySignatures.has(signature)) {
+      historySignatures.add(signature);
+      return true;
+    }
     removed += 1;
     return false;
   });
+  const resultSignatures = new Set();
   state.cycleResults = (state.cycleResults || []).filter((result) => {
-    if (cycleResultHasRecordedActivity(result)) return true;
+    const signature = cycleResultSignature(result);
+    if (cycleResultHasRecordedActivity(result) && !resultSignatures.has(signature)) {
+      resultSignatures.add(signature);
+      return true;
+    }
     removed += 1;
     return false;
   });
   return removed;
+}
+
+function cycleNumberFromLabel(value) {
+  const match = String(value || "").match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function repairStoredCycleLabels() {
+  let changed = false;
+  const results = (state.cycleResults || []).filter(cycleResultHasRecordedActivity);
+  const topicCycles = new Map();
+
+  results.forEach((result, index) => {
+    const label = `Ciclo ${index + 1}`;
+    if (result.label !== label) {
+      result.label = label;
+      changed = true;
+    }
+    (result.completed || []).forEach((entry) => {
+      const key = topicKey(entry.materia, entry.assunto);
+      topicCycles.set(key, label);
+      if (entry.ciclo !== label) {
+        entry.ciclo = label;
+        changed = true;
+      }
+    });
+  });
+
+  const finalizedCount = completedCycleCount();
+  const currentLabel = `Ciclo ${finalizedCount + 1}`;
+  const currentTopicKeys = new Set((state.generatedBlocks || [])
+    .filter((block) => normalizeStatus(block.status) !== "Não iniciado" || Number(block.questoes) > 0 || Number(block.tempoEstudado) > 0)
+    .map((block) => topicKey(block.materia, block.assunto)));
+
+  (state.completedHistory || []).forEach((entry) => {
+    const key = topicKey(entry.materia, entry.assunto);
+    const storedNumber = cycleNumberFromLabel(entry.ciclo);
+    const label = topicCycles.get(key)
+      || (currentTopicKeys.has(key) ? currentLabel : `Ciclo ${Math.min(Math.max(storedNumber || 1, 1), Math.max(1, finalizedCount))}`);
+    if (entry.ciclo !== label) {
+      entry.ciclo = label;
+      changed = true;
+    }
+  });
+
+  (state.generatedBlocks || []).forEach((block) => {
+    if (cycleNumberFromLabel(block.ciclo) > finalizedCount + 1) {
+      block.ciclo = currentLabel;
+      changed = true;
+    }
+  });
+
+  (state.reviews || []).forEach((review) => {
+    if (cycleNumberFromLabel(review.ciclo) > finalizedCount + 1) {
+      review.ciclo = currentTopicKeys.has(topicKey(review.materia, review.assunto))
+        ? currentLabel
+        : `Ciclo ${Math.max(1, finalizedCount)}`;
+      changed = true;
+    }
+  });
+  return changed;
 }
 
 function liveCycleResult() {
@@ -7859,6 +7959,7 @@ function applyAppSnapshot(saved = {}) {
   isRestoring = true;
   let repairedCycleEntries = 0;
   let repairedReviewEntries = 0;
+  let repairedCycleLabels = false;
   clearUnsavedChanges();
   try {
   resetPlanningAccess();
@@ -7895,6 +7996,7 @@ function applyAppSnapshot(saved = {}) {
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   repairedCycleEntries = pruneTrailingEmptyCycleClosures();
   repairedReviewEntries = ensureReviewsArray();
+  repairedCycleLabels = repairStoredCycleLabels();
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
@@ -7920,7 +8022,7 @@ function applyAppSnapshot(saved = {}) {
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
-    if (repairedCycleEntries || repairedReviewEntries) scheduleAutoSave();
+    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels) scheduleAutoSave();
   }
 }
 
