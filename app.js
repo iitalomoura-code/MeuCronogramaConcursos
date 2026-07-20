@@ -5896,6 +5896,9 @@ function completeCurrentWeekAndGenerateNext() {
   state.cycleHistory.push(snapshotCurrentCycle());
   state.cycleHistory = state.cycleHistory.slice(-12);
   const completedCount = archiveCompletedFromCurrentWeek();
+  // O ciclo fechado já está preservado no histórico. Revisões e desempenho continuam no estado global.
+  state.generatedBlocks = [];
+  state.distribution = [];
   advanceReferenceWeek();
   generateSchedule();
   els.scheduleStatus.textContent = `Novo ciclo gerado. ${completedCount} tema${completedCount === 1 ? "" : "s"} conclu\u00eddo${completedCount === 1 ? "" : "s"} arquivado${completedCount === 1 ? "" : "s"}.`;
