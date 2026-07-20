@@ -2860,7 +2860,7 @@ function estimatedPlanningBlockMinutes(config = scheduleConfig()) {
 }
 
 function cycleAbsenceForSubject(materia = "") {
-  const cycles = state.cycleHistory || [];
+  const cycles = (state.cycleHistory || []).filter((cycle) => hasRecordedCycleActivity(cycle?.generatedBlocks));
   for (let offset = 0; offset < cycles.length; offset += 1) {
     const cycle = cycles[cycles.length - 1 - offset] || {};
     const blocks = [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])];
@@ -2891,8 +2891,14 @@ function scheduleConfig() {
   };
 }
 
+function completedCycleCount() {
+  const results = Array.isArray(state.cycleResults) ? state.cycleResults.filter(cycleResultHasRecordedActivity) : [];
+  if (results.length) return results.length;
+  return (state.cycleHistory || []).filter((cycle) => hasRecordedCycleActivity(cycle?.generatedBlocks)).length;
+}
+
 function currentCycleLabel() {
-  return `Ciclo ${state.cycleHistory.length + 1}`;
+  return `Ciclo ${completedCycleCount() + 1}`;
 }
 
 function renderCycleLabel() {
@@ -5082,14 +5088,16 @@ function cycleResultHasRecordedActivity(result = {}) {
 
 function pruneTrailingEmptyCycleClosures() {
   let removed = 0;
-  while (state.cycleHistory.length && !hasRecordedCycleActivity(state.cycleHistory[state.cycleHistory.length - 1]?.generatedBlocks)) {
-    state.cycleHistory.pop();
+  state.cycleHistory = (state.cycleHistory || []).filter((cycle) => {
+    if (hasRecordedCycleActivity(cycle?.generatedBlocks)) return true;
     removed += 1;
-  }
-  while (state.cycleResults.length && !cycleResultHasRecordedActivity(state.cycleResults[state.cycleResults.length - 1])) {
-    state.cycleResults.pop();
+    return false;
+  });
+  state.cycleResults = (state.cycleResults || []).filter((result) => {
+    if (cycleResultHasRecordedActivity(result)) return true;
     removed += 1;
-  }
+    return false;
+  });
   return removed;
 }
 
@@ -5199,9 +5207,9 @@ function evolutionTopicCatalog() {
 }
 
 function evolutionCycleRecords() {
-  const finalized = Array.isArray(state.cycleResults) ? state.cycleResults.filter(Boolean) : [];
+  const finalized = Array.isArray(state.cycleResults) ? state.cycleResults.filter(cycleResultHasRecordedActivity) : [];
   const fallback = !finalized.length
-    ? (state.cycleHistory || []).map((snapshot, index) => ({
+    ? (state.cycleHistory || []).filter((snapshot) => hasRecordedCycleActivity(snapshot?.generatedBlocks)).map((snapshot, index) => ({
       ...cycleSummary(snapshot.generatedBlocks || [], `Ciclo ${index + 1}`),
       finalizedAt: snapshot.savedAt || "",
       referenceWeek: snapshot.referenceWeek || "",
