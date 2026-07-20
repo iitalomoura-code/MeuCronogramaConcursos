@@ -108,6 +108,7 @@ const CLOUD_VERSION_CHECK_INTERVAL = 20000;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
 let performanceSaveSessionId = "";
+let cycleClosureInProgress = false;
 let reviewSearchTimer = 0;
 let unitDetailIndex = -1;
 let recentTopicFeedback = null;
@@ -4944,6 +4945,10 @@ function renderCycleClosureSummary() {
     els.cycleClosurePanel.innerHTML = `<div class="empty-panel">Gere metas antes de finalizar o ciclo.</div>`;
     return;
   }
+  if (!hasRecordedCycleActivity()) {
+    showToast("Registre algum andamento, reprogramação, tempo ou desempenho antes de finalizar este ciclo.");
+    return;
+  }
   const summary = cycleSummary();
   const subjectList = (items, emptyText) => items.length ? items.map((item) => `
     <li><strong>${escapeHtml(item.materia)}</strong><span>${formatPercent(item.percentual)} de acerto &middot; ${item.questoes} quest\u00f5es</span></li>
@@ -4991,15 +4996,26 @@ function renderCycleClosureSummary() {
   if (window.lucide) window.lucide.createIcons();
 }
 
-function confirmCycleClosure() {
-  if (!state.generatedBlocks.length) return;
-  const result = cycleSummary();
-  state.cycleResults.push(result);
-  state.cycleResults = state.cycleResults.slice(-60);
-  if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
-  completeCurrentWeekAndGenerateNext();
-  renderEvolution();
-  saveAppStateNow("Ciclo finalizado");
+async function confirmCycleClosure() {
+  if (cycleClosureInProgress || !state.generatedBlocks.length) return;
+  if (!hasRecordedCycleActivity()) {
+    await dialogAlert("Registre ao menos um andamento, reprogramação, tempo ou desempenho antes de finalizar este ciclo.");
+    return;
+  }
+  cycleClosureInProgress = true;
+  const confirmButton = els.cycleClosurePanel?.querySelector("[data-confirm-cycle-close]");
+  if (confirmButton) confirmButton.disabled = true;
+  try {
+    const result = cycleSummary();
+    state.cycleResults.push(result);
+    state.cycleResults = state.cycleResults.slice(-60);
+    if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
+    await completeCurrentWeekAndGenerateNext();
+    renderEvolution();
+    saveAppStateNow("Ciclo finalizado");
+  } finally {
+    cycleClosureInProgress = false;
+  }
 }
 
 function aggregateHistoricalSubjects(results = state.cycleResults) {
@@ -5038,13 +5054,43 @@ function aggregateHistoricalSubjects(results = state.cycleResults) {
   }).sort((a, b) => a.materia.localeCompare(b.materia));
 }
 
+function hasRecordedCycleActivity(blocks = state.generatedBlocks) {
+  return (blocks || []).some((block) => {
+    const status = normalizeStatus(block?.status);
+    return status !== "Não iniciado" ||
+      Number(block?.questoes) > 0 ||
+      Number(block?.acertos) > 0 ||
+      Number(block?.tempoEstudado) > 0 ||
+      Boolean(block?.concluidoEm);
+  });
+}
+
 function liveCycleHasProgress() {
-  return state.generatedBlocks.some((block) =>
-    normalizeStatus(block.status) === "Conclu\u00eddo" ||
-    Number(block.questoes) > 0 ||
-    Number(block.acertos) > 0 ||
-    reviewCyclesFromBlock(block).length > 0
-  );
+  return hasRecordedCycleActivity();
+}
+
+function cycleResultHasRecordedActivity(result = {}) {
+  const counts = result.counts || {};
+  return Number(result.metasConcluidas) > 0 ||
+    Number(result.questoes) > 0 ||
+    Number(result.acertos) > 0 ||
+    Number(result.horasEstudadas) > 0 ||
+    Number(counts["Em andamento"]) > 0 ||
+    Number(counts.Reprogramar) > 0 ||
+    (Array.isArray(result.completed) && result.completed.length > 0);
+}
+
+function pruneTrailingEmptyCycleClosures() {
+  let removed = 0;
+  while (state.cycleHistory.length && !hasRecordedCycleActivity(state.cycleHistory[state.cycleHistory.length - 1]?.generatedBlocks)) {
+    state.cycleHistory.pop();
+    removed += 1;
+  }
+  while (state.cycleResults.length && !cycleResultHasRecordedActivity(state.cycleResults[state.cycleResults.length - 1])) {
+    state.cycleResults.pop();
+    removed += 1;
+  }
+  return removed;
 }
 
 function liveCycleResult() {
@@ -5888,11 +5934,19 @@ function snapshotCurrentCycle() {
   };
 }
 
-function completeCurrentWeekAndGenerateNext() {
+async function completeCurrentWeekAndGenerateNext() {
   if (!state.generatedBlocks.length) {
-    generateSchedule();
+    await generateSchedule();
     return;
   }
+  if (!hasRecordedCycleActivity()) {
+    showToast("Registre algum andamento, reprogramação, tempo ou desempenho antes de finalizar este ciclo.");
+    return;
+  }
+  const closingCycle = currentCycleLabel();
+  state.generatedBlocks.forEach((block) => {
+    if (!block.ciclo) block.ciclo = closingCycle;
+  });
   state.cycleHistory.push(snapshotCurrentCycle());
   state.cycleHistory = state.cycleHistory.slice(-12);
   const completedCount = archiveCompletedFromCurrentWeek();
@@ -5900,7 +5954,7 @@ function completeCurrentWeekAndGenerateNext() {
   state.generatedBlocks = [];
   state.distribution = [];
   advanceReferenceWeek();
-  generateSchedule();
+  await generateSchedule();
   els.scheduleStatus.textContent = `Novo ciclo gerado. ${completedCount} tema${completedCount === 1 ? "" : "s"} conclu\u00eddo${completedCount === 1 ? "" : "s"} arquivado${completedCount === 1 ? "" : "s"}.`;
   renderCompleted();
   saveAppStateNow("Novo ciclo salvo");
@@ -5980,17 +6034,35 @@ function reviewRecordId(item, intervalKey) {
   return `${reviewSourceKey(item)}::${intervalKey}`;
 }
 
+function reviewDeduplicationKey(record = {}) {
+  if (isAdaptiveReview(record)) return record.id || adaptiveReviewSourceKey(record);
+  return [
+    "comum",
+    topicKey(record.materia, record.assunto),
+    record.intervalKey || record.intervalLabel || "",
+    record.dataBase || "",
+  ].join("::");
+}
+
+function reviewRecordPriority(record = {}) {
+  const status = normalizeReviewStatus(record.status);
+  const statusWeight = status === "Concluída" ? 3 : status === "Em revisão" ? 2 : 1;
+  return statusWeight * 10000000000000 + new Date(record.atualizadaEm || record.completedAt || record.createdAt || 0).getTime();
+}
+
 function ensureReviewsArray() {
   if (!Array.isArray(state.reviews)) state.reviews = [];
+  const previousLength = state.reviews.length;
   const byId = new Map();
   state.reviews.map((record) => normalizeReviewRecord(record)).forEach((record) => {
-    const key = record.id || `${record.tipo}::${reviewSourceKey(record)}::${record.intervalKey || ""}`;
+    const key = reviewDeduplicationKey(record);
     const previous = byId.get(key);
-    if (!previous || new Date(record.atualizadaEm || record.createdAt || 0) >= new Date(previous.atualizadaEm || previous.createdAt || 0)) {
+    if (!previous || reviewRecordPriority(record) >= reviewRecordPriority(previous)) {
       byId.set(key, record);
     }
   });
   state.reviews = [...byId.values()];
+  return Math.max(0, previousLength - state.reviews.length);
 }
 
 function adaptiveReviewSourceKey(item = {}) {
@@ -7777,6 +7849,8 @@ function resetPlanningAccess() {
 
 function applyAppSnapshot(saved = {}) {
   isRestoring = true;
+  let repairedCycleEntries = 0;
+  let repairedReviewEntries = 0;
   clearUnsavedChanges();
   try {
   resetPlanningAccess();
@@ -7811,6 +7885,8 @@ function applyAppSnapshot(saved = {}) {
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
+  repairedCycleEntries = pruneTrailingEmptyCycleClosures();
+  repairedReviewEntries = ensureReviewsArray();
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
@@ -7836,6 +7912,7 @@ function applyAppSnapshot(saved = {}) {
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
+    if (repairedCycleEntries || repairedReviewEntries) scheduleAutoSave();
   }
 }
 
@@ -9496,7 +9573,7 @@ els.scheduleWrap.addEventListener("click", (event) => {
   }
 
   if (!event.target.closest("[data-next-week]")) return;
-  completeCurrentWeekAndGenerateNext();
+  void completeCurrentWeekAndGenerateNext();
 });
 els.scheduleWrap.addEventListener("change", (event) => {
   if (event.target.matches("[data-duration-index]")) {
@@ -9599,7 +9676,7 @@ els.cycleClosurePanel?.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("[data-confirm-cycle-close]")) {
-    confirmCycleClosure();
+    void confirmCycleClosure();
   }
 });
 els.notebookSubjects?.addEventListener("click", (event) => {
