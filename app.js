@@ -3933,6 +3933,7 @@ function ensureFocusedSessionPeriodicSave() {
 }
 
 function persistFocusedSession({ immediate = false, label = "Sessão atualizada" } = {}) {
+  if (focusedStudySession?.standaloneReview) return Promise.resolve(true);
   if (!syncFocusedSessionToState() || isRestoring || !state.currentPlanId) return Promise.resolve(false);
   clearTimeout(focusedStudyPersistenceTimer);
   if (immediate) return saveAppStateNow(label);
@@ -4044,8 +4045,14 @@ function focusedDraftHasChanges(index) {
 
 async function closeFocusedStudy(options = {}) {
   if (focusedStudyIndex < 0 && !state.activeFocusSession) return;
-  if (!options.discard) await persistFocusedSession({ immediate: true, label: "Sessão salva" });
+  const standaloneReview = Boolean(state.generatedBlocks[focusedStudyIndex]?.reviewSessionOnly);
+  if (!options.discard && !standaloneReview) await persistFocusedSession({ immediate: true, label: "Sessão salva" });
   stopFocusedTimerInterval();
+  if (standaloneReview) {
+    state.generatedBlocks.splice(focusedStudyIndex, 1);
+    focusedStudyDrafts.delete(focusedStudyIndex);
+  }
+  state.activeFocusSession = null;
   removeFocusedStudyOverlay();
   focusedStudyIndex = -1;
   focusedStudySession = null;
@@ -4133,7 +4140,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
             <span><strong>Ponto de atenção</strong><small>Registra este tema no resultado; não agenda revisão sozinho.</small></span>
           </label>
         </div>
-        ${focusedReviewOptionsMarkup(block, draft)}
+        ${isReview ? "" : focusedReviewOptionsMarkup(block, draft)}
         <div class="focused-study-form">
           <div class="focused-study-form-grid">
             <label>Status
@@ -4176,6 +4183,41 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   `;
 }
 
+function reviewFocusBlock(review = {}) {
+  const subject = (state.planningBase?.materias || []).find((item) => normalizeForMatch(item.materia) === normalizeForMatch(review.materia));
+  const priority = Number(subject ? priorityScore(subject) : 0.5) || 0.5;
+  return {
+    reviewSessionOnly: true,
+    sourceReviewId: review.id || "",
+    materia: review.materia || "Matéria não informada",
+    assunto: review.assunto || "Tema não informado",
+    duracao: Math.max(0.25, Number(review.duracao || review.duracaoSugerida || 0.5) || 0.5),
+    prioridade: priority,
+    prioridadeBase: priority,
+    status: "Não iniciado",
+    tipoAtividade: "Revisão",
+    dificuldade: "Média",
+    questoes: 0,
+    acertos: 0,
+    percentual: 0,
+    tempoEstudado: 0,
+    observacoes: "",
+    reviewCycles: [],
+  };
+}
+
+async function openReviewFocusedStudy(review) {
+  if (!review?.id) return;
+  const existing = focusedStudySession || normalizeActiveFocusSession(state.activeFocusSession);
+  if (existing) {
+    showToast("Há uma sessão em andamento. Retome ou descarte a sessão atual antes de iniciar outra.");
+    return;
+  }
+  const index = state.generatedBlocks.length;
+  state.generatedBlocks.push(reviewFocusBlock(review));
+  await openFocusedStudy(index, { context: "revisao", reviewId: review.id, standaloneReview: true });
+}
+
 async function openFocusedStudy(index, context = { context: "estudo" }) {
   if (!state.generatedBlocks[index]) return;
   const existing = normalizeActiveFocusSession(state.activeFocusSession);
@@ -4202,11 +4244,12 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
       createdAt: new Date().toISOString(),
       lastUpdatedAt: new Date().toISOString(),
       draft,
+      standaloneReview: Boolean(context.standaloneReview),
     };
-    state.activeFocusSession = focusedStudySession;
+    state.activeFocusSession = context.standaloneReview ? null : focusedStudySession;
     focusedStudyIndex = index;
     focusedStudyDrafts.set(index, draft);
-    void persistFocusedSession({ immediate: true, label: "Sessão iniciada" });
+    if (!context.standaloneReview) void persistFocusedSession({ immediate: true, label: "Sessão iniciada" });
   }
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
@@ -4249,6 +4292,8 @@ function recordReviewAttempt(reviewId, block, draft, outcome) {
     record.status = "Concluída";
     record.concluidaEm = new Date().toISOString();
     record.adiamentoTipo = "data";
+  } else if (isAdaptiveReview(record)) {
+    record.status = outcome.nextStatus === "Em andamento" ? "Em revisão" : "Pendente";
   } else if (!isAdaptiveReview(record)) {
     record.status = "Pendente";
     record.adiamentoTipo = outcome.nextStatus === "Reprogramar" ? "ciclo" : "data";
@@ -4258,6 +4303,29 @@ function recordReviewAttempt(reviewId, block, draft, outcome) {
       record.disponibilidade = "Disponível no próximo ciclo possível";
     }
   }
+}
+
+function saveStandaloneReviewResult(block, draft, studiedHours) {
+  const questions = String(draft.questoes || "").trim() ? Number(draft.questoes) : 0;
+  const correctAnswers = String(draft.acertos || "").trim() ? Number(draft.acertos) : 0;
+  if (!Number.isFinite(questions) || !Number.isFinite(correctAnswers) || questions < 0 || correctAnswers < 0 || correctAnswers > questions) {
+    return { ok: false, message: "Confira as questões e os acertos informados." };
+  }
+  const previousStatus = normalizeStatus(block.status);
+  const nextStatus = normalizeStatus(draft.status || block.status);
+  block.status = nextStatus;
+  block.sessaoId = draft.sessionId;
+  block.lastSavedSessionId = draft.sessionId;
+  block.tipoAtividade = draft.tipoAtividade || "Revisão";
+  block.dificuldade = draft.dificuldade || "Média";
+  block.questoes = questions;
+  block.acertos = correctAnswers;
+  block.tempoEstudado = Math.max(0, Number(studiedHours) || 0);
+  block.observacoes = String(draft.observacoes || "").trim();
+  block.pontosRevisar = Boolean(draft.pontosRevisar);
+  block.atualizadoEm = new Date().toISOString();
+  updateBlockAccuracy(block);
+  return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome: null, standaloneReview: true };
 }
 
 async function saveFocusedStudy() {
@@ -4271,21 +4339,24 @@ async function saveFocusedStudy() {
   const sessionHours = focusedTimerSeconds() / 3600;
   const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
   const effectiveHours = Number((typedHours || sessionHours || 0).toFixed(2));
-  const outcome = saveStudyResult({
-    blockIndex: index,
-    source: "focused",
-    sessionId: draft.sessionId,
-    status: draft.status,
-    activityType: draft.tipoAtividade,
-    difficulty: draft.dificuldade,
-    studiedHours: effectiveHours,
-    questions: String(draft.questoes || "").trim() ? Number(draft.questoes) : 0,
-    correctAnswers: String(draft.acertos || "").trim() ? Number(draft.acertos) : 0,
-    notes: draft.observacoes,
-    reviewPoints: draft.pontosRevisar,
-    reviewCycles: draft.reviewCycles || [],
-    persist: false,
-  });
+  const standaloneReview = Boolean(block.reviewSessionOnly);
+  const outcome = standaloneReview
+    ? saveStandaloneReviewResult(block, draft, effectiveHours)
+    : saveStudyResult({
+      blockIndex: index,
+      source: "focused",
+      sessionId: draft.sessionId,
+      status: draft.status,
+      activityType: draft.tipoAtividade,
+      difficulty: draft.dificuldade,
+      studiedHours: effectiveHours,
+      questions: String(draft.questoes || "").trim() ? Number(draft.questoes) : 0,
+      correctAnswers: String(draft.acertos || "").trim() ? Number(draft.acertos) : 0,
+      notes: draft.observacoes,
+      reviewPoints: draft.pontosRevisar,
+      reviewCycles: draft.reviewCycles || [],
+      persist: false,
+    });
   if (!outcome.ok) {
     focusedStudySaving = false;
     if (!outcome.duplicate) showToast(outcome.message || "Não foi possível salvar o resultado.");
@@ -4294,10 +4365,12 @@ async function saveFocusedStudy() {
   const { adaptiveOutcome, previousStatus, nextStatus } = outcome;
   if (context.context === "revisao" && context.reviewId) recordReviewAttempt(context.reviewId, block, draft, outcome);
   const completedSession = focusedStudySession;
+  const standaloneBlock = standaloneReview ? state.generatedBlocks.splice(index, 1)[0] : null;
   state.activeFocusSession = null;
   focusedStudySession = null;
   const persisted = await saveAppStateNow("Resultado do estudo salvo");
   if (!persisted) {
+    if (standaloneBlock) state.generatedBlocks.splice(index, 0, standaloneBlock);
     state.activeFocusSession = completedSession;
     focusedStudySession = completedSession;
     block.lastSavedSessionId = "";
@@ -7924,7 +7997,7 @@ function applyFormState(data = {}) {
 function captureAppState() {
   syncRowsFromTable();
   syncPlanningSliders();
-  syncFocusedSessionToState();
+  if (!focusedStudySession?.standaloneReview) syncFocusedSessionToState();
   return {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -7935,7 +8008,7 @@ function captureAppState() {
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
-    generatedBlocks: state.generatedBlocks,
+    generatedBlocks: state.generatedBlocks.filter((block) => !block.reviewSessionOnly),
     completedHistory: state.completedHistory,
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
@@ -9010,9 +9083,10 @@ document.addEventListener("click", (event) => {
   const reviewButton = event.target.closest("[data-start-review]");
   if (reviewButton) {
     const review = reviewScheduleRows("all").find((item) => item.id === reviewButton.dataset.startReview);
-    const entry = review ? state.generatedBlocks.map((block, index) => ({ block, index })).find(({ block }) => topicMatches(review, block.materia, block.assunto)) : null;
-    if (entry) openFocusedStudy(entry.index, { context: "revisao", reviewId: review.id });
-    else switchTab("revisoes");
+    if (review) {
+      switchTab("continuar");
+      void openReviewFocusedStudy(review);
+    }
     return;
   }
 
@@ -9845,9 +9919,10 @@ els.reviewsBody?.addEventListener("click", async (event) => {
   const startButton = event.target.closest("[data-start-review]");
   if (startButton) {
     const review = reviewScheduleRows("all").find((item) => item.id === startButton.dataset.startReview);
-    const entry = review ? state.generatedBlocks.map((block, index) => ({ block, index })).find(({ block }) => topicMatches(review, block.materia, block.assunto)) : null;
-    if (entry) openFocusedStudy(entry.index, { context: "revisao", reviewId: review.id });
-    else void dialogAlert("Não foi possível localizar o bloco deste tema no ciclo atual.");
+    if (review) {
+      switchTab("continuar");
+      void openReviewFocusedStudy(review);
+    }
     return;
   }
   const historyButton = event.target.closest("[data-review-history]");

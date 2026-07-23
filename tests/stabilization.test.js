@@ -12,7 +12,7 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260719-danger-text"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260720-cycle-repair"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260723-focused-reviews"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");
@@ -21,5 +21,8 @@ assert.ok(app.includes('snapshot?.dataType === "meu-cronograma-concursos-drive-d
 assert.ok(app.includes("function completedCycleCount"), "A numeração deve ignorar fechamentos sem atividade registrada.");
 
 assert.ok(app.includes("function repairStoredCycleLabels"), "O reparo dos rótulos de ciclos deve estar disponível.");
+assert.ok(app.includes("function openReviewFocusedStudy"), "Revisões fora do ciclo atual devem abrir no modo focado.");
+assert.ok(app.includes("function saveStandaloneReviewResult"), "A revisão temporária deve registrar desempenho sem criar uma meta do ciclo.");
+assert.ok(app.includes("reviewSessionOnly"), "Blocos temporários de revisão não devem ser persistidos no ciclo.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");
