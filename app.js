@@ -1091,7 +1091,7 @@ function switchTab(tabName, activeButton = null) {
   closePlanMenu();
   closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
-  if (focusedStudySession && tabName !== "continuar") void closeFocusedStudy({ silent: true });
+  if (focusedStudySession && tabName !== "continuar") void suspendFocusedStudy({ silent: true });
   const run = () => activateTab(tabName, activeButton);
   if (!prefersReducedMotion() && document.startViewTransition) {
     document.startViewTransition(run);
@@ -4043,6 +4043,25 @@ function focusedDraftHasChanges(index) {
     focusedTimerSeconds() > 0;
 }
 
+function suspendFocusedStudy({ silent = false } = {}) {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return;
+
+  // Sessões de revisão temporárias existem somente enquanto o modo focado está aberto.
+  // As sessões de estudo normais permanecem no estado e podem ser retomadas pela tela Continuar.
+  if (session.standaloneReview) {
+    removeFocusedStudyOverlay();
+    return;
+  }
+
+  syncFocusedSessionToState();
+  void persistFocusedSession({ immediate: true, label: "Sessão em andamento" });
+  removeFocusedStudyOverlay();
+  focusedStudySession = null;
+  focusedStudyIndex = -1;
+  if (!silent) renderContinuePanel();
+}
+
 async function closeFocusedStudy(options = {}) {
   if (focusedStudyIndex < 0 && !state.activeFocusSession) return;
   const standaloneReview = Boolean(state.generatedBlocks[focusedStudyIndex]?.reviewSessionOnly);
@@ -4105,7 +4124,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   const reviewReason = review ? reviewReasonText(review) : "Retome os erros, releia o resumo e registre uma nova tentativa.";
   return `
     <div class="focused-study-modal" role="dialog" aria-modal="true" aria-labelledby="focusedStudyTitle">
-      <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Fechar modo focado"></button>
+      <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Continuar estudo depois"></button>
       <section class="focused-study-panel">
         <header class="focused-study-header">
           <div>
@@ -4113,7 +4132,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
             <span class="focused-study-subject">${escapeHtml(block.materia)}</span>
             <h2 id="focusedStudyTitle">${escapeHtml(themeTitle(block.assunto))}</h2>
           </div>
-          <button class="icon-button" type="button" data-close-focused aria-label="Fechar modo focado"><i data-lucide="x"></i></button>
+          <button class="icon-button" type="button" data-close-focused aria-label="Minimizar modo focado"><i data-lucide="x"></i></button>
         </header>
         <div class="focused-study-context ${isReview ? "is-review-context" : ""}">
           <strong>${isReview ? "Por que revisar agora" : "Conteúdo principal"}</strong>
@@ -4175,7 +4194,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
           <p>${escapeHtml(suggestion?.text || "")}</p>
         </details>
         <footer class="focused-study-actions">
-          <button class="ghost-button" type="button" data-close-focused>Cancelar</button>
+          <button class="ghost-button" type="button" data-close-focused>Continuar depois</button>
           <button class="primary-button" type="button" data-save-focused><i data-lucide="save"></i><span>Salvar resultado</span></button>
         </footer>
       </section>
@@ -8970,7 +8989,7 @@ els.mobilePlanTitle?.addEventListener("click", () => {
 els.mobileDrawerBackdrop?.addEventListener("click", () => closeMobileDrawer());
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-focused]")) {
-    closeFocusedStudy();
+    suspendFocusedStudy();
     return;
   }
 
@@ -9174,7 +9193,7 @@ document.addEventListener("keydown", (event) => {
     closeReviewHistory();
     return;
   }
-  if (event.key === "Escape" && focusedStudyIndex >= 0) closeFocusedStudy();
+  if (event.key === "Escape" && focusedStudyIndex >= 0) suspendFocusedStudy();
 });
 els.planSelect?.addEventListener("change", () => switchPlan(els.planSelect.value));
 els.newPlanButton?.addEventListener("click", openNewPlanModal);
@@ -10134,7 +10153,11 @@ window.addEventListener("resize", () => updateSidebarActiveIndicator());
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     refreshCloudPlanIfNeeded();
-    if (state.activeFocusSession?.status === "running") ensureFocusedSessionPeriodicSave();
+    if (state.activeFocusSession?.status === "running") {
+      ensureFocusedSessionPeriodicSave();
+      ensureFocusedTimerInterval();
+      updateFocusedTimerDisplay();
+    }
   } else if (state.activeFocusSession) {
     void persistFocusedSession({ immediate: true, label: "Sessão salva ao sair" });
   }
