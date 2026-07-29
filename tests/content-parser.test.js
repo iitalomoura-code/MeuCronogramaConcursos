@@ -25,7 +25,7 @@ function loadParser() {
     enrichThemeRow: (row) => row,
   };
   vm.createContext(context);
-  vm.runInContext("let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };\n" + source.slice(start, end), context);
+  vm.runInContext("let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };\n" + source.slice(start, end) + "\nthis.getLastProgramParseMeta = () => lastProgramParseMeta;", context);
   return context;
 }
 
@@ -97,5 +97,55 @@ assert.ok(!/parseProgramContent\(text\)/.test(source.slice(source.indexOf("els.f
 const subjectsInOpenContext = parser.parseProgramContent("L\u00cdNGUA PORTUGUESA\nInterpreta\u00e7\u00e3o de textos: coes\u00e3o e coer\u00eancia\nRACIOC\u00cdNIO L\u00d3GICO-MATEM\u00c1TICO\nProposi\u00e7\u00f5es: conectivos e equival\u00eancias\nMODELOS DE ADMINISTRA\u00c7\u00c3O P\u00daBLICA: gest\u00e3o p\u00fablica e governan\u00e7a");
 assert.deepEqual([...new Set(subjectsInOpenContext.map((row) => row.materia))], ["L\u00cdNGUA PORTUGUESA", "RACIOC\u00cdNIO L\u00d3GICO-MATEM\u00c1TICO"], "Nova materia conhecida deve ser reconhecida com outra materia aberta, sem promover titulo interno.");
 
+const cebraspeOutline = parser.parseProgramContent(`
+CONHECIMENTOS ESPEC\u00cdFICOS
+ADMINISTRA\u00c7\u00c3O FINANCEIRA E OR\u00c7AMENT\u00c1RIA
+1 Or\u00e7amento p\u00fablico.
+1.1 Conceito.
+1.2 Princ\u00edpios or\u00e7ament\u00e1rios.
+1.3 Ciclo or\u00e7ament\u00e1rio.
+2 Receita p\u00fablica.
+2.1 Conceito.
+2.2 Classifica\u00e7\u00f5es.
+2.3 Est\u00e1gios da receita.
+3 Despesa p\u00fablica.
+3.1 Conceito.
+3.2 Classifica\u00e7\u00f5es.
+3.3 Est\u00e1gios da despesa.
+3.3.1 Empenho.
+3.3.2 Liquida\u00e7\u00e3o.
+3.3.3 Pagamento.
+
+DIREITO ADMINISTRATIVO
+1 Organiza\u00e7\u00e3o administrativa.
+1.1 Administra\u00e7\u00e3o direta e indireta.
+1.2 Autarquias.
+2 Atos administrativos.
+2.1 Conceito.
+2.2 Requisitos.
+`);
+assert.equal(cebraspeOutline.length, 5, "Itens principais devem virar temas, sem criar tema para cada subitem.");
+const expense = cebraspeOutline.find((row) => row.materia === "ADMINISTRA\u00c7\u00c3O FINANCEIRA E OR\u00c7AMENT\u00c1RIA" && row.assunto.startsWith("Despesa p\u00fablica"));
+assert.ok(expense, "Despesa p\u00fablica deve permanecer como tema principal.");
+["Conceito", "Classifica\u00e7\u00f5es", "Est\u00e1gios da despesa", "Empenho", "Liquida\u00e7\u00e3o", "Pagamento"].forEach((content) => assert.ok(expense.assunto.includes(content), `Conte\u00fado hier\u00e1rquico esperado: ${content}`));
+assert.equal(expense.origemEdital.parsedStructure.number, "3", "A origem deve preservar o n\u00famero do tema principal.");
+assert.equal(expense.origemEdital.parsedStructure.children[2].children[0].number, "3.3.1", "A \u00e1rvore original deve preservar o v\u00ednculo pai-filho.");
+
+const continuation = parser.parseProgramContent(`
+GEST\u00c3O ESTRAT\u00c9GICA GOVERNAMENTAL
+1 Gest\u00e3o estrat\u00e9gica, planejamento institucional,
+indicadores de desempenho e avalia\u00e7\u00e3o de resultados.
+1.1 Miss\u00e3o e vis\u00e3o.
+`);
+assert.equal(continuation.length, 1, "Linha continuada deve permanecer no mesmo tema numerado.");
+assert.ok(continuation[0].assunto.includes("indicadores de desempenho e avalia\u00e7\u00e3o de resultados"), "Continua\u00e7\u00e3o de PDF deve ser incorporada ao item anterior.");
+
+const inlineOutline = parser.parseProgramContent("ADMINISTRA\u00c7\u00c3O P\u00daBLICA\n1 Administra\u00e7\u00e3o p\u00fablica. 1.1 Modelos. 1.2 Evolu\u00e7\u00e3o.");
+assert.equal(inlineOutline.length, 1, "Marcadores na mesma linha devem gerar uma \u00fanica estrutura hier\u00e1rquica.");
+assert.ok(inlineOutline[0].assunto.includes("Modelos") && inlineOutline[0].assunto.includes("Evolu\u00e7\u00e3o"), "Subitens na mesma linha devem ser associados ao tema principal.");
+assert.equal(parser.parseOutlineNumber("10.1.2. Item" ).level, 3, "N\u00edveis devem aceitar ponto final opcional.");
+assert.equal(parser.parseOutlineNumber("10").level, 1, "Marcador isolado deve preservar seu n\u00edvel para receber a linha seguinte.");
+assert.equal(parser.parseOutlineNumber("Lei n\u00ba 14.133/2021"), null, "N\u00fameros de leis no texto n\u00e3o podem ser tratados como hierarquia.");
+
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
-console.log("OK - marcadores genericos, temas explicitos, virgulas e normalizacao.");
+console.log("OK - marcadores gen\u00e9ricos, temas expl\u00edcitos, numera\u00e7\u00e3o hier\u00e1rquica, continua\u00e7\u00f5es e normaliza\u00e7\u00e3o.");

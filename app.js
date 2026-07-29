@@ -125,6 +125,9 @@ let lastProgramParseMeta = {
   suspiciousSubjects: [],
   duplicatedThemes: [],
   unusuallyLargeSubjects: [],
+  parsingProblems: [],
+  originalText: "",
+  parsedStructure: [],
   document: null,
 };
 let lastDocumentExtractionMeta = null;
@@ -760,7 +763,7 @@ const KNOWN_SUBJECT_NAMES = new Set([
 
 function isIgnoredProgramModule(line) {
   const normalized = normalizeForMatch(stripEnumerator(line).replace(/[:;.]$/, "").trim());
-  return /^(modulo|modulo\s+[ivxlcdm]+|conhecimentos gerais|conhecimentos especificos|conhecimentos basicos|prova objetiva|conteudo programatico|programa|anexo|parte\s+[ivxlcdm]+|grupo\s+\d+)$/i.test(normalized);
+  return /^(modulo|modulo\s+[ivxlcdm]+|conhecimentos gerais|conhecimentos especificos|conhecimentos basicos|conhecimentos complementares|prova objetiva|conteudo programatico|programa|anexo|parte\s+[ivxlcdm]+|grupo\s+\d+)$/i.test(normalized);
 }
 
 function splitInlineSubject(line) {
@@ -789,19 +792,28 @@ function looksLikeSubjectLine(line, hasOpenSubject = false) {
   if (words.length > 10) return false;
   const normalized = normalizeForMatch(clean);
   const exactKnownSubject = KNOWN_SUBJECT_NAMES.has(normalized);
+  if (isExplicitSubjectText(clean)) return true;
   const knownSubject =
     /\b(portugues|lingua portuguesa|direito|administracao|constitucional|administrativo|controle externo|contabilidade|matematica|raciocinio|informatica|tecnologia|tecnologia da informacao|legislacao|etica|auditoria|orcamento|financas|economia|estatistica|governanca|licitacoes|contratos|discursiva|recursos|logistica)\b/.test(normalized);
   if (!knownSubject) return false;
   if (exactKnownSubject) return true;
-  return isExplicitSubjectText(clean) && !hasOpenSubject;
+  return !hasOpenSubject && isExplicitSubjectText(clean);
 }
 
 function tidyProgramLine(value) {
-  return String(value || "")
+  const outlineTokens = [];
+  const protectedLine = String(value || "")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
+    .replace(/\d+(?:\.\d+)+(?:\/\d+)?\.?/g, (token) => {
+      const key = `__OUTLINE_${outlineTokens.length}__`;
+      outlineTokens.push(token);
+      return key;
+    });
+  return protectedLine
     .replace(/\s+([:;,.])/g, "$1")
     .replace(/([:;,.])(?=\S)/g, "$1 ")
+    .replace(/__OUTLINE_(\d+)__/g, (_, index) => outlineTokens[Number(index)] || "")
     .trim();
 }
 
@@ -814,6 +826,136 @@ function formatImportedProgramText(rawText) {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function parseOutlineNumber(value) {
+  const clean = tidyProgramLine(value);
+  const match = clean.match(/^\s*(\d+(?:\.\d+)*)\.?(?:\s+(.+))?$/);
+  if (!match) return null;
+  const number = match[1];
+  const text = normalizeTopic(match[2] || "");
+  return {
+    number,
+    level: number.split(".").filter(Boolean).length,
+    text,
+  };
+}
+
+function expandInlineOutlineMarkers(value) {
+  return String(value || "")
+    // A letra inicial em maiúscula evita quebrar referências como “Art. 37 da Constituição”.
+    // O marcador ainda precisa estar separado por espaço, protegendo leis e datas com barras.
+    .replace(/([.;])\s+(\d+(?:\.\d+)*\.?)\s+(?=[A-ZÀ-Ý])/g, "$1\n$2 ");
+}
+
+function normalizedProgramLines(rawText) {
+  return String(rawText || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .flatMap((line, sourceIndex) => expandInlineOutlineMarkers(line)
+      .split("\n")
+      .map((part) => ({ text: tidyProgramLine(part), sourceLine: sourceIndex + 1 })))
+    .filter((item) => item.text);
+}
+
+function mergeOutlineContinuationLines(lines = []) {
+  const items = [];
+  const problems = [];
+  lines.forEach((line) => {
+    const parsed = parseOutlineNumber(line.text);
+    if (parsed) {
+      items.push({
+        ...parsed,
+        sourceLine: line.sourceLine,
+        sourceLines: [line.sourceLine],
+        originalText: line.text,
+      });
+      return;
+    }
+    if (!items.length) {
+      problems.push({ type: "unclassified-line", text: line.text, sourceLine: line.sourceLine });
+      return;
+    }
+    const previous = items[items.length - 1];
+    previous.text = normalizeTopic(`${previous.text} ${line.text}`);
+    previous.originalText = `${previous.originalText}\n${line.text}`;
+    previous.sourceLines.push(line.sourceLine);
+  });
+  return { items, problems };
+}
+
+function buildOutlineTree(items = []) {
+  const nodes = [];
+  const byNumber = new Map();
+  const stack = [];
+  const problems = [];
+  items.forEach((item) => {
+    const segments = item.number.split(".");
+    const expectedParent = segments.length > 1 ? segments.slice(0, -1).join(".") : "";
+    const parent = expectedParent ? byNumber.get(expectedParent) : null;
+    const node = {
+      ...item,
+      parentNumber: parent?.number || expectedParent || null,
+      children: [],
+    };
+    if (expectedParent && !parent) {
+      problems.push({ type: "missing-parent", number: item.number, parentNumber: expectedParent, text: item.text, sourceLine: item.sourceLine });
+    }
+    if (parent) parent.children.push(node);
+    nodes.push(node);
+    byNumber.set(node.number, node);
+    stack[node.level - 1] = node;
+    stack.length = node.level;
+  });
+  return { nodes, roots: nodes.filter((node) => !node.parentNumber || !byNumber.has(node.parentNumber)), problems };
+}
+
+function outlineNodeSnapshot(node) {
+  return {
+    number: node.number,
+    level: node.level,
+    text: node.text,
+    parentNumber: node.parentNumber,
+    sourceLine: node.sourceLine,
+    sourceLines: node.sourceLines,
+    children: node.children.map(outlineNodeSnapshot),
+  };
+}
+
+function outlineDescendants(node) {
+  return node.children.flatMap((child) => [child, ...outlineDescendants(child)]);
+}
+
+function convertOutlineToStudyStructure(materia, tree) {
+  const subject = normalizeTopic(materia);
+  if (!subject) return [];
+  return tree.roots.map((root, order) => {
+    const contents = [];
+    outlineDescendants(root).forEach((item) => {
+      const text = normalizeTopic(item.text);
+      if (text && !contents.some((entry) => normalizeForMatch(entry) === normalizeForMatch(text))) contents.push(text);
+    });
+    const title = root.text || `Tema ${root.number}`;
+    const assunto = contents.length ? `${title}: ${contents.join("; ")}` : title;
+    return {
+      materia: subject,
+      assunto,
+      ordem: order + 1,
+      estudar: "Sim",
+      observacoes: "",
+      temaExplicito: true,
+      origemEdital: {
+        originalText: [root, ...outlineDescendants(root)].map((item) => item.originalText).join("\n"),
+        parsedStructure: outlineNodeSnapshot(root),
+      },
+    };
+  });
+}
+
+function detectOutlineProblems(lines = []) {
+  const merged = mergeOutlineContinuationLines(lines);
+  const tree = buildOutlineTree(merged.items);
+  return { merged, tree, problems: [...merged.problems, ...tree.problems] };
 }
 
 function splitTopics(text) {
@@ -830,7 +972,7 @@ function splitTopics(text) {
 function parseProgramContent(rawText) {
   const normalized = formatImportedProgramText(rawText);
   if (!normalized) {
-    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [], genericLabelsIgnored: [], looseTopics: [], suspiciousSubjects: [], duplicatedThemes: [], unusuallyLargeSubjects: [], document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta };
+    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [], genericLabelsIgnored: [], looseTopics: [], suspiciousSubjects: [], duplicatedThemes: [], unusuallyLargeSubjects: [], parsingProblems: [], originalText: String(rawText || ""), parsedStructure: [], document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta };
     return [];
   }
 
@@ -839,6 +981,9 @@ function parseProgramContent(rawText) {
   const looseTopics = [];
   const looseTopicsSeen = [];
   const genericLabelsIgnored = [];
+  const parsingProblems = [];
+  const parsedStructure = [];
+  let outlineLines = [];
   let currentSubject = "";
 
   const registerSubject = (subject) => {
@@ -846,7 +991,7 @@ function parseProgramContent(rawText) {
     if (!currentSubject) return;
     subjectNames.set(normalizeForMatch(currentSubject), currentSubject);
   };
-  const appendTopic = (materia, assunto, explicit = false) => {
+  const appendTopic = (materia, assunto, explicit = false, origemEdital = null) => {
     const topic = normalizeTopic(assunto);
     if (!topic) return;
     if (isGenericProgramLabel(topic)) {
@@ -854,7 +999,7 @@ function parseProgramContent(rawText) {
       return;
     }
     const order = rows.filter((row) => normalizeForMatch(row.materia || "") === normalizeForMatch(materia || "")).length + 1;
-    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit }));
+    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit, origemEdital }));
   };
   const flushLooseTopics = () => {
     if (!looseTopics.length) return;
@@ -863,18 +1008,51 @@ function parseProgramContent(rawText) {
     topics.forEach((topic) => appendTopic(currentSubject, topic, false));
   };
 
-  normalized.split("\n").map(tidyProgramLine).filter(Boolean).forEach((line) => {
-    if (isIgnoredProgramModule(line)) return;
+  const flushOutline = () => {
+    if (!outlineLines.length) return;
+    const result = detectOutlineProblems(outlineLines);
+    parsingProblems.push(...result.problems);
+    parsedStructure.push(...result.tree.roots.map(outlineNodeSnapshot));
+    convertOutlineToStudyStructure(currentSubject, result.tree).forEach((row) => {
+      const duplicate = rows.some((existing) => normalizeForMatch(existing.materia) === normalizeForMatch(row.materia) && normalizeForMatch(existing.assunto) === normalizeForMatch(row.assunto));
+      if (!duplicate) appendTopic(row.materia, row.assunto, true, row.origemEdital);
+    });
+    outlineLines = [];
+  };
+
+  normalizedProgramLines(normalized).forEach((record) => {
+    const line = record.text;
+    if (isIgnoredProgramModule(line)) {
+      flushOutline();
+      flushLooseTopics();
+      genericLabelsIgnored.push(line);
+      return;
+    }
     const explicitSubject = splitInlineSubject(line);
     if (explicitSubject) {
+      flushOutline();
       flushLooseTopics();
       registerSubject(explicitSubject.subject);
       return;
     }
 
     if (looksLikeSubjectLine(line, Boolean(currentSubject))) {
+      flushOutline();
       flushLooseTopics();
       registerSubject(stripEnumerator(line).replace(/[:;.]$/, ""));
+      return;
+    }
+
+    if (parseOutlineNumber(line)) {
+      flushLooseTopics();
+      outlineLines.push(record);
+      return;
+    }
+
+    // Depois de um marcador numérico, uma linha sem novo marcador é continuação
+    // do último item. Isso é comum na extração de PDF.
+    if (outlineLines.length) {
+      outlineLines.push(record);
       return;
     }
 
@@ -895,6 +1073,7 @@ function parseProgramContent(rawText) {
     }
   });
 
+  flushOutline();
   flushLooseTopics();
   const subjectsWithTopics = new Set(rows.filter((row) => row.materia && row.assunto).map((row) => normalizeForMatch(row.materia)));
   const duplicatedThemes = [];
@@ -920,6 +1099,9 @@ function parseProgramContent(rawText) {
     suspiciousSubjects,
     duplicatedThemes,
     unusuallyLargeSubjects,
+    parsingProblems,
+    originalText: String(rawText || ""),
+    parsedStructure,
     document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta,
   };
   return rows;
@@ -1381,6 +1563,7 @@ function programParserWarnings(rows) {
   if (lastProgramParseMeta.suspiciousSubjects?.length) warnings.push(`Revise possíveis matérias identificadas por contexto: ${lastProgramParseMeta.suspiciousSubjects.join(", ")}.`);
   if (lastProgramParseMeta.duplicatedThemes?.length) warnings.push(`${lastProgramParseMeta.duplicatedThemes.length} tema${lastProgramParseMeta.duplicatedThemes.length === 1 ? "" : "s"} repetido${lastProgramParseMeta.duplicatedThemes.length === 1 ? "" : "s"} na mesma matéria.`);
   if (lastProgramParseMeta.unusuallyLargeSubjects?.length) warnings.push(`Matéria${lastProgramParseMeta.unusuallyLargeSubjects.length === 1 ? "" : "s"} com muitos temas: ${lastProgramParseMeta.unusuallyLargeSubjects.map((item) => item.materia).join(", ")}.`);
+  if (lastProgramParseMeta.parsingProblems?.length) warnings.push(`${lastProgramParseMeta.parsingProblems.length} item${lastProgramParseMeta.parsingProblems.length === 1 ? "" : "s"} com estrutura incompleta foi mantido para revisão manual.`);
   const titles = topics.map((row) => normalizeForMatch(themeTitle(row.assunto))).filter(Boolean);
   const repeated = titles.filter((title, index) => titles.indexOf(title) !== index).length;
   if (titles.length && repeated / titles.length > 0.2) warnings.push("Mais de 20% dos temas têm nome repetido. Revise a divisão dos conteúdos.");
@@ -9205,21 +9388,22 @@ if (els.fileInput) els.fileInput.addEventListener("change", async () => {
     const text = await readFile(file);
     const formatted = formatImportedProgramText(text);
     els.programText.value = formatted;
-    addHistory(file.name, formatted);
+    addHistory(file.name, text);
   } catch (error) {
     void dialogAlert(error.message, { title: "Não foi possível ler o arquivo" });
   }
 });
 
 els.processButton.addEventListener("click", async () => {
-  const text = formatImportedProgramText(els.programText.value);
+  const originalText = els.programText.value;
+  const text = formatImportedProgramText(originalText);
   if (!text.trim()) {
     await dialogAlert("Informe o conteúdo programático antes de processar.");
     return;
   }
   els.programText.value = text;
-  addHistory("colagem manual", text);
-  const parsedRows = parseProgramContent(text);
+  addHistory("colagem manual", originalText);
+  const parsedRows = parseProgramContent(originalText);
   const warnings = programParserWarnings(parsedRows);
   state.rows = organizeRowsByTheme(parsedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
   showContentParserWarnings(warnings);
