@@ -1,10 +1,13 @@
 :root {
   color-scheme: light;
 
-  --bg-main: #FDFBF7;
-  --sidebar: #1E293B;
+  --font-body: Inter, "Segoe UI", Arial, sans-serif;
+  --font-heading: Inter, "Segoe UI", Arial, sans-serif;
+
+  --bg-main: #FCFBF8;
+  --sidebar: #24313A;
   --sidebar-active: #D97706;
-  --sidebar-hover: #29364B;
+  --sidebar-hover: #2C3B45;
   --sidebar-text: #E2E8F0;
   --sidebar-muted: #94A3B8;
   --sidebar-border: rgba(255, 255, 255, 0.12);
@@ -13,15 +16,15 @@
   --card: #FFFFFF;
   --primary: #D97706;
   --primary-hover: #B45309;
-  --primary-contrast: #1E293B;
+  --primary-contrast: #1F2933;
   --primary-soft: #FEF3E2;
   --primary-soft-text: #B45309;
   --success: #B45309;
   --soft: #FEF3E2;
-  --text: #1E293B;
-  --muted: #64748B;
-  --border: #E7E2D8;
-  --divider: #EFEAE0;
+  --text: #26323A;
+  --muted: #697783;
+  --border: #E8E3DA;
+  --divider: #F0ECE5;
   --danger: #B3261E;
   --warning: #B45309;
 
@@ -32,9 +35,10 @@
   --metric-teal-bg: #F1EEE8;
   --metric-teal-text: #64748B;
 
-  --radius-card: 16px;
+  --radius-card: 14px;
   --radius-control: 10px;
-  --shadow-card: 0 10px 26px rgba(30, 41, 59, 0.08);
+  --shadow-card: 0 8px 24px rgba(32, 42, 48, 0.055);
+  --focus-ring: rgba(217, 119, 6, 0.14);
 
   --badge-low-border: #B7E0BE;
   --badge-low-bg: #E2F2E4;
@@ -53,38 +57,42 @@
 :root[data-theme="night"] {
   color-scheme: dark;
 
-  --bg-main: #0F1420;
-  --sidebar: #0A0E17;
-  --sidebar-active: #F59E0B;
-  --sidebar-hover: #1B2434;
-  --sidebar-text: #E2E8F0;
-  --sidebar-muted: #8595AC;
+  --font-body: Inter, "Segoe UI", Arial, sans-serif;
+  --font-heading: Inter, "Segoe UI", Arial, sans-serif;
+
+  --bg-main: #171E1D;
+  --sidebar: #141A19;
+  --sidebar-active: #78511F;
+  --sidebar-hover: #202A28;
+  --sidebar-text: #E8EFEC;
+  --sidebar-muted: #A2B0AA;
   --sidebar-border: rgba(255, 255, 255, 0.10);
   --sidebar-block: rgba(255, 255, 255, 0.06);
 
-  --card: #1A2234;
-  --primary: #F59E0B;
-  --primary-hover: #FBBF24;
-  --primary-contrast: #0F1420;
-  --primary-soft: #3A2A12;
-  --primary-soft-text: #FCD9A0;
-  --success: #F59E0B;
-  --soft: #22293A;
-  --text: #E8EDF5;
-  --muted: #94A3B8;
-  --border: #2A3548;
-  --divider: #232E40;
-  --danger: #FF928A;
-  --warning: #FCD9A0;
+  --card: #202826;
+  --primary: #E1A043;
+  --primary-hover: #C9852B;
+  --primary-contrast: #1D2523;
+  --primary-soft: #3A2C1A;
+  --primary-soft-text: #F2C987;
+  --success: #C7A56A;
+  --soft: #293230;
+  --text: #E9EFEC;
+  --muted: #AAB6B0;
+  --border: #38433F;
+  --divider: #2E3835;
+  --danger: #F1A39C;
+  --warning: #F2C987;
 
-  --metric-indigo-bg: #3A2A12;
-  --metric-indigo-text: #FCD9A0;
-  --metric-blue-bg: #22293A;
-  --metric-blue-text: #CBD5E1;
-  --metric-teal-bg: #22293A;
-  --metric-teal-text: #CBD5E1;
+  --metric-indigo-bg: #312A20;
+  --metric-indigo-text: #F2C987;
+  --metric-blue-bg: #252F2D;
+  --metric-blue-text: #D0DAD5;
+  --metric-teal-bg: #27302D;
+  --metric-teal-text: #D0DAD5;
 
-  --shadow-card: 0 16px 34px rgba(0, 0, 0, 0.30);
+  --shadow-card: 0 10px 30px rgba(7, 12, 10, 0.22);
+  --focus-ring: rgba(225, 160, 67, 0.17);
 
   --badge-low-bg: #183322;
   --badge-low-text: #A9E2B3;
@@ -6701,4 +6709,134 @@ body.auth-verified .auth-loading-screen {
   .evolution-detail-grid { grid-template-columns: 1fr; }
   .evolution-topic-modal { padding: 12px; }
   .evolution-topic-dialog { padding: 18px; }
+}
+
+/* Global visual refinement: quieter surfaces, consistent typography and controls. */
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h2,
+h3,
+.brand-logo,
+.focused-study-header h2,
+.focused-study-timer strong,
+#notebookText .ql-editor h2,
+#notebookText .ql-editor h3 {
+  font-family: var(--font-heading);
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.18;
+}
+
+h3 {
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+p { line-height: 1.55; }
+
+label,
+.field-label { font-weight: 600; }
+
+button,
+input,
+select,
+textarea {
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+:where(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+input,
+select,
+textarea { background: var(--card); }
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.sidebar {
+  gap: 16px;
+  padding: 22px 16px 16px;
+}
+
+.sidebar-flow { gap: 2px; }
+
+.tab-button {
+  min-height: 40px;
+  font-weight: 600;
+  transition: background-color 180ms ease, color 180ms ease, transform 160ms ease;
+}
+
+.tab-button.active { box-shadow: none; }
+
+.status-pill {
+  border-radius: var(--radius-control);
+  font-weight: 600;
+}
+
+.primary-button,
+.ghost-button,
+.file-button,
+.icon-button,
+.text-action,
+.priority-toggle,
+.scale-button { font-weight: 600; }
+
+.primary-button,
+.primary-button:hover,
+.primary-button:focus-visible {
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.18);
+}
+
+.primary-button:hover { box-shadow: 0 6px 16px rgba(217, 119, 6, 0.22); }
+
+.ghost-button,
+.file-button { background: transparent; }
+
+.ghost-button:hover,
+.file-button:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: var(--primary-soft);
+}
+
+.panel-heading { margin-bottom: 24px; }
+
+:root[data-theme="night"] input,
+:root[data-theme="night"] select,
+:root[data-theme="night"] textarea { background: var(--soft); }
+
+:root[data-theme="night"] .primary-button,
+:root[data-theme="night"] .primary-button:hover,
+:root[data-theme="night"] .primary-button:focus-visible {
+  box-shadow: 0 5px 15px rgba(225, 160, 67, 0.16);
+}
+
+:root[data-theme="night"] .ghost-button,
+:root[data-theme="night"] .file-button { background: transparent; }
+
+:root[data-theme="night"] .settings-popover,
+:root[data-theme="night"] .plan-menu,
+:root[data-theme="night"] .ql-toolbar.ql-snow,
+:root[data-theme="night"] #notebookText.ql-container {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+:root[data-theme="night"] #notebookText .ql-editor {
+  color: var(--text);
+  background: var(--card);
 }
