@@ -7326,6 +7326,295 @@ textarea:focus {
   .continue-review-list { grid-template-columns: 1fr; }
 }
 
+/* Caderno de Resumos: navegação discreta e escrita em primeiro plano. */
+#tab-erros .panel-heading {
+  margin-bottom: 24px;
+}
+
+.notebook {
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(22px, 3vw, 42px);
+}
+
+.notebook-navigation {
+  min-width: 0;
+}
+
+.notebook-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+  color: var(--muted);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.notebook-search:focus-within {
+  border-color: var(--primary);
+  background: var(--card);
+}
+
+.notebook-search i {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.notebook-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.notebook-search input::placeholder {
+  color: var(--muted);
+}
+
+.notebook-columns {
+  grid-template-columns: 1fr;
+  gap: 22px;
+}
+
+.notebook-col h3 {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+.notebook-list {
+  gap: 2px;
+  max-height: min(29vh, 260px);
+  padding-right: 4px;
+}
+
+.notebook-item {
+  min-height: 38px;
+  padding: 8px 9px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.notebook-item:hover {
+  border-color: transparent;
+  background: var(--soft);
+}
+
+.notebook-item.is-active {
+  border-color: transparent;
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+.notebook-item small,
+.notebook-item.is-active small {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.notebook-has-note,
+.notebook-item.is-active .notebook-has-note {
+  color: var(--success) !important;
+}
+
+.notebook-editor {
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.notebook-editor-header {
+  gap: 5px;
+  min-height: 42px;
+  padding: 2px 0;
+}
+
+.notebook-editor-header strong {
+  font-family: Inter, sans-serif;
+  font-size: clamp(19px, 2vw, 24px);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.notebook-editor-header span {
+  max-width: 76ch;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#notebookToolbar.ql-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: var(--soft);
+  padding: 6px 8px;
+  scrollbar-width: thin;
+}
+
+#notebookToolbar.ql-toolbar .ql-formats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-right: 5px;
+  padding-right: 5px;
+  border-right: 1px solid var(--divider);
+}
+
+#notebookToolbar.ql-toolbar .ql-formats:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+
+#notebookToolbar.ql-toolbar button,
+#notebookToolbar.ql-toolbar .ql-picker-label {
+  border-radius: 7px;
+}
+
+#notebookText.ql-container {
+  min-height: clamp(460px, 62vh, 720px);
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  box-shadow: var(--shadow-card);
+}
+
+#notebookText .ql-editor {
+  min-height: clamp(460px, 62vh, 720px);
+  max-width: 82ch;
+  padding: clamp(20px, 3vw, 34px);
+  font-size: 15px;
+  line-height: 1.78;
+}
+
+#notebookText .ql-editor h2,
+#notebookText .ql-editor h3 {
+  margin: 1.45em 0 0.55em;
+  font-family: Inter, sans-serif;
+  letter-spacing: 0;
+}
+
+#notebookText .ql-editor h2 {
+  font-size: 1.42em;
+}
+
+#notebookText .ql-editor h3 {
+  font-size: 1.18em;
+}
+
+#notebookText .ql-editor p,
+#notebookText .ql-editor li {
+  margin-bottom: 0.62em;
+}
+
+#notebookText .ql-editor blockquote {
+  margin: 1.25em 0;
+  padding: 0.5em 0 0.5em 15px;
+  border-left-width: 2px;
+}
+
+#notebookText .ql-editor hr {
+  margin: 1.7em 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.notebook-status {
+  min-height: 18px;
+  padding-left: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+:root[data-theme="night"] .notebook-search,
+:root[data-theme="night"] .notebook-item:hover {
+  background: var(--soft);
+}
+
+:root[data-theme="night"] .notebook-item.is-active {
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+:root[data-theme="night"] #notebookToolbar.ql-toolbar,
+:root[data-theme="night"] #notebookText.ql-container,
+:root[data-theme="night"] #notebookText .ql-editor {
+  background: var(--card);
+}
+
+@media (max-width: 900px) {
+  .notebook {
+    grid-template-columns: 1fr;
+  }
+
+  .notebook-navigation {
+    order: 0;
+  }
+
+  .notebook-columns {
+    grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+    gap: 16px;
+  }
+
+  .notebook-list {
+    max-height: 180px;
+  }
+}
+
+@media (max-width: 560px) {
+  #tab-erros .panel-heading {
+    margin-bottom: 18px;
+  }
+
+  .notebook {
+    gap: 22px;
+  }
+
+  .notebook-columns {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 12px;
+  }
+
+  .notebook-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  #notebookText.ql-container,
+  #notebookText .ql-editor {
+    min-height: 54vh;
+  }
+
+  #notebookText .ql-editor {
+    padding: 18px 16px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+}
+
 /* Continue context: expose the existing study details without restoring dashboard weight. */
 .continue-topic-context {
   display: grid;

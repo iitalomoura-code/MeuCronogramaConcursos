@@ -8,11 +8,13 @@ const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const index = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
 
 assert.ok(app.includes("function saveStudyResult"), "O registro central de desempenho deve existir.");
+assert.ok(app.includes("function notebookThemeMatchesSearch"), "A busca local do Caderno de Resumos deve estar disponível.");
+assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expor a busca de resumos.");
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260730-evolution-refinement"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260730-evolution-refinement"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260730-notebook-refinement"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260730-notebook-refinement"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");

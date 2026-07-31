@@ -288,6 +288,7 @@ const els = {
   reviewsBody: document.querySelector("#reviewsBody"),
   notebookSubjects: document.querySelector("#notebookSubjects"),
   notebookThemes: document.querySelector("#notebookThemes"),
+  notebookSearch: document.querySelector("#notebookSearch"),
   notebookText: document.querySelector("#notebookText"),
   notebookEditorHeader: document.querySelector("#notebookEditorHeader"),
   notebookStatus: document.querySelector("#notebookStatus"),
@@ -7524,10 +7525,24 @@ function notebookSubjectGroups() {
   return map;
 }
 
+function notebookSearchableText(value) {
+  const template = document.createElement("template");
+  template.innerHTML = sanitizeNotebookHtml(value || "");
+  return normalizeForMatch(template.content.textContent || "");
+}
+
+function notebookThemeMatchesSearch(materia, theme, query) {
+  if (!query) return true;
+  const note = state.notebook[notebookKey(materia, theme.assunto)] || "";
+  const searchable = `${materia} ${theme.title} ${themeDetails(theme.assunto)} ${notebookSearchableText(note)}`;
+  return normalizeForMatch(searchable).includes(query);
+}
+
 function renderErrors() {
   if (!els.notebookSubjects) return;
   const groups = notebookSubjectGroups();
   const materias = [...groups.keys()];
+  const query = normalizeForMatch(els.notebookSearch?.value || "").trim();
 
   if (!materias.length) {
     els.notebookSubjects.innerHTML = `<div class="empty-panel">Confirme o conte\u00fado program\u00e1tico para ver as mat\u00e9rias aqui.</div>`;
@@ -7543,14 +7558,19 @@ function renderErrors() {
     notebookSelection = { materia: materias[0], assunto: "" };
   }
 
-  els.notebookSubjects.innerHTML = materias.map((materia) => `
+  const visibleMaterias = materias.filter((materia) => groups.get(materia).some((theme) => notebookThemeMatchesSearch(materia, theme, query)));
+  els.notebookSubjects.innerHTML = visibleMaterias.length ? visibleMaterias.map((materia) => {
+    const subjectThemes = groups.get(materia);
+    const savedCount = subjectThemes.filter((theme) => notebookHasContent(state.notebook[notebookKey(materia, theme.assunto)] || "")).length;
+    return `
     <button type="button" class="notebook-item ${materia === notebookSelection.materia ? "is-active" : ""}" data-notebook-subject="${escapeHtml(materia)}">
       <span>${escapeHtml(materia)}</span>
-      <small>${groups.get(materia).length} tema${groups.get(materia).length === 1 ? "" : "s"}</small>
+      <small>${subjectThemes.length} tema${subjectThemes.length === 1 ? "" : "s"}${savedCount ? ` · ${savedCount} resumo${savedCount === 1 ? "" : "s"}` : ""}</small>
     </button>
-  `).join("");
+  `;
+  }).join("") : `<div class="empty-panel">Nenhum resumo ou tema encontrado.</div>`;
 
-  const themes = groups.get(notebookSelection.materia) || [];
+  const themes = (groups.get(notebookSelection.materia) || []).filter((theme) => notebookThemeMatchesSearch(notebookSelection.materia, theme, query));
   els.notebookThemes.innerHTML = themes.length ? themes.map((theme) => {
     const hasNote = notebookHasContent(state.notebook[notebookKey(notebookSelection.materia, theme.assunto)] || "");
     return `
@@ -10186,6 +10206,7 @@ els.notebookThemes?.addEventListener("click", (event) => {
   notebookSelection.assunto = button.dataset.notebookTheme;
   renderErrors();
 });
+els.notebookSearch?.addEventListener("input", () => renderErrors());
 function initQuillEditor() {
   if (quillEditor || typeof Quill === "undefined" || !els.notebookText) return;
   quillEditor = new Quill("#notebookText", {
