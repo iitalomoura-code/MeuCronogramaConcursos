@@ -8869,3 +8869,103 @@ textarea:focus {
     padding-inline: 8px;
   }
 }
+
+/* Ações das revisões: cada comando é um controle independente e legível. */
+.review-card-actions {
+  gap: 9px;
+}
+
+.review-card-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--text);
+  font-family: Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.review-card-actions > .primary-button.compact-button {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #FFFFFF;
+}
+
+.review-card-actions > .ghost-button.compact-button {
+  border-color: var(--divider);
+  background: var(--soft);
+  color: var(--text);
+}
+
+.review-card-actions > .text-action {
+  min-height: 34px;
+  padding: 0 11px;
+}
+
+.review-card-actions > .danger-text {
+  border-color: color-mix(in srgb, #B42318 24%, var(--divider));
+  background: color-mix(in srgb, #B42318 7%, var(--soft));
+  color: #B42318;
+}
+
+.review-card-actions > button:hover {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--divider));
+  background: color-mix(in srgb, var(--primary) 9%, var(--soft));
+  transform: translateY(-1px);
+}
+
+.review-card-actions > .primary-button.compact-button:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+}
+
+.review-card-actions > .danger-text:hover {
+  border-color: color-mix(in srgb, #B42318 46%, var(--divider));
+  background: color-mix(in srgb, #B42318 12%, var(--soft));
+  color: #B42318;
+}
+
+:root[data-theme="night"] .review-card-actions > button {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--card) 72%, var(--soft));
+  color: var(--text);
+}
+
+:root[data-theme="night"] .review-card-actions > .primary-button.compact-button {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #FFFFFF;
+}
+
+:root[data-theme="night"] .review-card-actions > .danger-text {
+  border-color: color-mix(in srgb, #F87171 32%, var(--border));
+  background: color-mix(in srgb, #F87171 10%, var(--card));
+  color: #FCA5A5;
+}
+
+@media (max-width: 700px) {
+  .review-card-actions {
+    gap: 8px;
+    width: 100%;
+  }
+
+  .review-card-actions > button,
+  .review-card-actions > .primary-button.compact-button,
+  .review-card-actions > .ghost-button.compact-button,
+  .review-card-actions > .text-action {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 40px;
+  }
+
+  .review-card-actions > .primary-button.compact-button {
+    flex-basis: 100%;
+  }
+}
