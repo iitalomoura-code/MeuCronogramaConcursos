@@ -4195,8 +4195,16 @@ function restoreFocusedSessionFromSnapshot(session) {
 }
 
 function updateFocusedTimerDisplay() {
+  const seconds = focusedTimerSeconds();
   const display = document.querySelector("[data-focused-timer]");
-  if (display) display.textContent = formatTimerSeconds(focusedTimerSeconds());
+  if (display) display.textContent = formatTimerSeconds(seconds);
+  const progress = document.querySelector("[data-focused-timer-progress]");
+  if (progress) {
+    const durationSeconds = Math.max(1, Math.round((Number(state.generatedBlocks[focusedStudyIndex]?.duracao) || 0) * 3600));
+    const percentage = Math.min(100, Math.round((seconds / durationSeconds) * 100));
+    progress.style.width = `${percentage}%`;
+    progress.parentElement?.setAttribute("aria-valuenow", String(percentage));
+  }
   const activeDisplay = document.querySelector("[data-active-focus-timer]");
   if (activeDisplay) activeDisplay.textContent = formatTimerSeconds(focusedTimerSeconds());
   const status = document.querySelector("[data-focused-timer-status]");
@@ -4375,10 +4383,15 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
           ${isReview ? `<small class="focused-review-sequence">Sugestão: revisar erros, reler pontos frágeis, resolver novas questões e registrar o resultado. ${Number(review?.questoesSugeridas) || 10} questões sugeridas.</small>` : ""}
         </div>
         <div class="focused-study-timer">
-          <div>
-            <span>Tempo realizado</span>
+          <div class="focused-timer-readout">
+            <span>Tempo decorrido</span>
             <strong data-focused-timer aria-live="off">${formatTimerSeconds(timer)}</strong>
             <small data-focused-timer-status>Cronômetro opcional</small>
+          </div>
+          <div class="focused-timer-reference">
+            <span>Tempo previsto</span>
+            <strong>${formatDuration(block.duracao)}</strong>
+            <div class="focused-timer-progress" role="progressbar" aria-label="Progresso em relação ao tempo previsto" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, Math.round((timer / Math.max(1, Number(block.duracao || 0) * 3600)) * 100))}"><span data-focused-timer-progress style="width: ${Math.min(100, Math.round((timer / Math.max(1, Number(block.duracao || 0) * 3600)) * 100))}%"></span></div>
           </div>
           <div class="focused-study-timer-actions">
             <button class="primary-button compact-button" type="button" data-focused-timer-toggle><i data-lucide="play"></i><span>Iniciar cronômetro</span></button>
@@ -4429,7 +4442,10 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
         </details>
         <footer class="focused-study-actions">
           <button class="ghost-button" type="button" data-close-focused>Continuar depois</button>
-          <button class="primary-button" type="button" data-save-focused><i data-lucide="save"></i><span>Salvar resultado</span></button>
+          <div class="focused-study-finish-actions">
+            <button class="text-action danger-text" type="button" data-discard-active-focused>Descartar</button>
+            <button class="primary-button" type="button" data-save-focused><i data-lucide="save"></i><span>Finalizar e salvar</span></button>
+          </div>
         </footer>
       </section>
     </div>

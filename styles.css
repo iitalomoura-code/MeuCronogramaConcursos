@@ -8092,3 +8092,335 @@ textarea:focus {
     flex-wrap: wrap;
   }
 }
+
+/* Modo focado: prioriza o contexto e o tempo sem alterar a sessão em andamento. */
+.focused-study-modal {
+  padding: clamp(12px, 3vw, 28px);
+}
+
+.focused-study-backdrop {
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.focused-study-panel {
+  width: min(900px, 100%);
+  max-height: min(920px, calc(100vh - 32px));
+  gap: 20px;
+  border-radius: 18px;
+  padding: clamp(20px, 3vw, 34px);
+  box-shadow: 0 26px 72px rgba(15, 23, 42, 0.22);
+  overscroll-behavior: contain;
+}
+
+.focused-study-header {
+  align-items: flex-start;
+}
+
+.focused-study-header .icon-button {
+  flex: 0 0 auto;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.focused-study-header .icon-button:hover {
+  border-color: var(--divider);
+  background: var(--soft);
+  color: var(--text);
+  transform: none;
+}
+
+.focused-study-subject {
+  margin-top: 8px;
+  color: var(--primary-soft-text);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.focused-study-header h2 {
+  max-width: 740px;
+  margin-top: 5px;
+  font-family: Inter, sans-serif;
+  font-size: clamp(25px, 3vw, 34px);
+  font-weight: 720;
+  line-height: 1.16;
+}
+
+.focused-study-context {
+  gap: 7px;
+  padding: 0 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.focused-study-context > strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.focused-study-context p {
+  max-width: 780px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.focused-study-context > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.focused-study-timer {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(140px, 0.55fr) auto;
+  align-items: end;
+  gap: clamp(16px, 3vw, 30px);
+  padding: 20px 0;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.focused-timer-readout,
+.focused-timer-reference {
+  display: grid;
+  gap: 5px;
+}
+
+.focused-timer-readout > span,
+.focused-timer-reference > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.focused-study-timer .focused-timer-readout strong {
+  color: var(--primary);
+  font-family: Inter, sans-serif;
+  font-size: clamp(36px, 5vw, 52px);
+  font-weight: 720;
+  letter-spacing: 0.02em;
+}
+
+.focused-timer-readout small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.focused-timer-reference strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.focused-timer-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--divider);
+}
+
+.focused-timer-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 260ms ease;
+}
+
+.focused-study-timer-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.focused-study-timer-actions .compact-button {
+  min-height: 40px;
+}
+
+.focused-study-tools {
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0;
+}
+
+.focused-study-tools .ghost-button {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--primary-soft-text);
+  font-size: 12px;
+}
+
+.focused-study-tools .ghost-button:hover {
+  color: var(--primary);
+  transform: none;
+}
+
+.focused-review-toggle {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.focused-review-toggle-box {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
+  border-radius: 5px;
+}
+
+.focused-review-toggle > span:last-child {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.focused-review-toggle strong,
+.focused-review-toggle small {
+  font-size: 11px;
+}
+
+.focused-review-toggle small::before {
+  content: "·";
+  margin-right: 5px;
+}
+
+.focused-review-scheduling,
+.focused-study-form {
+  margin-top: 2px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.focused-review-scheduling {
+  gap: 10px;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+}
+
+.focused-study-form {
+  gap: 12px;
+}
+
+.focused-study-form-grid {
+  gap: 12px;
+}
+
+.focused-study-form label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.focused-study-form textarea {
+  min-height: 82px;
+}
+
+.focused-study-details {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.focused-study-actions {
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.focused-study-finish-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.focused-study-finish-actions .danger-text {
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+:root[data-theme="night"] .focused-study-backdrop {
+  background: rgba(5, 10, 18, 0.72);
+}
+
+:root[data-theme="night"] .focused-study-panel {
+  background: var(--card);
+  box-shadow: 0 28px 74px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-theme="night"] .focused-study-context,
+:root[data-theme="night"] .focused-study-timer,
+:root[data-theme="night"] .focused-review-scheduling,
+:root[data-theme="night"] .focused-study-form,
+:root[data-theme="night"] .focused-study-actions {
+  border-color: var(--divider);
+  background: transparent;
+}
+
+:root[data-theme="night"] .focused-timer-progress {
+  background: var(--soft);
+}
+
+@media (max-width: 700px) {
+  .focused-study-panel {
+    max-height: calc(100vh - 20px);
+    gap: 18px;
+    padding: 20px;
+  }
+
+  .focused-study-timer {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 16px;
+  }
+
+  .focused-study-timer-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .focused-study-timer-actions .compact-button {
+    flex: 1 1 0;
+    min-height: 46px;
+  }
+
+  .focused-study-tools {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .focused-study-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    gap: 12px;
+  }
+
+  .focused-study-actions > .ghost-button {
+    align-self: flex-start;
+  }
+
+  .focused-study-finish-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .focused-study-finish-actions .primary-button {
+    min-height: 46px;
+  }
+}
