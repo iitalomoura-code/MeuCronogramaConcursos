@@ -3563,18 +3563,29 @@ function renderGeneratedSchedule() {
   updateDeadlineDisplays(config);
   if (els.scheduleStatus) els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo`;
   syncPendingFilterControl();
-  const totals = performanceTotals();
   const completedCount = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").length;
-  const scheduledReviews = state.generatedBlocks.reduce((sum, block) => sum + reviewCyclesFromBlock(block).length, 0);
-  const accuracy = totals.questoes ? totals.acertos / totals.questoes : 0;
-  els.summaryGrid.innerHTML = summaryItems([
-    ["Blocos do ciclo", state.generatedBlocks.length],
-    ["Carga do ciclo", formatHours(config.horasSemanaCronograma)],
-    ["Horas estudadas", formatHours(studiedCycleHours())],
-    ["Blocos conclu\u00eddos", completedCount],
-    ["Revis\u00f5es agendadas", scheduledReviews],
-    ["Aproveitamento geral", formatPercent(accuracy)],
-  ]);
+  const totalBlocks = state.generatedBlocks.length;
+  const remainingCount = Math.max(0, totalBlocks - completedCount);
+  const progress = totalBlocks ? Math.round((completedCount / totalBlocks) * 100) : 0;
+  els.summaryGrid.classList.add("cycle-summary");
+  els.summaryGrid.innerHTML = `
+    <section class="cycle-overview" aria-label="Resumo do ciclo atual">
+      <div class="cycle-overview-progress">
+        <div class="cycle-overview-copy">
+          <span>Progresso do ciclo</span>
+          <strong>${formatHours(studiedCycleHours())} de ${formatHours(config.horasSemanaCronograma)} conclu&iacute;das</strong>
+        </div>
+        <div class="cycle-overview-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" aria-label="${progress}% do ciclo conclu&iacute;do">
+          <span style="width: ${progress}%"></span>
+        </div>
+      </div>
+      <div class="cycle-overview-stats">
+        <div><strong>${completedCount}</strong><span>blocos conclu&iacute;dos</span></div>
+        <div><strong>${remainingCount}</strong><span>restantes</span></div>
+        <div><strong>${formatHours(config.horasSemanaCronograma)}</strong><span>carga total</span></div>
+      </div>
+    </section>
+  `;
   if (els.scheduleActions) els.scheduleActions.hidden = false;
   const visibleBlocks = state.generatedBlocks
     .map((block, index) => ({ block, index }))
@@ -3590,7 +3601,7 @@ function renderGeneratedSchedule() {
         const isDetailOpen = index === unitDetailIndex;
         const isCompleted = normalizeStatus(block.status) === "Conclu\u00eddo";
         return `
-          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""}">
+          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}">
             <div class="goal-card-index">
               <span>Bloco</span>
               <strong>${block.bloco}</strong>
@@ -3607,15 +3618,19 @@ function renderGeneratedSchedule() {
                 <label class="goal-duration-field">Dura\u00e7\u00e3o
                   <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real do bloco ${block.bloco}" />
                 </label>
-                <div>
+                <div class="goal-activity">
+                  <span>Atividade</span>
+                  <strong>${escapeHtml(block.atividadeSugerida || block.tipoAtividade || block.tipo || "Teoria e quest\u00f5es")}</strong>
+                </div>
+                <div class="goal-priority">
                   <span>Prioridade</span>
                   ${priorityDots(block.prioridade)}
                 </div>
-                <div>
+                <div class="goal-status">
                   <span>Status</span>
                   ${statusBadge(block.status)}
                 </div>
-                <div>
+                <div class="goal-review">
                   <span>Revis\u00e3o</span>
                   ${reviewBadge(block)}
                 </div>
@@ -3635,7 +3650,35 @@ function renderGeneratedSchedule() {
     ` : `<div class="empty-panel">Nenhuma meta pendente no ciclo atual.</div>`}
     ${visiblePerformancePanel ? performancePanel(state.generatedBlocks[performanceEditIndex], performanceEditIndex) : ""}
   `;
+  organizeCycleBlocksByStatus();
   if (window.lucide) window.lucide.createIcons();
+}
+
+function organizeCycleBlocksByStatus() {
+  const list = els.scheduleWrap?.querySelector(".cycle-goals-list");
+  if (!list) return;
+
+  const cards = [...list.querySelectorAll(".cycle-goal-card")];
+  const groups = [
+    { key: "upcoming", label: "Pr\u00f3ximos", statuses: ["N\u00e3o iniciado", "Reprogramar"] },
+    { key: "in-progress", label: "Em andamento", statuses: ["Em andamento"] },
+    { key: "completed", label: "Conclu\u00eddos", statuses: ["Conclu\u00eddo"] },
+  ];
+  const fragment = document.createDocumentFragment();
+
+  groups.forEach((group) => {
+    const groupCards = cards.filter((card) => group.statuses.includes(card.dataset.cycleStatus));
+    if (!groupCards.length) return;
+    const section = document.createElement("section");
+    section.className = `cycle-block-group cycle-block-group-${group.key}`;
+    const heading = document.createElement("h3");
+    heading.textContent = group.label;
+    section.appendChild(heading);
+    groupCards.forEach((card) => section.appendChild(card));
+    fragment.appendChild(section);
+  });
+
+  list.replaceChildren(fragment);
 }
 
 function pendingCycleEntries() {
