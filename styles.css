@@ -7325,3 +7325,71 @@ textarea:focus {
 
   .continue-review-list { grid-template-columns: 1fr; }
 }
+
+/* Continue context: expose the existing study details without restoring dashboard weight. */
+.continue-topic-context {
+  display: grid;
+  gap: 3px;
+}
+
+.continue-topic-context::before {
+  content: "Conteúdo do estudo";
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.continue-alternatives .continue-card-header p {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.continue-alternatives article em {
+  color: var(--muted);
+  white-space: normal;
+}
+
+.continue-cycle-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.continue-cycle-summary .continue-card-header {
+  margin: 0;
+}
+
+.continue-cycle-summary .section-kicker,
+.continue-cycle-summary .continue-card-header p,
+.continue-cycle-summary .continue-progress,
+.continue-cycle-summary .continue-time-summary,
+.continue-cycle-summary .continue-mini-insights,
+.continue-cycle-summary .continue-analysis-link {
+  display: none;
+}
+
+.continue-cycle-summary h3 {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.continue-cycle-summary .compact-button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .continue-cycle-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .continue-cycle-summary .compact-button { width: 100%; }
+}

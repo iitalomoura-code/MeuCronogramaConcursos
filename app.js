@@ -136,7 +136,7 @@ let contentFilter = "all";
 let contentUndoSnapshot = null;
 let contentSearchTimer = 0;
 let openSubjectKeys = new Set();
-let continueAlternativesOpen = false;
+let continueAlternativesOpen = true;
 let continueDetailsOpen = false;
 let focusedStudyIndex = -1;
 let focusedStudySession = null;
@@ -3981,6 +3981,13 @@ function continueAlternativeEntries(suggested) {
   return diversified;
 }
 
+function continueAlternativeReason(entry = {}) {
+  const explanation = explainStudySuggestion(entry.block, entry.suggestion);
+  if (explanation.factors?.length) return explanation.factors[0];
+  if (entry.suggestion?.review?.hasAttention) return "revisão disponível";
+  return explanation.text || "próximo bloco pendente do ciclo";
+}
+
 function continueAvailableReviews() {
   return reviewScheduleRows("all")
     .filter((item) => !["Concluída", "Cancelada"].includes(item.status))
@@ -4735,7 +4742,7 @@ function renderContinuePanel() {
   if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
   const suggested = pending.length ? pending[continueSuggestionOffset % pending.length] : null;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
-  const alternatives = suggested ? continueAlternativeEntries(suggested) : [];
+  const alternatives = suggested ? continueAlternativeEntries(suggested).slice(0, 3) : [];
   const reviews = continueAvailableReviews();
   const totalHours = performanceTotals(state.generatedBlocks).horas;
   const insights = buildPerformanceInsights(suggestion?.text || "").slice(0, 2);
@@ -4764,6 +4771,18 @@ function renderContinuePanel() {
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
   `;
+  const topicContext = els.continuePanel.querySelector(".continue-recommendation-card .continue-card-header p");
+  if (topicContext) topicContext.classList.add("continue-topic-context");
+  els.continuePanel.querySelectorAll("[data-study-alternative]").forEach((button) => {
+    const entry = alternatives.find((item) => item.index === Number(button.dataset.studyAlternative));
+    const meta = button.closest("article")?.querySelector("em");
+    if (entry && meta) meta.textContent = `${continueAlternativeReason(entry)} · ${formatDuration(entry.block.duracao)}`;
+  });
+  els.continuePanel.querySelectorAll("[data-continue-filter-minutes]").forEach((button) => {
+    button.textContent = formatMinutesShort(Number(button.dataset.continueFilterMinutes));
+  });
+  const startLabel = els.continuePanel.querySelector("[data-start-continue] span");
+  if (startLabel && suggested) startLabel.textContent = normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Começar estudo";
   if (window.lucide) window.lucide.createIcons();
   renderFocusedStudyOverlay();
 }
