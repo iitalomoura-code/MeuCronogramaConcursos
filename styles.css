@@ -7704,3 +7704,70 @@ textarea:focus {
   .topic-summary-panel,
   .topic-split-panel { grid-column: 1 / -1; }
 }
+
+/* Cycle progress belongs to the Continue heading, close to the next-study decision. */
+.continue-header-progress {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  width: min(100%, 560px);
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.continue-header-progress-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.continue-header-progress-copy > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.continue-header-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--divider);
+}
+
+.continue-header-progress-track > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 420ms ease;
+}
+
+.continue-header-cycle-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  color: var(--primary-soft-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.continue-layout > .continue-cycle-summary { display: none; }
+
+:root[data-theme="night"] .continue-header-progress-track { background: var(--soft); }
+
+@media (max-width: 700px) {
+  .continue-header-progress {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    margin-top: 16px;
+  }
+
+  .continue-header-cycle-action {
+    align-self: flex-start;
+    padding-left: 0;
+  }
+}

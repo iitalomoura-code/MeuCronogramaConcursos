@@ -268,6 +268,7 @@ const els = {
   saveCycleAdjustmentsButton: document.querySelector("#saveCycleAdjustmentsButton"),
   scheduleStatus: document.querySelector("#scheduleStatus"),
   continuePanel: document.querySelector("#continuePanel"),
+  continueCycleProgress: document.querySelector("#continueCycleProgress"),
   pendingOnlyToggle: document.querySelector("#pendingOnlyToggle"),
   summaryGrid: document.querySelector("#summaryGrid"),
   scheduleWrap: document.querySelector("#scheduleWrap"),
@@ -4693,9 +4694,28 @@ async function discardFocusedStudySession() {
   showToast("Sessão descartada.");
 }
 
+function renderContinueCycleProgress(completed = 0, total = 0, progress = 0) {
+  if (!els.continueCycleProgress) return;
+  if (!total) {
+    els.continueCycleProgress.hidden = true;
+    els.continueCycleProgress.innerHTML = "";
+    return;
+  }
+  const percentage = Math.max(0, Math.min(100, Number(progress) || 0));
+  els.continueCycleProgress.hidden = false;
+  els.continueCycleProgress.innerHTML = `
+    <div class="continue-header-progress-copy">
+      <span>${completed} de ${total} blocos conclu&iacute;dos</span>
+      <div class="continue-header-progress-track" role="progressbar" aria-label="Progresso do ciclo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width: ${percentage}%"></span></div>
+    </div>
+    <button class="text-action continue-header-cycle-action" type="button" data-open-cycle-goals>Ver ciclo completo</button>
+  `;
+}
+
 function renderContinuePanel() {
   removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
+  renderContinueCycleProgress();
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -4739,6 +4759,7 @@ function renderContinuePanel() {
   const reprogrammed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Reprogramar").length;
   const pendingCount = Math.max(0, total - completed);
   const progress = total ? Math.round((completed / total) * 100) : 0;
+  renderContinueCycleProgress(completed, total, progress);
   if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
   const suggested = pending.length ? pending[continueSuggestionOffset % pending.length] : null;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
