@@ -8969,3 +8969,321 @@ textarea:focus {
     flex-basis: 100%;
   }
 }
+
+/* Painel de evolução: poucos sinais decisórios, com detalhe sob demanda. */
+.evolution-toolbar {
+  margin: 12px 0 20px;
+}
+
+.evolution-overview-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin-bottom: 28px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.evolution-metric {
+  flex: 1 1 180px;
+  min-height: 0;
+  padding: 14px 20px;
+  border: 0;
+  border-right: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.evolution-metric:first-child {
+  flex-basis: 220px;
+  padding-left: 0;
+}
+
+.evolution-metric:last-child {
+  border-right: 0;
+}
+
+.evolution-metric > span,
+.evolution-metric small {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.evolution-metric strong {
+  font-family: Inter, sans-serif;
+  font-size: clamp(22px, 2.1vw, 30px);
+  font-weight: 720;
+}
+
+.evolution-sections {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 36px;
+  margin-top: 0;
+  border-top: 1px solid var(--divider);
+}
+
+#tab-evolucao .evolution-card {
+  min-width: 0;
+  padding: 24px 0;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.evolution-progress-card { order: 1; }
+.evolution-performance-card { order: 2; }
+.evolution-pace-card { order: 3; grid-column: 1 / -1; }
+.evolution-attention-card { order: 4; grid-column: 1 / -1; }
+.evolution-subjects-card { order: 5; grid-column: 1 / -1; }
+.evolution-recommendation-card { order: 6; grid-column: 1 / -1; }
+.evolution-cycles-card { order: 7; grid-column: 1 / -1; }
+.evolution-completed-archive { order: 8; grid-column: 1 / -1; }
+
+.evolution-section-heading {
+  margin-bottom: 13px;
+}
+
+.evolution-section-heading h3 {
+  font-family: Inter, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.evolution-progress-heading strong,
+.evolution-progress-heading span {
+  font-size: 13px;
+}
+
+.evolution-progress-track {
+  height: 7px;
+  margin: 10px 0;
+}
+
+.evolution-progress-categories {
+  gap: 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.evolution-progress-categories button {
+  min-height: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-right: 1px solid var(--divider);
+  border-radius: 0;
+}
+
+.evolution-progress-categories button:last-child {
+  border-right: 0;
+}
+
+.evolution-progress-categories button:hover,
+.evolution-progress-categories button:focus-visible {
+  border-color: var(--divider);
+  background: var(--primary-soft);
+}
+
+.evolution-pace-status {
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.evolution-pace-status strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.evolution-pace-grid {
+  margin-top: 0;
+}
+
+.evolution-pace-grid > div,
+.evolution-performance-summary > div {
+  padding: 12px 0 0;
+  border-left: 0;
+}
+
+.evolution-pace-grid > div + div,
+.evolution-performance-summary > div + div {
+  padding-left: 18px;
+  border-left: 1px solid var(--divider);
+}
+
+.evolution-chart {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.evolution-chart-scroll {
+  padding-top: 6px;
+}
+
+.evolution-subject-list,
+.attention-list,
+.evolution-cycle-list {
+  gap: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.evolution-subject-card,
+.attention-subject {
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.attention-subject {
+  padding-left: 12px;
+}
+
+.attention-subject.attention-alta,
+.attention-subject.attention-media {
+  border-left-width: 2px;
+}
+
+.evolution-subject-card p,
+.attention-subject p {
+  font-size: 12px;
+}
+
+.evolution-cycles-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.evolution-cycles-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.evolution-cycles-card > summary h3 {
+  margin: 2px 0 0;
+  font-family: Inter, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.evolution-cycles-card > summary > span {
+  color: var(--primary-soft-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.evolution-cycles-card[open] > summary {
+  margin-bottom: 14px;
+}
+
+.evolution-cycle-item {
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.evolution-cycle-item summary {
+  padding: 13px 0;
+}
+
+.evolution-cycle-details {
+  padding: 0 0 13px;
+  border-top: 0;
+}
+
+.evolution-completed-archive {
+  padding: 20px 0 !important;
+}
+
+.evolution-completed-archive .table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+:root[data-theme="night"] .evolution-overview-grid,
+:root[data-theme="night"] .evolution-metric,
+:root[data-theme="night"] #tab-evolucao .evolution-card,
+:root[data-theme="night"] .evolution-progress-categories,
+:root[data-theme="night"] .evolution-progress-categories button,
+:root[data-theme="night"] .evolution-subject-card,
+:root[data-theme="night"] .attention-subject,
+:root[data-theme="night"] .evolution-cycle-item {
+  border-color: var(--divider);
+  background: transparent;
+}
+
+@media (max-width: 860px) {
+  .evolution-sections {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .evolution-progress-card,
+  .evolution-performance-card,
+  .evolution-pace-card,
+  .evolution-attention-card,
+  .evolution-subjects-card,
+  .evolution-recommendation-card,
+  .evolution-cycles-card,
+  .evolution-completed-archive {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .evolution-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evolution-metric,
+  .evolution-metric:first-child {
+    min-width: 0;
+    padding: 12px;
+    border-right: 1px solid var(--divider);
+  }
+
+  .evolution-metric:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .evolution-metric:nth-child(n + 3) {
+    border-top: 1px solid var(--divider);
+  }
+
+  .evolution-metric strong {
+    font-size: 22px;
+  }
+
+  .evolution-pace-grid > div + div,
+  .evolution-performance-summary > div + div {
+    padding-left: 0;
+    border-top: 1px solid var(--divider);
+    border-left: 0;
+  }
+
+  .evolution-progress-categories {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evolution-progress-categories button:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .evolution-progress-categories button:nth-child(n + 3) {
+    border-top: 1px solid var(--divider);
+  }
+}

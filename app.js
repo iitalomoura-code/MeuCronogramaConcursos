@@ -6275,13 +6275,20 @@ function renderEvolution() {
   const subjects = evolutionSubjectData(entries, progress, projection);
   const cycleRecords = evolutionCycleRecords();
   const hasContent = progress.selected.length > 0 || (state.generatedBlocks || []).length > 0 || (state.cycleResults || []).length > 0;
-  const periodLabel = els.evolutionPeriod?.selectedOptions?.[0]?.textContent || "Ciclo atual";
   const cycleCounts = progress.selected.length ? `${progress.completed.length} de ${progress.selected.length} temas` : "Sem conteúdo confirmado";
+  const attentionSubjects = subjects.filter((subject) => subject.attention.level !== "baixa");
+  const paceValue = projection.status === "Dados insuficientes" ? "Sem dados" : projection.status;
+  const paceNote = projection.status === "Dados insuficientes"
+    ? projection.reason
+    : `${projection.days} dias até a prova`;
+  const attentionNote = attentionSubjects.length
+    ? `${attentionSubjects[0].materia} em destaque`
+    : "Sem sinais relevantes";
   els.evolutionGrid.innerHTML = [
-    evolutionMetric("Conteúdo concluído", progress.percent === null ? "Sem dados" : formatPercent(progress.percent), cycleCounts),
-    evolutionMetric("Ciclo atual", `${(state.generatedBlocks || []).filter((block) => normalizeStatus(block.status) === "Concluído").length} de ${(state.generatedBlocks || []).length} blocos`, "Blocos concluídos"),
+    evolutionMetric("Edital estudado", progress.percent === null ? "Sem dados" : formatPercent(progress.percent), cycleCounts),
     evolutionMetric("Desempenho recente", performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual), performance.questoes ? `${performance.questoes} questões no período` : "Registre questões e acertos"),
-    evolutionMetric("Tempo estudado", performance.hasTime ? formatHours(performance.horas) : "Sem registro", periodLabel),
+    evolutionMetric("Ritmo até a prova", paceValue, paceNote),
+    evolutionMetric("Precisam de atenção", attentionSubjects.length, attentionNote),
   ].join("");
   if (els.evolutionEmpty) {
     els.evolutionEmpty.hidden = hasContent;
