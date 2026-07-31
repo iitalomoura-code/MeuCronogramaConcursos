@@ -7326,6 +7326,96 @@ textarea:focus {
   .continue-review-list { grid-template-columns: 1fr; }
 }
 
+/* Navegação do caderno: blocos leves e hierarquia entre matérias e temas. */
+.notebook-col:first-child .notebook-list {
+  gap: 10px;
+}
+
+.notebook-col:nth-child(2) .notebook-list {
+  gap: 7px;
+}
+
+.notebook-col .notebook-item {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  text-wrap: pretty;
+}
+
+.notebook-col:first-child .notebook-item {
+  padding: 12px 13px;
+  background: var(--soft);
+}
+
+.notebook-col:nth-child(2) .notebook-item {
+  padding: 10px 12px;
+  background: var(--soft);
+}
+
+.notebook-col .notebook-item:hover {
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.notebook-col:first-child .notebook-item.is-active,
+.notebook-col:nth-child(2) .notebook-item.is-active {
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+.notebook-col .notebook-item > span {
+  width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.38;
+}
+
+.notebook-col .notebook-item small,
+.notebook-col .notebook-item.is-active small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 15px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.notebook-col .notebook-has-note,
+.notebook-col .notebook-item.is-active .notebook-has-note {
+  gap: 4px;
+  color: var(--primary-soft-text) !important;
+}
+
+.notebook-col .notebook-has-note i {
+  width: 12px;
+  height: 12px;
+}
+
+:root[data-theme="night"] .notebook-col .notebook-item:hover {
+  background: var(--card);
+}
+
+@media (max-width: 560px) {
+  .notebook-col:first-child .notebook-list {
+    gap: 8px;
+  }
+
+  .notebook-col:nth-child(2) .notebook-list {
+    gap: 6px;
+  }
+
+  .notebook-col:first-child .notebook-item,
+  .notebook-col:nth-child(2) .notebook-item {
+    padding: 10px;
+  }
+}
+
 /* Caderno de Resumos: navegação discreta e escrita em primeiro plano. */
 #tab-erros .panel-heading {
   margin-bottom: 24px;
