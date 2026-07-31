@@ -7900,13 +7900,14 @@ textarea:focus {
 .notebook-col:first-child .notebook-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  align-content: start;
+  grid-template-rows: minmax(0, auto) minmax(15px, auto);
+  align-content: space-between;
+  row-gap: 5px;
   justify-content: stretch;
   height: auto !important;
-  min-height: 64px;
+  min-height: 78px;
   max-height: none;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .notebook-col:first-child .notebook-item > span,

@@ -13,7 +13,7 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260730-notebook-subjects"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260730-notebook-subjects-fix"), "O CSS deve usar o cache-busting atual.");
 assert.ok(index.includes("app.js?v=20260730-notebook-refinement"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
