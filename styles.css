@@ -7063,3 +7063,265 @@ textarea:focus {
 
   .sidebar-flow { gap: 16px; }
 }
+
+/* Continue: a single calm study recommendation, followed by supporting context. */
+.continue-layout {
+  width: min(100%, 980px);
+  gap: 28px;
+}
+
+.continue-recommendation-card {
+  min-height: 0;
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
+  padding: 30px;
+  box-shadow: 0 12px 30px rgba(32, 42, 48, .06);
+}
+
+.continue-recommendation-card .continue-card-header {
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.continue-recommendation-subject {
+  margin-bottom: 7px;
+  color: var(--primary-soft-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.continue-recommendation-card h3 {
+  max-width: 760px;
+  font-size: clamp(25px, 3vw, 32px);
+  font-weight: 650;
+  line-height: 1.18;
+}
+
+.continue-recommendation-card .continue-card-header p {
+  max-width: 720px;
+  margin-top: 9px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.continue-duration {
+  min-width: auto;
+  min-height: 32px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.continue-reason-box,
+.continue-detail-box {
+  margin-bottom: 20px;
+  border-color: transparent;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 54%, var(--border));
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 0 2px 14px;
+}
+
+.continue-reason-box strong,
+.continue-detail-box strong { font-size: 12px; font-weight: 700; }
+
+.continue-reason-box ul {
+  gap: 3px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.continue-meta-grid {
+  gap: 0;
+  margin: 0 0 20px;
+}
+
+.continue-meta-grid > div {
+  gap: 4px;
+  min-height: 44px;
+  border: 0;
+  border-left: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 16px;
+}
+
+.continue-meta-grid > div:first-child { border-left: 0; padding-left: 0; }
+
+.continue-meta-grid span { font-size: 10px; font-weight: 700; }
+
+.continue-meta-grid strong { font-size: 13px; font-weight: 650; }
+
+.continue-duration-adjust,
+.continue-quick-filters {
+  gap: 6px;
+  margin: 0 0 20px;
+}
+
+.continue-duration-adjust > span,
+.continue-quick-filters > span {
+  margin-right: 3px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.continue-duration-adjust > div { gap: 6px; }
+
+.continue-filter-chip {
+  min-height: 28px;
+  border-color: var(--divider);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.continue-filter-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  transform: none;
+}
+
+.continue-filter-chip.is-active {
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+.continue-actions { gap: 8px; }
+
+.continue-actions .primary-button {
+  min-height: 44px;
+  padding: 0 18px;
+}
+
+.continue-actions .ghost-button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.continue-alternatives {
+  gap: 6px;
+  margin-top: 20px;
+  padding-top: 18px;
+}
+
+.continue-alternatives h4 { font-size: 14px; font-weight: 650; }
+
+.continue-alternatives article {
+  border-color: transparent;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 2px;
+}
+
+.continue-alternatives article:last-child { border-bottom: 0; }
+
+.continue-alternatives article .text-action { font-size: 12px; }
+
+.continue-cycle-summary,
+.continue-next-steps,
+.continue-reviews-card {
+  border: 0;
+  border-top: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 20px 0 0;
+}
+
+.continue-side-card h3 { font-size: 18px; font-weight: 650; }
+
+.continue-side-card .continue-card-header.compact { margin-bottom: 10px; }
+
+.continue-progress { gap: 6px; }
+
+.continue-progress-track { height: 7px; }
+
+.continue-progress strong { font-size: 15px; }
+
+.continue-time-summary { margin: 8px 0 0; font-size: 12px; }
+
+.continue-mini-insights {
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.continue-review-list {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.continue-review-list article {
+  border-color: var(--divider);
+  border-radius: 9px;
+  background: transparent;
+  padding: 11px;
+}
+
+.continue-next-steps ol { gap: 8px; }
+
+:root[data-theme="night"] .continue-recommendation-card {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  box-shadow: 0 14px 30px rgba(6, 12, 10, .16);
+}
+
+:root[data-theme="night"] .continue-cycle-summary,
+:root[data-theme="night"] .continue-next-steps,
+:root[data-theme="night"] .continue-reviews-card,
+:root[data-theme="night"] .continue-alternatives article,
+:root[data-theme="night"] .continue-review-list article {
+  background: transparent;
+}
+
+@media (min-width: 1100px) {
+  .continue-layout { grid-template-columns: minmax(0, 1fr); }
+
+  .continue-recommendation-card,
+  .continue-cycle-summary,
+  .continue-next-steps,
+  .continue-reviews-card {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .continue-layout { gap: 22px; }
+
+  .continue-recommendation-card { padding: 22px 18px; }
+
+  .continue-recommendation-card .continue-card-header { gap: 14px; }
+
+  .continue-recommendation-card h3 { font-size: 25px; }
+
+  .continue-meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; }
+
+  .continue-meta-grid > div:nth-child(odd) { border-left: 0; padding-left: 0; }
+
+  .continue-meta-grid > div:nth-child(even) { padding-right: 0; }
+
+  .continue-duration-adjust > span,
+  .continue-quick-filters > span { flex-basis: 100%; }
+
+  .continue-actions { display: grid; grid-template-columns: 1fr; }
+
+  .continue-actions .primary-button,
+  .continue-actions .ghost-button { width: 100%; }
+
+  .continue-actions .text-action { justify-self: start; }
+
+  .continue-alternatives article { gap: 6px; }
+
+  .continue-review-list { grid-template-columns: 1fr; }
+}
