@@ -7862,6 +7862,40 @@ textarea:focus {
   }
 }
 
+/* Indicador de resumo compacto ao lado do tema. */
+.notebook-col:nth-child(2) .notebook-item {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notebook-col:nth-child(2) .notebook-item > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notebook-col:nth-child(2) .notebook-item .notebook-has-note {
+  flex: 0 0 auto;
+  margin-top: 0;
+  gap: 3px;
+  font-size: 9.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.notebook-col:nth-child(2) .notebook-item .notebook-has-note i {
+  width: 10px;
+  height: 10px;
+}
+
+@media (max-width: 560px) {
+  .notebook-col:nth-child(2) .notebook-item {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 /* Continue context: expose the existing study details without restoring dashboard weight. */
 .continue-topic-context {
   display: grid;
