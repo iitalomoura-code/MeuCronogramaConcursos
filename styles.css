@@ -7896,6 +7896,31 @@ textarea:focus {
   }
 }
 
+/* Matérias com duas linhas preservam a contagem dentro do próprio bloco. */
+.notebook-col:first-child .notebook-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: start;
+  justify-content: stretch;
+  height: auto !important;
+  min-height: 64px;
+  max-height: none;
+  overflow: hidden;
+}
+
+.notebook-col:first-child .notebook-item > span,
+.notebook-col:first-child .notebook-item small {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.notebook-col:first-child .notebook-item small,
+.notebook-col:first-child .notebook-item.is-active small {
+  align-self: start;
+  white-space: normal;
+}
+
 /* Continue context: expose the existing study details without restoring dashboard weight. */
 .continue-topic-context {
   display: grid;
