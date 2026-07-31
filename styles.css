@@ -8424,3 +8424,118 @@ textarea:focus {
     min-height: 46px;
   }
 }
+
+/* Metadados dos blocos: leitura rápida com superfícies neutras e consistentes. */
+.goal-card-meta {
+  align-items: stretch;
+  gap: 10px;
+}
+
+.goal-duration-field,
+.goal-card-meta > .goal-activity,
+.goal-card-meta > .goal-status {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 104px;
+  min-height: 54px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.goal-duration-field {
+  min-width: 78px;
+  color: transparent;
+  font-size: 0;
+}
+
+.goal-duration-field::before,
+.goal-card-meta > .goal-activity > span,
+.goal-card-meta > .goal-status > span {
+  color: var(--muted);
+  font-family: Inter, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.goal-duration-field::before {
+  content: "Duração";
+}
+
+.goal-duration-input {
+  width: 100%;
+  min-height: 18px;
+  padding: 0;
+  color: var(--text);
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.goal-activity {
+  min-width: 156px !important;
+}
+
+.goal-activity strong {
+  color: var(--text);
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.goal-status {
+  min-width: 126px !important;
+}
+
+.goal-status .status-badge {
+  justify-content: flex-start;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.goal-status .status-badge.concluido,
+.goal-status .status-badge.concluído {
+  color: var(--primary-soft-text);
+}
+
+.goal-status .status-badge.em-andamento {
+  color: var(--primary);
+}
+
+.goal-status .status-badge.reprogramar {
+  color: #9A6700;
+}
+
+:root[data-theme="night"] .goal-duration-field,
+:root[data-theme="night"] .goal-card-meta > .goal-activity,
+:root[data-theme="night"] .goal-card-meta > .goal-status {
+  background: color-mix(in srgb, var(--card) 74%, var(--soft));
+}
+
+@media (max-width: 700px) {
+  .goal-card-meta {
+    gap: 8px;
+  }
+
+  .goal-duration-field,
+  .goal-card-meta > .goal-activity,
+  .goal-card-meta > .goal-status {
+    flex: 1 1 130px;
+    min-width: 0;
+  }
+}
