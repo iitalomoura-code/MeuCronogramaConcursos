@@ -3984,37 +3984,61 @@ function activeCycleSubjectNames() {
   return [...new Set((state.planningBase?.materias || []).filter((subject) => availableStudyUnits(subject, {}).length).map((subject) => subject.materia))];
 }
 
+function lastSubjectContactAt(materia = "") {
+  return adaptivePerformanceForSubject(materia)
+    .map((entry) => entryDateValue(entry))
+    .filter(Boolean)
+    .reduce((latest, value) => Math.max(latest, value), 0);
+}
+
+function daysSinceLastSubjectContact(materia = "", now = Date.now()) {
+  const lastContact = lastSubjectContactAt(materia);
+  if (!lastContact) return null;
+  return Math.max(0, Math.floor((now - lastContact) / (1000 * 60 * 60 * 24)));
+}
+
 function recommendationRotationFor(entry = {}) {
   const block = entry.block || {};
   const activeSubjects = activeCycleSubjectNames();
-  if (activeSubjects.length <= 2) return { score: 0, reason: "" };
   const subject = block.materia;
   const cycleBlocks = state.generatedBlocks || [];
   const completedOrActive = cycleBlocks.filter((item) => ["Concluído", "Em andamento"].includes(normalizeStatus(item.status)));
   const studiedSubjects = new Set(completedOrActive.map((item) => item.materia));
-  const priorCount = cycleBlocks.slice(0, entry.index).filter((item) => item.materia === subject).length;
-  const recent = completedOrActive.slice(-Math.max(3, activeSubjects.length * 2));
+  const recent = completedOrActive.slice(-Math.max(3, Math.min(6, activeSubjects.length * 2)));
   const recentCount = recent.filter((item) => item.materia === subject).length;
   const share = recent.length ? recentCount / recent.length : 0;
   const absence = cycleAbsenceForSubject(subject);
+  const daysWithoutContact = daysSinceLastSubjectContact(subject);
   let score = 0;
-  let reason = "";
-  if (!studiedSubjects.has(subject) || priorCount === 0) {
+  const reasons = [];
+  if (!studiedSubjects.has(subject)) {
     score += CURRENT_CYCLE_COVERAGE_WEIGHT;
-    reason = "a matéria ainda não apareceu neste ciclo";
+    reasons.push("matéria ainda não contemplada neste ciclo");
   }
   if (absence > 1) {
     score += Math.min(30, absence * CYCLE_RECENCY_WEIGHT);
-    reason = "a matéria voltou após ciclos sem aparecer";
+    reasons.push("matéria voltou após ciclos sem aparecer");
   }
-  if (share > MAX_RECENT_SHARE_PER_SUBJECT) score -= 30;
-  return { score, reason, recentShare: share };
+  if (daysWithoutContact !== null && daysWithoutContact >= 7) {
+    score += Math.min(28, 8 + Math.floor((daysWithoutContact - 7) / 3) * 4);
+    reasons.push(`há ${daysWithoutContact} dias sem contato`);
+  }
+  if (normalizeStatus(block.status) !== "Em andamento" && activeSubjects.length > 2 && share > MAX_RECENT_SHARE_PER_SUBJECT) {
+    score -= 34;
+    reasons.push("a matéria apareceu com frequência recentemente");
+  }
+  return { score, reason: reasons[0] || "", reasons, recentShare: share, absence, daysWithoutContact };
 }
 
 function blockMatchesContinueFilters(block = {}) {
   const filters = continueRecommendationFilters || {};
   if (Number(filters.minutes) && Math.round((Number(block.duracao) || 0) * 60) > Number(filters.minutes)) return false;
-  if (filters.activity && !normalizeForMatch(block.tipoAtividade || block.tipo || "").includes(normalizeForMatch(filters.activity))) return false;
+  if (filters.activity) {
+    const activity = normalizeForMatch(block.atividadeSugerida || block.tipoAtividade || block.tipo || "");
+    const requested = normalizeForMatch(filters.activity);
+    const reviewAvailable = reviewAttentionFor(block.materia, block.assunto).hasAttention;
+    if (requested === "revisao" ? !reviewAvailable && !activity.includes("revisao") : !activity.includes(requested)) return false;
+  }
   return true;
 }
 
@@ -4025,12 +4049,12 @@ function continueSuggestionScore(entry) {
   const status = normalizeStatus(block.status);
   const rotation = recommendationRotationFor(entry);
   let score = 0;
-  if (review.overdue.length) score += 120;
-  else if (review.today.length) score += 90;
-  if (status === "Em andamento") score += 45;
-  score -= Math.min(30, (Number(block.reprogramacoes) || 0) * 12);
-  score += (adaptive.adjustment || 0) * 55;
-  score += (Number(block.prioridade) || 0) * 35;
+  if (review.overdue.length) score += 130;
+  else if (review.today.length) score += 100;
+  if (status === "Em andamento") score += 105;
+  score -= Math.min(32, (Number(block.reprogramacoes) || 0) * 10);
+  score += (adaptive.adjustment || 0) * 70;
+  score += (Number(block.prioridade) || 0) * 24;
   score += rotation.score;
   return { score, adaptive, review, rotation };
 }
@@ -4038,12 +4062,31 @@ function continueSuggestionScore(entry) {
 function rankedContinueEntries() {
   const entries = pendingCycleEntries()
     .map((entry) => ({ ...entry, suggestion: continueSuggestionScore(entry) }))
-    .sort((a, b) =>
-      b.suggestion.score - a.suggestion.score ||
-      a.index - b.index
-    );
+    .sort((a, b) => b.suggestion.score - a.suggestion.score ||
+      Number(normalizeStatus(b.block.status) === "Em andamento") - Number(normalizeStatus(a.block.status) === "Em andamento") ||
+      Number(b.suggestion.review.hasAttention) - Number(a.suggestion.review.hasAttention) ||
+      a.index - b.index);
   const filtered = entries.filter((entry) => blockMatchesContinueFilters(entry.block));
-  return filtered.length ? filtered : entries;
+  const hasActiveFilter = Boolean(Number(continueRecommendationFilters?.minutes) || continueRecommendationFilters?.activity);
+  return hasActiveFilter ? filtered : entries;
+}
+
+function buildContinueRecommendation() {
+  const ranked = rankedContinueEntries();
+  if (!ranked.length) {
+    return { recommendation: null, alternatives: [], reasons: [], suggestedMinutes: 0, activityType: "" };
+  }
+  if (continueSuggestionOffset >= ranked.length) continueSuggestionOffset = 0;
+  const recommendation = ranked[continueSuggestionOffset % ranked.length];
+  const alternatives = continueAlternativeEntries(recommendation).slice(0, 3);
+  const explanation = explainStudySuggestion(recommendation.block, recommendation.suggestion);
+  return {
+    recommendation,
+    alternatives,
+    reasons: explanation.factors,
+    suggestedMinutes: Math.round((Number(recommendation.block.duracao) || 0) * 60),
+    activityType: recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
+  };
 }
 
 function splitPerformanceGroups(entries = []) {
@@ -4288,7 +4331,12 @@ function explainStudySuggestion(block, context = {}) {
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
-  if (context.rotation?.reason || block.rotationReason) factors.push(context.rotation?.reason || block.rotationReason);
+  if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
+  if (Number(subjectPlanningData(block.materia).dominio) >= 4) factors.push("dificuldade pessoal alta");
+  const rotationReasons = context.rotation?.reasons || [context.rotation?.reason || block.rotationReason].filter(Boolean);
+  rotationReasons.forEach((reason) => {
+    if (reason && !reason.includes("frequência recentemente")) factors.push(reason);
+  });
   if (adaptive.reasons?.length) {
     adaptive.reasons.slice(0, 2).forEach((reason) => {
       if (reason.includes("acerto recente")) factors.push("desempenho recente indica reforço");
@@ -4297,7 +4345,7 @@ function explainStudySuggestion(block, context = {}) {
       else if (reason.includes("queda")) factors.push("queda de desempenho recente");
     });
   }
-  if (!factors.length && priority.percent >= 60) factors.push("matéria com importância " + priority.label.toLowerCase());
+  if (!factors.length && priority.percent >= 60) factors.push("tema prioritário para a prova");
   if (!factors.length) return { text: "Este é o próximo bloco pendente do ciclo atual.", factors: [] };
   return { text: factors.slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
 }
@@ -5112,10 +5160,10 @@ function renderContinuePanel() {
   const pendingCount = Math.max(0, total - completed);
   const progress = total ? Math.round((completed / total) * 100) : 0;
   renderContinueCycleProgress(completed, total, progress);
-  if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
-  const suggested = pending.length ? pending[continueSuggestionOffset % pending.length] : null;
+  const recommendationResult = buildContinueRecommendation();
+  const suggested = recommendationResult.recommendation;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
-  const alternatives = suggested ? continueAlternativeEntries(suggested).slice(0, 3) : [];
+  const alternatives = recommendationResult.alternatives;
   const reviews = continueAvailableReviews();
   const totalHours = performanceTotals(state.generatedBlocks).horas;
   const insights = buildPerformanceInsights(suggestion?.text || "").slice(0, 2);

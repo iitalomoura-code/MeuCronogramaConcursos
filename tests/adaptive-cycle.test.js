@@ -13,13 +13,15 @@ assert.ok(app.includes("function createAdaptiveCycleBlocks"), "A geração por c
 assert.ok(app.includes("cycleAbsenceForSubject"), "A rotação por recência deve ser considerada.");
 assert.ok(app.includes("CURRENT_CYCLE_COVERAGE_WEIGHT"), "A cobertura mínima do ciclo deve ser considerada.");
 assert.ok(app.includes("function recommendationRotationFor"), "A tela Continuar deve usar uma regra de equilíbrio.");
+assert.ok(app.includes("function buildContinueRecommendation"), "A tela Continuar deve centralizar o resultado da recomendação.");
+assert.ok(app.includes("daysSinceLastSubjectContact"), "A tela Continuar deve considerar tempo sem contato.");
 assert.ok(app.includes("data-continue-duration"), "A tela Continuar deve permitir ajustar a duração sugerida.");
 assert.ok(app.includes("data-continue-filter-minutes"), "A tela Continuar deve oferecer filtro de tempo disponível.");
 assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve oferecer filtro por atividade.");
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters };`;
 const noop = () => {};
 const context = {
   console,
@@ -64,5 +66,44 @@ assert.ok(cycle.blocks.some((block) => block.materia === "Baixa"), "A cobertura 
 assert.ok(cycle.blocks.reduce((sum, block) => sum + block.duracao, 0) <= 3, "O ciclo não pode ultrapassar a carga disponível.");
 assert.ok(cycle.blocks.every((block) => [0.5, 0.75, 1, 1.5, 2].includes(block.duracao)), "A duração deve usar faixas discretas.");
 assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[1], topic: "Tema longo com vários itens e exceções", activityType: "Revisão", referenceDuration: 1.5 }).minutes, 30, "Revisões curtas devem sugerir 30 minutos.");
+
+runtime.state.planningBase.materias = [
+  { materia: "Financeiro", assuntos: ["Receita"], peso: 3, dominio: 3 },
+  { materia: "Português", assuntos: ["Sintaxe"], peso: 5, dominio: 3 },
+  { materia: "Informática", assuntos: ["Internet"], peso: 3, dominio: 3 },
+  { materia: "Administração", assuntos: ["Pessoas"], peso: 2, dominio: 3 },
+];
+runtime.state.rows = runtime.state.planningBase.materias.map((subject) => ({ materia: subject.materia, assunto: subject.assuntos[0], estudar: "Sim", tamanhoEstimado: "Médio", blocosSugeridos: 1 }));
+runtime.state.generatedBlocks = [
+  { materia: "Financeiro", assunto: "Receita", duracao: 1, prioridade: 3, status: "Em andamento", tipoAtividade: "Teoria" },
+  { materia: "Português", assunto: "Sintaxe", duracao: 1, prioridade: 5, status: "Não iniciado", tipoAtividade: "Teoria" },
+  { materia: "Informática", assunto: "Internet", duracao: 0.5, prioridade: 3, status: "Não iniciado", tipoAtividade: "Questões" },
+  { materia: "Administração", assunto: "Pessoas", duracao: 0.75, prioridade: 2, status: "Não iniciado", tipoAtividade: "Teoria" },
+];
+runtime.state.completedHistory = [
+  { materia: "Informática", assunto: "Internet", questoes: 10, acertos: 5, status: "Concluído", concluidoEm: "2026-07-01" },
+];
+runtime.state.cycleHistory = [];
+runtime.state.cycleResults = [];
+runtime.state.reviews = [];
+runtime.continueRecommendationFilters.minutes = 0;
+runtime.continueRecommendationFilters.activity = "";
+let recommendation = runtime.buildContinueRecommendation();
+assert.strictEqual(recommendation.recommendation.block.materia, "Financeiro", "Tema em andamento deve ganhar vantagem de conclusão.");
+assert.ok(recommendation.reasons.includes("tema em andamento"), "A justificativa deve indicar o tema em andamento.");
+runtime.state.reviews = [{ materia: "Informática", assunto: "Internet", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" }];
+recommendation = runtime.buildContinueRecommendation();
+assert.strictEqual(recommendation.recommendation.block.materia, "Informática", "Revisão vencida deve competir com estudo novo.");
+assert.ok(recommendation.reasons.some((reason) => reason.includes("revisão merece atenção")), "A explicação deve mencionar a revisão disponível.");
+runtime.state.reviews = [];
+runtime.continueRecommendationFilters.minutes = 30;
+const shortOptions = runtime.rankedContinueEntries();
+assert.deepStrictEqual(shortOptions.map((entry) => entry.block.materia), ["Informática"], "Filtro de 30 minutos deve respeitar apenas blocos compatíveis.");
+runtime.continueRecommendationFilters.minutes = 0;
+runtime.continueRecommendationFilters.activity = "Questões";
+assert.deepStrictEqual(runtime.rankedContinueEntries().map((entry) => entry.block.materia), ["Informática"], "Filtro de questões deve respeitar a atividade do bloco.");
+runtime.continueRecommendationFilters.activity = "";
+recommendation = runtime.buildContinueRecommendation();
+assert.ok(recommendation.alternatives.every((entry, index, list) => list.findIndex((item) => item.block.materia === entry.block.materia) === index), "Alternativas iniciais devem priorizar matérias diferentes.");
 
 console.log("OK - ciclo adaptativo usa cobertura, rotação, duração discreta e filtros da tela Continuar.");
