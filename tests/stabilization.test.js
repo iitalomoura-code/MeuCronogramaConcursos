@@ -13,8 +13,8 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260801-content-review"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260801-content-review"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260801-meta-blocks"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260801-meta-blocks"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("pedagogical-grouping.js?v=20260801-subject-taxonomy"), "A taxonomia pedagógica deve usar o cache-busting atual.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
@@ -28,5 +28,7 @@ assert.ok(app.includes("function openReviewFocusedStudy"), "Revisões fora do ci
 assert.ok(app.includes("function saveStandaloneReviewResult"), "A revisão temporária deve registrar desempenho sem criar uma meta do ciclo.");
 assert.ok(app.includes("reviewSessionOnly"), "Blocos temporários de revisão não devem ser persistidos no ciclo.");
 assert.ok(app.includes("function suspendFocusedStudy"), "Sair do modo focado deve preservar a sessão em andamento.");
+assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converter temas em partes operacionais vinculadas a uma meta.");
+assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

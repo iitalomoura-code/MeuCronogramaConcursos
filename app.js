@@ -696,7 +696,7 @@ function completedUnitKeys() {
   const keys = new Set();
   state.completedHistory.forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
   state.generatedBlocks
-    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo")
+    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block))
     .forEach((block) => keys.add(topicKey(block.materia, block.assunto)));
   return keys;
 }
@@ -705,7 +705,7 @@ function availableStudyUnits(item, analysis) {
   const units = item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
   const completed = completedUnitKeys();
   const reviewUnits = reviewAttentionUnitsForSubject(item.materia);
-  const pending = units.filter((unit) => !completed.has(topicKey(item.materia, unit)));
+  const pending = units.filter((unit) => !isThemeCompleteForPlanning(item.materia, unit, completed));
   const merged = [...reviewUnits, ...pending].filter((unit, index, list) => list.findIndex((candidate) => topicKey(item.materia, candidate) === topicKey(item.materia, unit)) === index);
   return merged.length ? merged : ["Revis\u00e3o geral e quest\u00f5es da mat\u00e9ria"];
 }
@@ -2540,9 +2540,19 @@ function uniqueSubjects(rows) {
   rows.filter((row) => row.estudar !== "Nao" && row.materia).forEach((row) => {
     const key = normalizeForMatch(row.materia);
     if (!map.has(key)) {
-      map.set(key, { materia: row.materia, assuntos: [], peso: 3, dominio: 3, prioridade: 0 });
+      map.set(key, { materia: row.materia, assuntos: [], temas: [], peso: 3, dominio: 3, prioridade: 0 });
     }
-    if (row.assunto) map.get(key).assuntos.push(row.assunto);
+    if (row.assunto) {
+      const subject = map.get(key);
+      subject.assuntos.push(row.assunto);
+      subject.temas.push({
+        assunto: row.assunto,
+        conteudosOriginais: Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [],
+        tamanhoEstimado: row.tamanhoEstimado || "",
+        blocosSugeridos: Number(row.blocosSugeridos) || 0,
+        dificuldadeEstimada: row.dificuldadeEstimada || "",
+      });
+    }
   });
   return [...map.values()];
 }
@@ -3066,10 +3076,118 @@ function subjectPlanningData(materia = "") {
 }
 
 function topicPlanningData(materia = "", assunto = "") {
+  const subject = subjectPlanningData(materia);
+  const storedTopic = (subject.temas || []).find((topic) => topicMatches({ materia, assunto: topic.assunto }, materia, assunto));
+  if (storedTopic) return storedTopic;
   const matching = state.rows
     .map(enrichThemeRow)
     .filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(materia));
   return matching.find((row) => topicMatches({ materia: row.materia, assunto: row.assunto }, materia, assunto)) || {};
+}
+
+function pedagogicalMetaId(materia = "", assunto = "") {
+  return `tema::${topicKey(materia, themeTitle(assunto) || assunto)}`;
+}
+
+function themeContentItems(materia = "", assunto = "") {
+  const topic = topicPlanningData(materia, assunto);
+  const stored = Array.isArray(topic.conteudosOriginais) ? topic.conteudosOriginais : [];
+  const explicitItems = stored.map(normalizeTopic).filter(Boolean);
+  if (explicitItems.length) return [...new Set(explicitItems)];
+
+  const details = themeDetails(assunto);
+  const atoms = topicAtoms(details).map(normalizeTopic).filter(Boolean);
+  return atoms.length > 1 ? [...new Set(atoms)] : [details || themeTitle(assunto) || "Selecionar tema"];
+}
+
+function splitThemeContents(items = [], partCount = 1) {
+  const safeItems = items.filter(Boolean);
+  if (partCount <= 1 || safeItems.length <= 1) return [safeItems];
+  const parts = [];
+  let cursor = 0;
+  for (let index = 0; index < partCount; index += 1) {
+    const remainingItems = safeItems.length - cursor;
+    const remainingParts = partCount - index;
+    const size = Math.max(1, Math.ceil(remainingItems / remainingParts));
+    parts.push(safeItems.slice(cursor, cursor + size));
+    cursor += size;
+  }
+  return parts.filter((part) => part.length);
+}
+
+function allKnownMetaBlocks(metaId = "") {
+  if (!metaId) return [];
+  const records = [
+    ...(state.generatedBlocks || []),
+    ...(state.completedHistory || []),
+    ...(state.cycleHistory || []).flatMap((cycle) => [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])]),
+    ...(state.cycleResults || []).flatMap((cycle) => cycle.completed || []),
+  ];
+  return records.filter((block) => block?.metaId === metaId);
+}
+
+function metaProgressForBlock(block = {}) {
+  if (!block.metaId) return { trackable: false, completed: normalizeStatus(block.status) === "Conclu\u00eddo", completedParts: 0, requiredParts: 1 };
+  const related = allKnownMetaBlocks(block.metaId);
+  const requiredParts = Math.max(1, Number(block.metaRequiredBlocks) || 1, ...related.map((item) => Number(item.metaRequiredBlocks) || 0));
+  const completedParts = new Set(
+    related
+      .filter((item) => normalizeStatus(item.status) === "Conclu\u00eddo")
+      .map((item) => String(item.metaPartKey || "1"))
+  );
+  return {
+    trackable: true,
+    completed: completedParts.size >= requiredParts,
+    completedParts: Math.min(requiredParts, completedParts.size),
+    requiredParts,
+  };
+}
+
+function isMetaComplete(block = {}) {
+  return metaProgressForBlock(block).completed;
+}
+
+function isMetaPartCompleted(metaId = "", partKey = "") {
+  return allKnownMetaBlocks(metaId).some((block) => String(block.metaPartKey || "1") === String(partKey || "1") && normalizeStatus(block.status) === "Conclu\u00eddo");
+}
+
+function isThemeCompleteForPlanning(materia = "", assunto = "", completed = completedUnitKeys()) {
+  const metaId = pedagogicalMetaId(materia, assunto);
+  const topic = topicPlanningData(materia, assunto);
+  const required = Math.max(1, Number(topic.blocosSugeridos) || estimateThemeBlocks(assunto));
+  if (required > 1 || allKnownMetaBlocks(metaId).length) {
+    return metaProgressForBlock({ metaId, metaRequiredBlocks: required }).completed;
+  }
+  return completed.has(topicKey(materia, assunto));
+}
+
+function operationalStudyUnits(item, analysis) {
+  const reviewTopics = reviewAttentionUnitsForSubject(item.materia);
+  return availableStudyUnits(item, analysis).flatMap((assunto) => {
+    const topic = topicPlanningData(item.materia, assunto);
+    const contents = themeContentItems(item.materia, assunto);
+    const size = topic.tamanhoEstimado || estimateThemeSize(assunto);
+    const requestedBlocks = Math.max(1, Number(topic.blocosSugeridos) || estimateThemeBlocks(assunto));
+    const reviewPending = reviewTopics.some((candidate) => topicMatches({ materia: item.materia, assunto: candidate }, item.materia, assunto));
+    const partsNeeded = reviewPending ? 1 : size === "Longo"
+      ? Math.min(3, Math.max(requestedBlocks, Math.ceil(contents.length / 3)))
+      : requestedBlocks;
+    const metaId = pedagogicalMetaId(item.materia, assunto);
+    return splitThemeContents(contents, partsNeeded)
+      .map((part, index, parts) => ({
+        assunto,
+        metaId,
+        metaTitulo: themeTitle(assunto),
+        metaConteudos: contents,
+        metaPartKey: String(index + 1),
+        metaRequiredBlocks: parts.length,
+        conteudoBloco: part.join("; "),
+        tamanhoEstimado: size,
+        blocosSugeridos: parts.length,
+        dificuldadeEstimada: topic.dificuldadeEstimada || estimateThemeDifficulty(assunto),
+      }))
+      .filter((unit) => reviewPending || !isMetaPartCompleted(unit.metaId, unit.metaPartKey));
+  });
 }
 
 function nearestAllowedDuration(minutes, mode = "nearest") {
@@ -3149,6 +3267,11 @@ function estimateBlockDuration({ subject = {}, topic = "", activityType = "Teori
   const multiBlockTopic = Number(suggestedBlocks || topicData.blocosSugeridos) > 1 || size === "Longo";
   if (multiBlockTopic && minutes >= 90) reasons.push("tema distribuído em mais de um bloco quando necessário");
   if (!review && minutes > referenceMinutes && !(multiBlockTopic || topicDifficulty === "Alta" || lowPerformance)) minutes = nearestAllowedDuration(referenceMinutes, "down");
+  const allowsExtendedSession = history.samples >= DURATION_HISTORY_MIN_SAMPLES && history.minutes >= 105;
+  if (minutes > 90 && !allowsExtendedSession) {
+    minutes = 90;
+    reasons.push("bloco limitado a 90 minutos para manter o estudo concentrado");
+  }
   minutes = nearestAllowedDuration(minutes);
 
   return {
@@ -3315,7 +3438,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
     remaining: item.blocos,
     exposures: 0,
     topicCursor: 0,
-    studyUnits: rankStudyUnitsByAdaptivePriority(item, availableStudyUnits(item, analysis)),
+    studyUnits: rankStudyUnitsByAdaptivePriority(item, operationalStudyUnits(item, analysis)),
   }));
   const queue = [];
   const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
@@ -3349,6 +3472,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       prioridadeBase: chosen.prioridadeBase,
     });
     queue.push({
+      ...topic,
       materia: chosen.materia,
       assunto: topic.assunto,
       prioridade: Math.max(chosen.prioridade, topicAdaptive.adjusted),
@@ -3374,15 +3498,16 @@ function chooseTopicForBlock(subject) {
 
 function rankStudyUnitsByAdaptivePriority(subject, units = []) {
   return units
-    .map((assunto, index) => {
+    .map((unit, index) => {
+      const topic = typeof unit === "string" ? { assunto: unit } : unit;
       const adaptive = adaptivePriorityForTarget({
         materia: subject.materia,
-        assunto,
+        assunto: topic.assunto,
         prioridade: subject.prioridade,
         prioridadeBase: subject.prioridadeBase,
       });
       return {
-        assunto,
+        ...topic,
         originalIndex: index,
         adaptiveScore: adaptive.adjusted,
         adaptiveAdjustment: adaptive.adjustment,
@@ -3431,7 +3556,7 @@ function fittedDurationMinutes(estimate, remainingMinutes) {
 function createAdaptiveCycleBlocks(materias, config, analysis) {
   const capacityMinutes = Math.max(0, Math.round((Number(config.horasSemanaCronograma) || 0) * 60));
   if (!capacityMinutes) return { blocks: [], distribution: [] };
-  const activeSubjects = materias.filter((subject) => availableStudyUnits(subject, analysis).length);
+  const activeSubjects = materias.filter((subject) => operationalStudyUnits(subject, analysis).length);
   if (!activeSubjects.length) return { blocks: [], distribution: [] };
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
@@ -3451,6 +3576,9 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
       priority: item.prioridade,
       reviewContext,
       referenceDuration: config.duracaoBloco,
+      estimatedSize: item.tamanhoEstimado,
+      suggestedBlocks: item.metaRequiredBlocks,
+      difficulty: item.dificuldadeEstimada,
     });
     const durationMinutes = fittedDurationMinutes(estimate, remainingMinutes);
     if (!durationMinutes) continue;
@@ -3464,6 +3592,16 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
 
   const actualCounts = new Map();
   blocks.forEach((block) => actualCounts.set(block.materia, (actualCounts.get(block.materia) || 0) + 1));
+  const cycleMetaCounts = new Map();
+  blocks.forEach((block) => cycleMetaCounts.set(block.metaId || `bloco-${block.bloco}`, (cycleMetaCounts.get(block.metaId || `bloco-${block.bloco}`) || 0) + 1));
+  const cycleMetaCursors = new Map();
+  blocks.forEach((block) => {
+    if (!block.metaId) return;
+    const index = (cycleMetaCursors.get(block.metaId) || 0) + 1;
+    cycleMetaCursors.set(block.metaId, index);
+    block.metaBlocoNoCiclo = index;
+    block.metaBlocosNoCiclo = cycleMetaCounts.get(block.metaId) || 1;
+  });
   const distribution = plannedDistribution.map((item) => ({
     ...item,
     blocos: actualCounts.get(item.materia) || 0,
@@ -3513,6 +3651,12 @@ function blockRow(number, duration, item, type, estimate = {}) {
     duracao: duration,
     materia: item.materia,
     assunto: item.assunto,
+    metaId: item.metaId || "",
+    metaTitulo: item.metaTitulo || themeTitle(item.assunto),
+    metaConteudos: Array.isArray(item.metaConteudos) ? item.metaConteudos.slice() : [],
+    metaPartKey: item.metaPartKey || "1",
+    metaRequiredBlocks: Math.max(1, Number(item.metaRequiredBlocks) || 1),
+    conteudoBloco: item.conteudoBloco || "",
     prioridade: item.prioridade,
     prioridadeBase: item.prioridadeBase ?? item.prioridade,
     adaptiveAdjustment: item.adaptiveAdjustment || 0,
@@ -5079,10 +5223,19 @@ function reviewBadge(block) {
 }
 
 function unitDetailCard(block) {
+  const metaProgress = metaProgressForBlock(block);
+  const currentContent = block.conteudoBloco && normalizeForMatch(block.conteudoBloco) !== normalizeForMatch(block.assunto)
+    ? `<p><strong>Parte deste bloco</strong><br>${escapeHtml(block.conteudoBloco)}</p>`
+    : "";
+  const metaInfo = metaProgress.trackable && metaProgress.requiredParts > 1
+    ? `<p><strong>Progresso da meta</strong><br>${metaProgress.completedParts} de ${metaProgress.requiredParts} partes concluídas</p>`
+    : "";
   return `
     <div class="goal-detail-panel">
       <strong>Tema completo</strong>
       <p>${escapeHtml(block.assunto)}</p>
+      ${currentContent}
+      ${metaInfo}
     </div>
   `;
 }
@@ -5249,7 +5402,7 @@ function saveStudyResult({
 
   if (nextStatus === "Concluído") {
     if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
-    syncCompletedHistoryForBlock(block);
+    if (isMetaComplete(block)) syncCompletedHistoryForBlock(block);
   } else {
     block.concluidoEm = "";
   }
@@ -6450,6 +6603,10 @@ function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
     ciclo: block.ciclo || currentCycleLabel(),
     materia: block.materia,
     assunto: block.assunto,
+    metaId: block.metaId || "",
+    metaTitulo: block.metaTitulo || "",
+    metaPartKey: block.metaPartKey || "",
+    metaRequiredBlocks: Number(block.metaRequiredBlocks) || 1,
     duracao: blockDurationValue(block),
     tempoEstudado: Number(block.tempoEstudado) || 0,
     questoes: block.questoes || 0,
@@ -6463,7 +6620,7 @@ function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
 
 function completedEntries() {
   const byTopic = new Map();
-  [...state.completedHistory, ...state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").map((block) => completedEntryFromBlock(block))]
+  [...state.completedHistory, ...state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block)).map((block) => completedEntryFromBlock(block))]
     .forEach((item) => {
       const key = topicKey(item.materia, item.assunto);
       if (!byTopic.has(key)) {
@@ -6484,7 +6641,7 @@ function archiveCompletedFromCurrentWeek() {
   const weekLabel = els.referenceWeek.value;
   const existing = new Map(state.completedHistory.map((item) => [topicKey(item.materia, item.assunto), item]));
   state.generatedBlocks
-    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo")
+    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block))
     .forEach((block) => {
       if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
       const entry = completedEntryFromBlock(block, weekLabel);
@@ -6497,7 +6654,7 @@ function archiveCompletedFromCurrentWeek() {
 }
 
 function syncCompletedHistoryForBlock(block) {
-  if (!block || normalizeStatus(block.status) !== "Conclu\u00eddo") return;
+  if (!block || normalizeStatus(block.status) !== "Conclu\u00eddo" || !isMetaComplete(block)) return;
   const weekLabel = els.referenceWeek.value;
   if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
   const entry = completedEntryFromBlock(block, weekLabel);
