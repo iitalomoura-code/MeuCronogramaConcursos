@@ -985,6 +985,15 @@ svg {
   grid-template-columns: repeat(3, minmax(180px, 1fr));
 }
 
+.field-helper {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 label {
   color: var(--muted);
   font-size: 13px;

@@ -2389,15 +2389,25 @@ function getContestConfig() {
     dataProva: els.examDate.value,
     dataInicial: els.planStartDate.value,
     horasSemana: Number(els.weeklyHours.value) || 0,
-    duracaoBloco: Number(els.blockDuration.value) || 1.5,
+    duracaoBloco: normalizeReferenceDurationHours(els.blockDuration.value),
     horasPorDia: Object.fromEntries(DAYS.map(([key]) => [key, Number(document.querySelector(`[data-day="${key}"]`)?.value) || 0])),
   };
 }
 
+function normalizeReferenceDurationHours(value, fallback = 1.5) {
+  const parsed = parseDurationInput(value, fallback);
+  const minutes = Math.max(30, Math.round((Number(parsed) || fallback) * 60));
+  const allowed = [30, 45, 60, 90, 120];
+  const closest = allowed.reduce((best, candidate) => Math.abs(candidate - minutes) < Math.abs(best - minutes) ? candidate : best, allowed[0]);
+  return closest / 60;
+}
+
 function updateContestSummary() {
   const config = getContestConfig();
-  const fullBlocks = Math.floor(config.horasSemana / config.duracaoBloco);
-  const residual = Math.max(0, config.horasSemana - fullBlocks * config.duracaoBloco);
+  const suggestedMinutes = estimatedPlanningBlockMinutes({ ...config, horasSemanaCronograma: config.horasSemana });
+  const suggestedHours = suggestedMinutes / 60;
+  const fullBlocks = Math.floor(config.horasSemana / suggestedHours);
+  const residual = Math.max(0, config.horasSemana - fullBlocks * suggestedHours);
   if (els.blockEstimate) els.blockEstimate.textContent = fullBlocks;
   const start = parseLocalDate(config.dataInicial) || new Date();
   const exam = parseLocalDate(config.dataProva);
@@ -2405,7 +2415,7 @@ function updateContestSummary() {
   const weeksToExam = exam ? Math.max(1, Math.ceil(daysToExam / 7)) : 0;
   els.contestSummary.innerHTML = summaryItems([
     ["Carga do ciclo", formatHours(config.horasSemana)],
-    ["Bloco padr\u00e3o", formatDuration(config.duracaoBloco)],
+    ["Dura\u00e7\u00e3o de refer\u00eancia", formatDuration(config.duracaoBloco)],
     ["Blocos por ciclo", fullBlocks],
     ["Saldo do ciclo", formatHours(residual)],
     ["Dias at\u00e9 a prova", exam ? daysToExam : "Definir"],
@@ -3266,7 +3276,11 @@ function estimateBlockDuration({ subject = {}, topic = "", activityType = "Teori
 
   const multiBlockTopic = Number(suggestedBlocks || topicData.blocosSugeridos) > 1 || size === "Longo";
   if (multiBlockTopic && minutes >= 90) reasons.push("tema distribuído em mais de um bloco quando necessário");
-  if (!review && minutes > referenceMinutes && !(multiBlockTopic || topicDifficulty === "Alta" || lowPerformance)) minutes = nearestAllowedDuration(referenceMinutes, "down");
+  const hasSpecificThemeSignal = Boolean(estimatedSize || difficulty || Number(suggestedBlocks) > 1 || topicData.tamanhoEstimado || topicData.dificuldadeEstimada || (topicData.conteudosOriginais || []).length || topicAtoms(topic).length > 1);
+  if (!review && !questionsOnly && !hasSpecificThemeSignal) {
+    minutes = nearestAllowedDuration(referenceMinutes);
+    reasons.push("duração de referência usada como ponto de partida");
+  }
   const allowsExtendedSession = history.samples >= DURATION_HISTORY_MIN_SAMPLES && history.minutes >= 105;
   if (minutes > 90 && !allowsExtendedSession) {
     minutes = 90;
@@ -3317,14 +3331,18 @@ function scheduleConfig() {
   const override = Number(els.overrideWeeklyHours.value);
   const useOverride = Boolean(els.overrideCycleToggle?.checked);
   const weeklyHours = useOverride && override > 0 ? override : base.horasSemana;
-  const fullBlocks = Math.floor(weeklyHours / base.duracaoBloco);
-  const residualHours = Number((weeklyHours - fullBlocks * base.duracaoBloco).toFixed(2));
+  const suggestedMinutes = estimatedPlanningBlockMinutes({ ...base, horasSemanaCronograma: weeklyHours });
+  const suggestedHours = suggestedMinutes / 60;
+  const fullBlocks = Math.floor(weeklyHours / suggestedHours);
+  const residualHours = Number((weeklyHours - fullBlocks * suggestedHours).toFixed(2));
   return {
     ...base,
     semanaReferencia: els.referenceWeek.value,
     horasSemanaCronograma: weeklyHours,
     blocosCompletos: fullBlocks,
     horasResiduais: residualHours,
+    duracaoReferencia: base.duracaoBloco,
+    duracaoMediaSugerida: suggestedHours,
     usarResidual: els.allowResidualBlock.checked,
   };
 }
@@ -6152,7 +6170,7 @@ function evolutionSubjectPlan(materia) {
 function deadlineProjection(progress = evolutionProgressMetrics()) {
   const config = scheduleConfig();
   const exam = parseLocalDate(config.dataProva);
-  const blockDuration = Number(config.duracaoBloco) || 1.5;
+  const blockDuration = estimatedPlanningBlockMinutes(config) / 60;
   if (!exam) return { status: "Dados insuficientes", reason: "Cadastre a data da prova para visualizar a projeção de ritmo." };
   const days = Math.max(0, daysBetween(new Date(), exam));
   const cycles = Math.max(1, Math.ceil(days / 7));

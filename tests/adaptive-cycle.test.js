@@ -19,7 +19,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours };`;
 const noop = () => {};
 const context = {
   console,
@@ -50,7 +50,16 @@ runtime.state.reviews = [];
 runtime.state.completedHistory = [];
 runtime.state.cycleHistory = [];
 runtime.state.cycleResults = [];
+runtime.state.planningBase.materias[0].dominio = 3;
+assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[0], topic: "Tema curto", activityType: "Teoria", estimatedSize: "Curto", referenceDuration: 0.5 }).minutes, 45, "Tema curto deve manter 45 minutos mesmo com referência menor.");
+assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[0], topic: "Tema médio", activityType: "Teoria", estimatedSize: "Médio", referenceDuration: 1.5 }).minutes, 60, "Tema médio deve sugerir 60 minutos.");
+assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[0], topic: "Tema difícil", activityType: "Teoria", estimatedSize: "Médio", difficulty: "Alta", referenceDuration: 1 }).minutes, 90, "Tema difícil deve sugerir 90 minutos.");
+assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[0], topic: "Tema curto", activityType: "Questões", estimatedSize: "Curto", referenceDuration: 1.5 }).minutes, 30, "Questões de tema curto devem sugerir 30 minutos.");
+assert.strictEqual(runtime.normalizeReferenceDurationHours("1.5"), 1.5, "1h30 legado deve continuar equivalente a 90 minutos.");
+assert.strictEqual(runtime.normalizeReferenceDurationHours("2.5"), 2, "2h30 legado deve mapear para a exceção compatível de 120 minutos.");
 const cycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 3, duracaoBloco: 1.5 }, {});
+const shortWindowCycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 0.75, duracaoBloco: 1.5 }, {});
+assert.ok(shortWindowCycle.blocks.reduce((sum, block) => sum + block.duracao, 0) <= 0.75, "Pouco tempo restante deve gerar apenas blocos que caibam na carga.");
 assert.ok(cycle.blocks.some((block) => block.materia === "Baixa"), "A cobertura mínima deve incluir matéria de menor prioridade quando a carga permitir.");
 assert.ok(cycle.blocks.reduce((sum, block) => sum + block.duracao, 0) <= 3, "O ciclo não pode ultrapassar a carga disponível.");
 assert.ok(cycle.blocks.every((block) => [0.5, 0.75, 1, 1.5, 2].includes(block.duracao)), "A duração deve usar faixas discretas.");
