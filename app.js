@@ -68,6 +68,7 @@ const THEME_GROUPS = [
 
 const state = {
   rows: [],
+  contentOriginalRows: [],
   currentPlanId: "",
   plans: [],
   dataSource: "local-migration",
@@ -242,6 +243,7 @@ const els = {
   contentThemeCount: document.querySelector("#contentThemeCount"),
   contentSelectedCount: document.querySelector("#contentSelectedCount"),
   contentProblemCount: document.querySelector("#contentProblemCount"),
+  restoreOriginalContentButton: document.querySelector("#restoreOriginalContentButton"),
   organizeThemesButton: document.querySelector("#organizeThemesButton"),
   addRowButton: document.querySelector("#addRowButton"),
   splitButton: document.querySelector("#splitButton"),
@@ -1381,7 +1383,12 @@ function syncRowsFromTable() {
       if (!Number.isInteger(index) || !state.rows[index]) return;
       const next = rowFromInputs(item);
       next.editadoManualmente = item.dataset.manual === "true" || state.rows[index].editadoManualmente === true;
-      nextRows[index] = next;
+      nextRows[index] = {
+        ...state.rows[index],
+        ...next,
+        conteudosOriginais: state.rows[index].conteudosOriginais,
+        agrupamentoPedagogico: state.rows[index].agrupamentoPedagogico,
+      };
     });
     state.rows = nextRows.filter(Boolean);
     return;
@@ -1643,6 +1650,33 @@ function topicSplitSuggestion(row) {
   return suggested.length > 1 ? suggested.map((part, index) => `Tema ${index + 1}: ${part}`).join("\n") : source;
 }
 
+function pedagogicalGroupingInfo(row) {
+  const grouping = row?.agrupamentoPedagogico;
+  const originalItems = Array.isArray(row?.conteudosOriginais) ? row.conteudosOriginais.filter(Boolean) : [];
+  if (!grouping || originalItems.length < 2) return null;
+  const confidence = originalItems.length >= 3 ? "Alta" : "Baixa";
+  return {
+    items: originalItems,
+    confidence,
+    reason: grouping.motivo || "Esses conteúdos parecem fazer parte do mesmo tema.",
+  };
+}
+
+function copyContentRows(rows) {
+  return JSON.parse(JSON.stringify(Array.isArray(rows) ? rows : []));
+}
+
+function restoreOriginalContentReading() {
+  if (!state.contentOriginalRows.length) {
+    notifyContent("A leitura original desta importação ainda não está disponível.", "warning");
+    return;
+  }
+  rememberContentUndo("Leitura original restaurada.");
+  state.rows = copyContentRows(state.contentOriginalRows).map(enrichThemeRow);
+  renderRows();
+  notifyContent("Leitura original restaurada para revisão.");
+}
+
 function splitItemsFromManualValue(value) {
   return String(value || "")
     .split(/\n+/)
@@ -1666,6 +1700,68 @@ function rowsFromManualSplit(row, value) {
       conteudosOriginais: undefined,
       agrupamentoPedagogico: undefined,
     }));
+}
+
+function groupedRowWithoutContent(row, contentIndex) {
+  const items = Array.isArray(row?.conteudosOriginais) ? row.conteudosOriginais.filter(Boolean) : [];
+  const remaining = items.filter((_, index) => index !== contentIndex);
+  if (!remaining.length) return null;
+  if (remaining.length === 1) {
+    return enrichThemeRow({ ...row, assunto: remaining[0], conteudosOriginais: undefined, agrupamentoPedagogico: undefined, editadoManualmente: true });
+  }
+  const title = row.agrupamentoPedagogico?.macrotema || themeTitle(row.assunto);
+  return enrichThemeRow({
+    ...row,
+    assunto: `${title}: ${remaining.join("; ")}`,
+    conteudosOriginais: remaining,
+    agrupamentoPedagogico: { ...row.agrupamentoPedagogico, originalItems: remaining },
+    editadoManualmente: true,
+  });
+}
+
+function createTopicFromGroupedContent(rowIndex, contentIndex) {
+  syncRowsFromTable();
+  const row = state.rows[rowIndex];
+  const content = row?.conteudosOriginais?.[contentIndex];
+  if (!row || !content) return;
+  rememberContentUndo("Conteúdo separado em tema próprio.");
+  const remaining = groupedRowWithoutContent(row, contentIndex);
+  const standalone = enrichThemeRow({
+    ...row,
+    assunto: content,
+    conteudosOriginais: undefined,
+    agrupamentoPedagogico: undefined,
+    observacoes: "",
+    editadoManualmente: true,
+  });
+  state.rows.splice(rowIndex, 1, remaining, standalone);
+  state.rows = state.rows.filter(Boolean);
+  renumberRows({ sync: false });
+  notifyContent("Conteúdo transformado em tema próprio.");
+}
+
+async function moveGroupedContentToTopic(rowIndex, contentIndex) {
+  syncRowsFromTable();
+  const row = state.rows[rowIndex];
+  const content = row?.conteudosOriginais?.[contentIndex];
+  if (!row || !content) return;
+  const targets = state.rows.filter((item, index) => index !== rowIndex && normalizeForMatch(item.materia) === normalizeForMatch(row.materia));
+  if (!targets.length) {
+    notifyContent("Crie outro tema nesta matéria antes de mover o conteúdo.", "warning");
+    return;
+  }
+  const labels = targets.map((item) => themeTitle(item.assunto));
+  const selection = await dialogPrompt("Mover conteúdo para qual tema?\n\n" + labels.join("\n"), labels[0], { title: "Mover conteúdo", label: "Tema de destino" });
+  const target = targets.find((item) => normalizeForMatch(themeTitle(item.assunto)) === normalizeForMatch(selection));
+  if (!target) return;
+  rememberContentUndo("Conteúdo movido para outro tema.");
+  const targetIndex = state.rows.indexOf(target);
+  const targetDetails = themeDetails(target.assunto);
+  state.rows[rowIndex] = groupedRowWithoutContent(row, contentIndex);
+  state.rows[targetIndex] = enrichThemeRow({ ...target, assunto: `${themeTitle(target.assunto)}: ${[targetDetails, content].filter(Boolean).join("; ")}`, editadoManualmente: true });
+  state.rows = state.rows.filter(Boolean);
+  renumberRows({ sync: false });
+  notifyContent("Conteúdo movido para o tema selecionado.");
 }
 
 function selectedTopicItemsForMerge(group) {
@@ -1881,6 +1977,7 @@ function renderRows(options = {}) {
         const problem = problemByIndex.get(actualIndex);
         const feedbackClass = topicFeedbackClass(row);
         const splitSuggestion = topicSplitSuggestion(row);
+        const groupingInfo = pedagogicalGroupingInfo(row);
         const article = document.createElement("article");
         article.className = "topic-item theme-card" + feedbackClass + (problem ? " has-content-problem" : "");
         article.dataset.rowIndex = String(actualIndex);
@@ -1897,11 +1994,13 @@ function renderRows(options = {}) {
               <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
               <div class="theme-card-badges">
                 ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
+                ${groupingInfo ? '<span class="content-badge grouping">Agrupamento sugerido</span><span class="content-badge grouping-confidence ' + (groupingInfo.confidence === "Alta" ? "high" : "review") + '">' + (groupingInfo.confidence === "Alta" ? "Alta confiança" : "Revisar agrupamento") + '</span>' : ""}
                 ${problem ? '<span class="content-badge problem" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> Revisar</span>' : ""}
                 ${topicFeedbackBadge(row)}
               </div>
             </div>
             <p class="theme-details-text">${highlightContentText(shortText(themeDetails(row.assunto || ""), 220))}</p>
+            ${groupingInfo ? '<p class="grouping-reason">' + escapeHtml(groupingInfo.reason) + '</p><details class="grouped-content-preview"' + (groupingInfo.confidence === "Alta" ? " open" : "") + '><summary>' + groupingInfo.items.length + ' conteúdos agrupados</summary><ul>' + groupingInfo.items.map((item, contentIndex) => '<li><span>' + escapeHtml(item) + '</span><button class="text-action" type="button" data-create-topic-from-content="' + contentIndex + '">Criar tema próprio</button><button class="text-action" type="button" data-move-grouped-content="' + contentIndex + '">Mover</button></li>').join("") + '</ul></details>' : ""}
             <div class="theme-meta">
               <span>${escapeHtml(row.tamanhoEstimado || estimateThemeSize(row.assunto))}</span>
               <span>${Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto)} bloco${Number(row.blocosSugeridos) === 1 ? "" : "s"}</span>
@@ -1986,6 +2085,7 @@ function clearImportedContent() {
   els.fileInput.value = "";
   els.fileName.textContent = "Nenhum arquivo selecionado";
   state.rows = [];
+  state.contentOriginalRows = [];
   lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
   showContentParserWarnings([]);
   markUnconfirmed();
@@ -8363,6 +8463,7 @@ function captureAppState() {
     form: formState(),
     programText: els.programText.value,
     rows: state.rows,
+    contentOriginalRows: state.contentOriginalRows,
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
@@ -8397,6 +8498,7 @@ function applyAppSnapshot(saved = {}) {
   applyFormState(saved.form);
   els.programText.value = saved.programText || "";
   state.rows = Array.isArray(saved.rows) ? saved.rows : [];
+  state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows : [];
   renderRows();
   updateContentFlowSteps();
 
@@ -9565,12 +9667,14 @@ els.processButton.addEventListener("click", async () => {
     : parsedRows;
   const warnings = programParserWarnings(pedagogicallyGroupedRows);
   state.rows = organizeRowsByTheme(pedagogicallyGroupedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  state.contentOriginalRows = copyContentRows(state.rows);
   showContentParserWarnings(warnings);
   renderRows();
   notifyContent(warnings.length ? "Conte\u00fado organizado. Revise os avisos antes de confirmar." : "Conte\u00fado organizado para confer\u00eancia.", warnings.length ? "warning" : "success");
 });
 
 if (els.clearButton) els.clearButton.addEventListener("click", clearImportedContent);
+els.restoreOriginalContentButton?.addEventListener("click", restoreOriginalContentReading);
 
 if (els.historySelect) els.historySelect.addEventListener("change", () => {
   const entry = state.originalHistory.find((item) => item.id === els.historySelect.value);
@@ -9708,6 +9812,19 @@ els.topicsBody.addEventListener("click", async (event) => {
     return;
   }
 
+  const topic = event.target.closest(".topic-item");
+  if (topic && event.target.closest("[data-create-topic-from-content]")) {
+    event.preventDefault();
+    createTopicFromGroupedContent(topicStateIndex(topic), Number(event.target.closest("[data-create-topic-from-content]").dataset.createTopicFromContent));
+    return;
+  }
+
+  if (topic && event.target.closest("[data-move-grouped-content]")) {
+    event.preventDefault();
+    void moveGroupedContentToTopic(topicStateIndex(topic), Number(event.target.closest("[data-move-grouped-content]").dataset.moveGroupedContent));
+    return;
+  }
+
   const editSubject = event.target.closest("[data-edit-subject]");
   if (editSubject) {
     event.preventDefault();
@@ -9785,7 +9902,6 @@ els.topicsBody.addEventListener("click", async (event) => {
     return;
   }
 
-  const topic = event.target.closest(".topic-item");
   if (!topic) return;
 
   if (event.target.closest("[data-focus-topic]")) {
