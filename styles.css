@@ -8777,10 +8777,12 @@ textarea:focus {
 /* Modo focado: prioriza o contexto e o tempo sem alterar a sessão em andamento. */
 .focused-study-modal {
   padding: clamp(12px, 3vw, 28px);
+  background: color-mix(in srgb, var(--bg-main) 18%, transparent);
 }
 
 .focused-study-backdrop {
-  background: rgba(15, 23, 42, 0.62);
+  background: color-mix(in srgb, var(--bg-main) 58%, transparent);
+  backdrop-filter: saturate(0.92);
 }
 
 .focused-study-panel {
@@ -9037,7 +9039,7 @@ textarea:focus {
 }
 
 :root[data-theme="night"] .focused-study-backdrop {
-  background: rgba(5, 10, 18, 0.72);
+  background: color-mix(in srgb, var(--bg-main) 72%, transparent);
 }
 
 :root[data-theme="night"] .focused-study-panel {
