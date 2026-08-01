@@ -1608,6 +1608,10 @@ function updateContentFlowSteps() {
 }
 
 function topicSplitSuggestion(row) {
+  const groupedItems = Array.isArray(row?.conteudosOriginais) ? row.conteudosOriginais.filter(Boolean) : [];
+  if (groupedItems.length > 1) {
+    return groupedItems.map((part, index) => `Tema ${index + 1}: ${part}`).join("\n");
+  }
   const details = themeDetails(row.assunto || "");
   const source = details || row.assunto || "";
   const parts = splitTopics(source);
@@ -1635,6 +1639,8 @@ function rowsFromManualSplit(row, value) {
       assunto,
       ordem: (Number(row.ordem) || 1) + index,
       observacoes: index === 0 ? row.observacoes || "" : "",
+      conteudosOriginais: undefined,
+      agrupamentoPedagogico: undefined,
     }));
 }
 
@@ -9530,8 +9536,11 @@ els.processButton.addEventListener("click", async () => {
   els.programText.value = text;
   addHistory("colagem manual", originalText);
   const parsedRows = parseProgramContent(originalText);
-  const warnings = programParserWarnings(parsedRows);
-  state.rows = organizeRowsByTheme(parsedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  const pedagogicallyGroupedRows = window.PedagogicalContentGrouping?.groupRows
+    ? window.PedagogicalContentGrouping.groupRows(parsedRows)
+    : parsedRows;
+  const warnings = programParserWarnings(pedagogicallyGroupedRows);
+  state.rows = organizeRowsByTheme(pedagogicallyGroupedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
   showContentParserWarnings(warnings);
   renderRows();
   notifyContent(warnings.length ? "Conte\u00fado organizado. Revise os avisos antes de confirmar." : "Conte\u00fado organizado para confer\u00eancia.", warnings.length ? "warning" : "success");
