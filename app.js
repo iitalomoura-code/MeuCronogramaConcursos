@@ -5132,7 +5132,9 @@ function renderContinueCycleProgress(completed = 0, total = 0, progress = 0) {
 }
 
 function renderContinuePanel() {
-  removeFocusedStudyOverlay();
+  // A sessão em andamento deve continuar disponível após F5, mas o modo foco
+  // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
+  if (focusedStudyIndex < 0) removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
   renderContinueCycleProgress();
   if (!els.continuePanel) return;
@@ -5224,7 +5226,6 @@ function renderContinuePanel() {
   const startLabel = els.continuePanel.querySelector("[data-start-continue] span");
   if (startLabel && suggested) startLabel.textContent = normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Começar estudo";
   if (window.lucide) window.lucide.createIcons();
-  renderFocusedStudyOverlay();
 }
 
 function shortText(value, maxLength = 90) {
@@ -8797,9 +8798,11 @@ function applyAppSnapshot(saved = {}) {
     els.confirmationStatus.classList.add("confirmed");
   }
   updateContentFlowSteps();
-  renderAppViews();
   applyLockState();
   const restoredTab = [...els.tabs].some((button) => button.dataset.tabTarget === saved.activeTab) ? saved.activeTab : "continuar";
+  // A aba ativa é renderizada de forma adiada por activateTab. Renderizar todos
+  // os painéis aqui tornava o F5 desnecessariamente lento, sobretudo com Quill
+  // e o Painel de Evolução já montados antes da primeira pintura.
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
@@ -10900,21 +10903,27 @@ async function startMeuCronogramaApp() {
   applyThemePreference();
   defaultReferenceWeek();
   renderHistory();
-  const loadedFromCloud = await initializeCloudPlanSource();
-  const cloudUnavailable = state.dataSource === "cloud-unavailable";
-  if (!loadedFromCloud && !restoreAppState({ preserveDataSource: cloudUnavailable })) {
+  // Mostre o planejamento local imediatamente. A leitura remota continua em
+  // segundo plano e substitui o estado somente quando os dados da conta chegam.
+  if (!restoreAppState()) {
     renderRows();
     updateContestSummary();
-    renderAppViews();
+    activateTab("continuar");
   }
-  if (cloudUnavailable) updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
-  scheduleLocalMigrationPrompt();
   renderBackupReminder();
   ensureGoalTimerInterval();
   if (window.lucide) window.lucide.createIcons();
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator();
     animatePanelNumbers(getActiveTabName());
+  });
+  void initializeCloudPlanSource().then((loadedFromCloud) => {
+    const cloudUnavailable = state.dataSource === "cloud-unavailable";
+    if (!loadedFromCloud && cloudUnavailable) {
+      updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
+    }
+    scheduleLocalMigrationPrompt();
+    renderBackupReminder();
   });
 }
 
