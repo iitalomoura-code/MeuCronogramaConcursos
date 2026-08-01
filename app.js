@@ -147,6 +147,8 @@ let focusedStudyPersistenceTimer = null;
 let focusedStudyPeriodicSaveTimer = null;
 let focusedLongSessionNoticeId = "";
 let focusedStudySaving = false;
+let pendingTabRenderFrame = 0;
+let pendingTabRenderTimer = 0;
 let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let mobileDrawerOpen = false;
@@ -1267,6 +1269,30 @@ function animatePanelNumbers(tabName) {
   });
 }
 
+function renderActiveTabContent(tabName) {
+  if (tabName === "continuar") safeRender("Continuar", renderContinuePanel, renderContinueError);
+  if (tabName === "cronograma") safeRender("Ciclo atual", renderGeneratedSchedule);
+  if (tabName === "revisoes") safeRender("Revisões", renderReviews);
+  if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
+  if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
+  if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
+}
+
+function scheduleActiveTabRender(tabName) {
+  if (pendingTabRenderFrame) cancelAnimationFrame(pendingTabRenderFrame);
+  if (pendingTabRenderTimer) clearTimeout(pendingTabRenderTimer);
+  pendingTabRenderFrame = requestAnimationFrame(() => {
+    pendingTabRenderFrame = 0;
+    pendingTabRenderTimer = window.setTimeout(() => {
+      pendingTabRenderTimer = 0;
+      const panel = document.querySelector(`#tab-${tabName}`);
+      if (!panel?.classList.contains("active")) return;
+      renderActiveTabContent(tabName);
+      animatePanelNumbers(tabName);
+    }, 0);
+  });
+}
+
 function activateTab(tabName, activeButton = null) {
   els.tabs.forEach((button) => {
     const isActive = button.dataset.tabTarget === tabName;
@@ -1275,19 +1301,10 @@ function activateTab(tabName, activeButton = null) {
     else button.removeAttribute("aria-current");
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
-  if (tabName === "continuar") {
-    safeRender("Continuar", renderContinuePanel, renderContinueError);
-  } else {
-    removeFocusedStudyOverlay();
-  }
-  if (tabName === "cronograma") safeRender("Ciclo atual", renderGeneratedSchedule);
-  if (tabName === "revisoes") safeRender("Revisões", renderReviews);
-  if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
-  if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
-  if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
+  if (tabName !== "continuar") removeFocusedStudyOverlay();
+  scheduleActiveTabRender(tabName);
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator(document.querySelector(`[data-tab-target="${tabName}"]`));
-    animatePanelNumbers(tabName);
   });
 }
 
@@ -4553,8 +4570,12 @@ function updateFocusedTimerDisplay() {
   if (status && session) status.textContent = session.status === "running" ? "Cronômetro em andamento" : focusedTimerSeconds() ? "Cronômetro pausado" : "Cronômetro opcional";
   const toggle = document.querySelector("[data-focused-timer-toggle]");
   if (toggle && session) {
-    toggle.innerHTML = "<i data-lucide=\"" + (session.status === "running" ? "pause" : "play") + "\"></i><span>" + (session.status === "running" ? "Pausar cronômetro" : focusedTimerSeconds() ? "Continuar cronômetro" : "Iniciar cronômetro") + "</span>";
-    if (window.lucide) window.lucide.createIcons();
+    const label = session.status === "running" ? "Pausar cronômetro" : focusedTimerSeconds() ? "Continuar cronômetro" : "Iniciar cronômetro";
+    if (toggle.dataset.timerState !== label) {
+      toggle.dataset.timerState = label;
+      toggle.innerHTML = "<i data-lucide=\"" + (session.status === "running" ? "pause" : "play") + "\"></i><span>" + label + "</span>";
+      if (window.lucide) window.lucide.createIcons();
+    }
   }
 }
 
@@ -4581,8 +4602,8 @@ function startFocusedTimer() {
   stopFocusedTimerInterval();
   ensureFocusedTimerInterval();
   ensureFocusedSessionPeriodicSave();
-  persistFocusedSession({ immediate: true, label: "Cronômetro iniciado" });
   updateFocusedTimerDisplay();
+  void persistFocusedSession({ label: "Cronômetro iniciado" });
 }
 
 function pauseFocusedTimer() {
@@ -4595,8 +4616,8 @@ function pauseFocusedTimer() {
   focusedStudySession = session;
   stopFocusedTimerInterval();
   ensureFocusedSessionPeriodicSave();
-  persistFocusedSession({ immediate: true, label: "Cronômetro pausado" });
   updateFocusedTimerDisplay();
+  void persistFocusedSession({ label: "Cronômetro pausado" });
 }
 
 function resetFocusedTimer() {
@@ -4609,8 +4630,8 @@ function resetFocusedTimer() {
   focusedStudySession = session;
   stopFocusedTimerInterval();
   ensureFocusedSessionPeriodicSave();
-  persistFocusedSession({ immediate: true, label: "Cronômetro zerado" });
   updateFocusedTimerDisplay();
+  void persistFocusedSession({ label: "Cronômetro zerado" });
 }
 
 function focusedDraftHasChanges(index) {
@@ -4638,7 +4659,7 @@ function suspendFocusedStudy({ silent = false } = {}) {
   }
 
   syncFocusedSessionToState();
-  void persistFocusedSession({ immediate: true, label: "Sessão em andamento" });
+  void persistFocusedSession({ label: "Sessão em andamento" });
   removeFocusedStudyOverlay();
   focusedStudySession = null;
   focusedStudyIndex = -1;
@@ -4974,34 +4995,32 @@ async function saveFocusedStudy() {
   }
   const { adaptiveOutcome, previousStatus, nextStatus } = outcome;
   if (context.context === "revisao" && context.reviewId) recordReviewAttempt(context.reviewId, block, draft, outcome);
-  const completedSession = focusedStudySession;
-  const standaloneBlock = standaloneReview ? state.generatedBlocks.splice(index, 1)[0] : null;
+  if (standaloneReview) state.generatedBlocks.splice(index, 1);
   state.activeFocusSession = null;
   focusedStudySession = null;
-  const persisted = await saveAppStateNow("Resultado do estudo salvo");
-  if (!persisted) {
-    if (standaloneBlock) state.generatedBlocks.splice(index, 0, standaloneBlock);
-    state.activeFocusSession = completedSession;
-    focusedStudySession = completedSession;
-    block.lastSavedSessionId = "";
-    saveLocalSafetyCopy(captureAppState());
-    focusedStudySaving = false;
-    renderFocusedStudyOverlay();
-    showToast("Não foi possível salvar o resultado. A sessão foi mantida para nova tentativa.");
-    return;
-  }
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
   clearFocusedSessionPersistenceTimers();
   focusedStudyIndex = -1;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
-  renderAppViews();
+  if (getActiveTabName() === "continuar") renderContinuePanel();
+  else scheduleActiveTabRender(getActiveTabName());
   if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
   else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
   else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");
   else if (previousStatus !== "Concluído" && nextStatus === "Concluído") showToast("Resultado salvo. Próximo passo disponível.");
   else showToast("Resultado salvo.");
+  void saveAppStateNow("Resultado do estudo salvo").then((persisted) => {
+    if (!persisted) {
+      saveLocalSafetyCopy(captureAppState());
+      showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
+    }
+  }).catch((error) => {
+    console.error("Falha ao salvar o resultado do estudo:", error);
+    saveLocalSafetyCopy(captureAppState());
+    showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
+  });
 }
 
 function activeFocusSessionMarkup() {
@@ -8120,6 +8139,7 @@ function goalTimerMarkup(block, index) {
 
 function updateVisibleGoalTimers() {
   let finishedAny = false;
+  let iconChanged = false;
   state.generatedBlocks.forEach((block, index) => {
     const wasRunning = Boolean(block.timerRunning);
     const remaining = normalizeBlockTimer(block);
@@ -8133,12 +8153,17 @@ function updateVisibleGoalTimers() {
       card.classList.toggle("is-finished", remaining <= 0 && blockTimerTotalSeconds(block) > 0);
     }
     if (toggle) {
-      toggle.setAttribute("aria-label", block.timerRunning ? "Pausar tempo" : "Iniciar tempo");
-      toggle.innerHTML = `<i data-lucide="${block.timerRunning ? "pause" : "play"}"></i>`;
+      const label = block.timerRunning ? "Pausar tempo" : "Iniciar tempo";
+      toggle.setAttribute("aria-label", label);
+      if (toggle.dataset.timerState !== label) {
+        toggle.dataset.timerState = label;
+        toggle.innerHTML = `<i data-lucide="${block.timerRunning ? "pause" : "play"}"></i>`;
+        iconChanged = true;
+      }
     }
   });
   if (finishedAny) saveAppStateNow("Tempo finalizado");
-  if (window.lucide) window.lucide.createIcons();
+  if (iconChanged && window.lucide) window.lucide.createIcons();
 }
 
 function ensureGoalTimerInterval() {
@@ -8955,8 +8980,6 @@ function scheduleCloudSave(label = "Salvo") {
   if (!cloudIsPrimary() || isRestoring) return;
   markUnsavedChanges();
   clearTimeout(cloudSaveTimer);
-  const snapshot = captureAppState();
-  saveLocalSafetyCopy(snapshot);
   if (cloudSavePromise) {
     cloudSaveQueued = true;
     return;
@@ -10366,7 +10389,7 @@ els.scheduleWrap.addEventListener("click", (event) => {
       startBlockTimer(block);
     }
     updateVisibleGoalTimers();
-    saveAppStateNow(block.timerRunning ? "Tempo iniciado" : "Tempo pausado");
+    scheduleAutoSave();
     return;
   }
 
@@ -10377,7 +10400,7 @@ els.scheduleWrap.addEventListener("click", (event) => {
     if (!block) return;
     resetBlockTimer(block);
     updateVisibleGoalTimers();
-    saveAppStateNow("Tempo reiniciado");
+    scheduleAutoSave();
     return;
   }
 
