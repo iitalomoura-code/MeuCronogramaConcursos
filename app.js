@@ -4988,7 +4988,7 @@ function reviewOptionsMarkup(block, index) {
 
 function performancePanel(block, index) {
   return `
-    <div class="performance-modal" role="dialog" aria-modal="true" aria-label="Atualizar desempenho">
+    <div class="performance-modal floating-performance-modal" role="dialog" aria-modal="true" aria-label="Atualizar desempenho">
       <button class="performance-modal-backdrop" type="button" data-close-performance aria-label="Fechar painel"></button>
       <aside class="performance-drawer">
         <div class="performance-drawer-header">

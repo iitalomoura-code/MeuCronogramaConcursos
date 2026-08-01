@@ -4844,17 +4844,24 @@ details[open] > :not(summary),
 }
 
 /* Atualizar desempenho: janela flutuante, separada das bordas da aplicação. */
-.performance-modal {
+.performance-modal.floating-performance-modal {
+  position: fixed !important;
+  inset: 0 !important;
+  display: flex !important;
   align-items: center;
   justify-content: center;
   padding: clamp(14px, 4vh, 34px) clamp(14px, 4vw, 42px);
 }
 
-.performance-modal-backdrop {
+.performance-modal.floating-performance-modal .performance-modal-backdrop {
+  position: absolute !important;
+  inset: 0 !important;
   background: rgba(15, 20, 32, 0.46);
 }
 
-.performance-drawer {
+.performance-modal.floating-performance-modal .performance-drawer {
+  position: relative !important;
+  flex: 0 1 auto;
   width: min(620px, calc(100vw - 28px));
   height: min(880px, calc(100dvh - 28px));
   max-height: calc(100dvh - 28px);
@@ -4866,7 +4873,7 @@ details[open] > :not(summary),
   animation: floatingPerformanceIn 220ms ease both;
 }
 
-.performance-modal.is-closing .performance-drawer {
+.performance-modal.floating-performance-modal.is-closing .performance-drawer {
   animation: floatingPerformanceOut 180ms ease both;
 }
 
@@ -4892,16 +4899,16 @@ details[open] > :not(summary),
   }
 }
 
-:root[data-theme="night"] .performance-modal-backdrop {
+:root[data-theme="night"] .performance-modal.floating-performance-modal .performance-modal-backdrop {
   background: rgba(3, 7, 14, 0.62);
 }
 
-:root[data-theme="night"] .performance-drawer {
+:root[data-theme="night"] .performance-modal.floating-performance-modal .performance-drawer {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46), 0 4px 18px rgba(0, 0, 0, 0.28);
 }
 
 @media (max-width: 560px) {
-  .performance-modal {
+  .performance-modal.floating-performance-modal {
     padding: 10px;
   }
 
