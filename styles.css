@@ -4843,6 +4843,77 @@ details[open] > :not(summary),
   border-color: var(--primary);
 }
 
+/* Atualizar desempenho: janela flutuante, separada das bordas da aplicação. */
+.performance-modal {
+  align-items: center;
+  justify-content: center;
+  padding: clamp(14px, 4vh, 34px) clamp(14px, 4vw, 42px);
+}
+
+.performance-modal-backdrop {
+  background: rgba(15, 20, 32, 0.46);
+}
+
+.performance-drawer {
+  width: min(620px, calc(100vw - 28px));
+  height: min(880px, calc(100dvh - 28px));
+  max-height: calc(100dvh - 28px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: clamp(20px, 3vw, 28px);
+  background: var(--card);
+  box-shadow: 0 24px 70px rgba(15, 20, 32, 0.28), 0 4px 18px rgba(15, 20, 32, 0.12);
+  animation: floatingPerformanceIn 220ms ease both;
+}
+
+.performance-modal.is-closing .performance-drawer {
+  animation: floatingPerformanceOut 180ms ease both;
+}
+
+@keyframes floatingPerformanceIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes floatingPerformanceOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+:root[data-theme="night"] .performance-modal-backdrop {
+  background: rgba(3, 7, 14, 0.62);
+}
+
+:root[data-theme="night"] .performance-drawer {
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46), 0 4px 18px rgba(0, 0, 0, 0.28);
+}
+
+@media (max-width: 560px) {
+  .performance-modal {
+    padding: 10px;
+  }
+
+  .performance-drawer {
+    width: min(100%, 620px);
+    height: min(900px, calc(100dvh - 20px));
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px;
+    padding: 18px;
+  }
+}
+
 /* Imagens e tabelas dentro do Caderno de Resumos */
 .notebook-rich-editor img {
   max-width: 100%;
