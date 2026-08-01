@@ -153,7 +153,7 @@ let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "a
 let evolutionContext = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
-let saveStatusState = { state: "saved", destination: "local", message: "" };
+let saveStatusState = { state: "saved", destination: "cache", message: "" };
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -8305,11 +8305,26 @@ function cloudPlanMeta(record = {}) {
   };
 }
 
+function readCloudCache(planId = localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY)) {
+  if (!planId) return null;
+  try {
+    const cache = JSON.parse(localStorage.getItem(cloudCacheKey(planId)) || "null");
+    if (!cache?.id || !cache?.data || cache.id !== planId) return null;
+    const currentUserId = window.authGate?.getAuthenticatedUser?.()?.id || "";
+    if (!currentUserId || cache.userId !== currentUserId) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
 function saveCloudCache(record, snapshot = record?.data) {
   if (!record?.id || !snapshot) return;
+  const userId = record.user_id || window.authGate?.getAuthenticatedUser?.()?.id || "";
   const cache = {
     source: "cloud-cache",
     id: record.id,
+    userId,
     name: record.name || "Novo concurso",
     version: Number(record.version) || 1,
     updatedAt: record.updated_at || record.updatedAt || new Date().toISOString(),
@@ -8317,8 +8332,28 @@ function saveCloudCache(record, snapshot = record?.data) {
   };
   try {
     localStorage.setItem(cloudCacheKey(record.id), JSON.stringify(cache));
-    localStorage.setItem(planStorageKey(record.id), JSON.stringify(snapshot));
   } catch {}
+}
+
+function restoreCloudCacheState() {
+  const cache = readCloudCache();
+  if (!cache) return false;
+  const meta = cloudPlanMeta({
+    id: cache.id,
+    name: cache.name,
+    version: cache.version,
+    created_at: cache.createdAt,
+    updated_at: cache.updatedAt,
+  });
+  state.dataSource = "cloud-cache";
+  state.plans = [meta];
+  state.currentPlanId = meta.id;
+  state.cloudPlanVersion = meta.version;
+  state.cloudPlanUpdatedAt = meta.updatedAt;
+  renderPlanSelect();
+  applyAppSnapshot(cache.data);
+  updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
+  return true;
 }
 
 function updateCloudPlanMeta(record) {
@@ -8414,7 +8449,7 @@ function scheduleLocalMigrationPrompt() {
 function openCloudMigrationModal() {
   const candidates = localPlanCandidates();
   if (!els.cloudMigrationModal || !candidates.length) {
-    showToast("N\u00e3o h\u00e1 planejamentos locais para enviar.");
+    showToast("N\u00e3o h\u00e1 planejamentos anteriores para adicionar.");
     return;
   }
   if (els.cloudMigrationList) els.cloudMigrationList.innerHTML = candidates.map(migrationCandidateMarkup).join("");
@@ -8462,6 +8497,7 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   saveCloudCache(record);
   renderPlanSelect();
   applyAppSnapshot(record.data || blankAppSnapshot(meta.name));
+  updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
   if (preserveCurrentTab) {
     const currentTarget = [...els.tabs].find((button) => button.dataset.tabTarget === currentTab);
     activateTab(currentTarget?.getAttribute("aria-disabled") === "false" ? currentTab : "continuar");
@@ -8474,7 +8510,10 @@ async function initializeCloudPlanSource() {
   try {
     const records = await window.listCloudPlans();
     if (!records.length) {
-      if (localPlanCandidates().length) return false;
+      if (localPlanCandidates().length) {
+        state.dataSource = "cloud-empty";
+        return false;
+      }
       state.dataSource = "cloud";
       state.plans = [];
       state.currentPlanId = "";
@@ -8547,7 +8586,7 @@ async function migrateSelectedLocalPlans() {
   if (button) button.disabled = true;
   if (els.cloudMigrationResult) {
     els.cloudMigrationResult.hidden = false;
-    els.cloudMigrationResult.textContent = "Enviando planejamentos selecionados...";
+    els.cloudMigrationResult.textContent = "Adicionando planejamentos selecionados \u00e0 conta...";
   }
   const created = [];
   const failures = [];
@@ -8810,29 +8849,29 @@ function applyAppSnapshot(saved = {}) {
   }
 }
 
-function updateSaveStatus({ state: nextState = "saved", destination = "local", message = "" } = {}) {
+function updateSaveStatus({ state: nextState = "saved", destination = "cache", message = "" } = {}) {
   saveStatusState = { state: nextState, destination, message };
   const defaultMessages = {
-    saved: destination === "cloud" ? "Dados sincronizados" : "Dados salvos localmente",
-    saving: destination === "cloud" ? "Salvando" : "Salvando localmente",
+    saved: destination === "cloud" ? "Sincronizado" : "Salvo",
+    saving: "Salvando...",
     pending: "Alterações pendentes",
-    error: destination === "cloud" ? "Erro ao sincronizar" : "Erro ao salvar localmente",
+    error: "Erro ao salvar",
   };
-  const text = message || defaultMessages[nextState] || "Dados salvos localmente";
+  const text = message || defaultMessages[nextState] || "Salvo";
   if (els.saveStatus) {
     els.saveStatus.textContent = text;
     els.saveStatus.dataset.state = nextState;
   }
   if (els.mobileSaveButton) {
     els.mobileSaveButton.dataset.state = nextState;
-    els.mobileSaveButton.setAttribute("aria-label", nextState === "saving" ? "Salvando dados" : "Salvar dados localmente");
+    els.mobileSaveButton.setAttribute("aria-label", nextState === "saving" ? "Salvando alterações" : "Salvar alterações");
   }
 }
 
 function setSaveStatus(text) {
   const clean = String(text || "");
-  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: cloudIsPrimary() ? "cloud" : "local", message: clean });
-  updateSaveStatus({ state: "saved", destination: "local", message: clean || "Dados salvos localmente" });
+  if (/erro|n[aã]o consegui/i.test(clean)) return updateSaveStatus({ state: "error", destination: cloudIsPrimary() ? "cloud" : "cache", message: clean });
+  updateSaveStatus({ state: "saved", destination: cloudIsPrimary() ? "cloud" : "cache", message: clean || "Salvo" });
 }
 
 function readBackupMeta() {
@@ -8880,8 +8919,19 @@ function rememberBackupExport(version = 1) {
 function saveLocalSafetyCopy(snapshot) {
   if (!state.currentPlanId || !snapshot) return;
   try {
+    if (cloudIsPrimary()) {
+      const plan = activePlan() || {};
+      saveCloudCache({
+        id: state.currentPlanId,
+        user_id: window.authGate?.getAuthenticatedUser?.()?.id || "",
+        name: planVisibleName(plan),
+        version: state.cloudPlanVersion,
+        updated_at: state.cloudPlanUpdatedAt || new Date().toISOString(),
+      }, snapshot);
+      return;
+    }
     localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
-    if (!cloudIsPrimary()) localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
+    localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
   } catch {}
 }
 
@@ -8955,7 +9005,7 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
       saveCloudCache(record, data);
       renderPlanSelect();
       clearUnsavedChanges();
-      updateSaveStatus({ state: "saved", destination: "cloud", message: `${label} às ${formatCloudSaveTime()}` });
+      updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
       return true;
     } catch (error) {
       if (error?.code === "cloud_conflict") {
@@ -9006,7 +9056,7 @@ function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) markUnsavedChanges();
   if (cloudIsPrimary() && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
-    updateSaveStatus({ state: "saved", destination: "cloud", message: `Salvo às ${formatCloudSaveTime()}` });
+    updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
     return Promise.resolve(true);
   }
   const snapshot = captureAppState();
@@ -9016,9 +9066,9 @@ function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
     return Promise.resolve(false);
   }
   if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot);
-  updateSaveStatus({ state: "saving", destination: "local" });
+  updateSaveStatus({ state: "saving", destination: "cache" });
   refreshCurrentPlanName(snapshot);
-  updateSaveStatus({ state: "saved", destination: "local", message: `${label} localmente` });
+  updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
   return Promise.resolve(true);
 }
 
@@ -9033,15 +9083,17 @@ function scheduleAutoSave() {
     return;
   }
   clearTimeout(saveTimer);
-  updateSaveStatus({ state: "pending", destination: "local" });
+  updateSaveStatus({ state: "pending", destination: "cache" });
   saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 350);
 }
 
-function restoreAppState({ preserveDataSource = false } = {}) {
+function restoreAppState({ preserveDataSource = false, cacheOnly = false, preferCloudCache = true } = {}) {
   if (!preserveDataSource) {
     state.dataSource = "local-migration";
     state.cloudPlanVersion = 0;
   }
+  if (preferCloudCache && cloudIsAvailable() && restoreCloudCacheState()) return true;
+  if (cacheOnly) return false;
   state.plans = readPlansIndex();
   const legacyRaw = localStorage.getItem(LEGACY_APP_STATE_KEY);
 
@@ -10750,7 +10802,7 @@ els.signOutButton?.addEventListener("click", async () => {
     if (!canSignOut) {
       const choice = await openDialog({
         title: "Não foi possível salvar antes de sair",
-        message: "Suas alterações continuam apenas nesta cópia local temporária.",
+        message: "Suas alterações permanecem neste navegador até a conexão voltar.",
         actions: [
           { id: "cancel", label: "Cancelar", value: "cancel" },
           { id: "retry", label: "Tentar novamente", value: "retry" },
@@ -10761,7 +10813,7 @@ els.signOutButton?.addEventListener("click", async () => {
       else canSignOut = choice === "leave";
     }
   } else if (!cloudIsPrimary()) {
-    await saveAppStateNow("Dados salvos localmente");
+    await saveAppStateNow("Salvo");
   }
   if (!canSignOut) {
     els.signOutButton.disabled = false;
@@ -10847,7 +10899,7 @@ document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
     saveAppStateNow("Dados salvos", { changes: false });
-    showToast(cloudIsPrimary() ? "Salvamento na conta iniciado." : "Dados salvos localmente.");
+    showToast(cloudIsPrimary() ? "Salvamento iniciado." : "Alterações salvas.");
     return;
   }
   if (!event.altKey || event.ctrlKey || event.metaKey) return;
@@ -10881,6 +10933,7 @@ window.addEventListener("beforeunload", () => {
         localStorage.setItem(cloudCacheKey(state.currentPlanId), JSON.stringify({
           source: "cloud-cache",
           id: state.currentPlanId,
+          userId: window.authGate?.getAuthenticatedUser?.()?.id || "",
           name: planVisibleName(activePlan() || {}),
           version: state.cloudPlanVersion,
           updatedAt: new Date().toISOString(),
@@ -10903,9 +10956,10 @@ async function startMeuCronogramaApp() {
   applyThemePreference();
   defaultReferenceWeek();
   renderHistory();
-  // Mostre o planejamento local imediatamente. A leitura remota continua em
-  // segundo plano e substitui o estado somente quando os dados da conta chegam.
-  if (!restoreAppState()) {
+  // O cache da conta melhora a primeira pintura, mas a versão remota permanece
+  // a fonte definitiva e é aplicada assim que a consulta for concluída.
+  const restoredFromCloudCache = restoreAppState({ cacheOnly: true });
+  if (!restoredFromCloudCache) {
     renderRows();
     updateContestSummary();
     activateTab("continuar");
@@ -10919,6 +10973,14 @@ async function startMeuCronogramaApp() {
   });
   void initializeCloudPlanSource().then((loadedFromCloud) => {
     const cloudUnavailable = state.dataSource === "cloud-unavailable";
+    if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredFromCloudCache)) {
+      const restoredLegacy = restoreAppState({ preserveDataSource: cloudUnavailable, preferCloudCache: false });
+      if (!restoredLegacy) {
+        renderRows();
+        updateContestSummary();
+        activateTab("continuar");
+      }
+    }
     if (!loadedFromCloud && cloudUnavailable) {
       updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     }

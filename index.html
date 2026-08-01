@@ -28,7 +28,7 @@
       <button id="mobileMenuButton" class="mobile-topbar-button" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="appSidebar"><i data-lucide="menu"></i></button>
       <button id="mobilePlanTitle" class="mobile-plan-title" type="button" aria-label="Trocar planejamento">Meu Cronograma</button>
       <div class="mobile-topbar-actions">
-        <button id="mobileSaveButton" class="mobile-topbar-button" type="button" aria-label="Salvar dados localmente"><i data-lucide="save"></i></button>
+        <button id="mobileSaveButton" class="mobile-topbar-button" type="button" aria-label="Salvar alterações"><i data-lucide="save"></i></button>
         <button id="mobileSettingsButton" class="mobile-topbar-button" type="button" aria-label="Abrir configurações"><i data-lucide="settings"></i></button>
       </div>
     </header>
@@ -47,7 +47,7 @@
           <div id="settingsMenu" class="settings-popover" hidden>
             <div class="settings-popover-header">
               <strong>Configurações</strong>
-              <span id="saveStatus" class="save-status">Dados salvos localmente</span>
+              <span id="saveStatus" class="save-status">Salvo</span>
             </div>
             <div class="backup-actions">
               <section class="settings-section" aria-labelledby="plansSettingsHeading">
@@ -649,26 +649,26 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
       <section class="plan-delete-dialog cloud-migration-dialog">
         <div>
           <span class="section-kicker">Dados deste navegador</span>
-          <h2 id="cloudMigrationTitle">Encontramos planejamentos salvos neste navegador.</h2>
+          <h2 id="cloudMigrationTitle">Encontramos planejamentos anteriores neste navegador.</h2>
           <p>Selecione os planejamentos que deseja enviar para sua conta. Nada será apagado deste dispositivo.</p>
         </div>
         <div id="cloudMigrationList" class="cloud-migration-list"></div>
         <p id="cloudMigrationResult" class="cloud-migration-result" role="status" hidden></p>
         <div class="plan-delete-actions">
           <button id="dismissCloudMigrationButton" class="ghost-button" type="button">Agora não</button>
-          <button id="confirmCloudMigrationButton" class="primary-button" type="button">Enviar para minha conta</button>
+          <button id="confirmCloudMigrationButton" class="primary-button" type="button">Adicionar à minha conta</button>
         </div>
       </section>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=20260717-cloud-sync"></script>
-    <script src="./auth.js?v=20260717-cloud-sync"></script>
+    <script src="./auth.js?v=20260801-cloud-primary-cache"></script>
     <script src="./cloud-storage.js?v=20260717-cloud-refresh"></script>
     <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./js/pedagogical-grouping.js?v=20260801-subject-taxonomy"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260801-fast-startup"></script>
+    <script src="./app.js?v=20260801-cloud-primary-cache"></script>
   </body>
 </html>
 

@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const app = read("app.js");
 const cloud = read("cloud-storage.js");
+const auth = read("auth.js");
 const index = read("index.html");
 
 ["listCloudPlans", "loadCloudPlan", "createCloudPlan", "updateCloudPlan", "saveCloudPlan", "deleteCloudPlan", "testCloudConnection"].forEach((name) => {
@@ -17,6 +18,13 @@ assert.ok(cloud.includes('.eq("version", expectedVersion)'), "A atualiza\u00e7\u
 assert.ok(cloud.includes('.eq("user_id", user.id)'), "As consultas devem respeitar o usu\u00e1rio autenticado.");
 assert.ok(app.includes('dataSource: "local-migration"'), "O aplicativo deve distinguir a origem dos dados.");
 assert.ok(app.includes("ACTIVE_CLOUD_PLAN_KEY"), "O \u00faltimo planejamento online deve ser lembrado separadamente.");
+assert.ok(app.includes("function readCloudCache"), "O cache online deve ter leitura isolada.");
+assert.ok(app.includes("function restoreCloudCacheState"), "O cache online deve servir apenas para a primeira pintura.");
+assert.ok(app.includes("cache.userId !== currentUserId"), "O cache deve ser associado ao usu\u00e1rio autenticado.");
+assert.ok(app.includes("restoreAppState({ cacheOnly: true })"), "A inicializa\u00e7\u00e3o deve usar apenas o cache online antes da consulta remota.");
+assert.ok(!app.includes("Dados salvos localmente"), "A interface n\u00e3o deve tratar armazenamento local como estado normal.");
+assert.ok(!index.includes("Salvar dados localmente"), "Os controles n\u00e3o devem anunciar salvamento local como destino principal.");
+assert.ok(auth.includes("getAuthenticatedUser"), "A sess\u00e3o autenticada deve estar dispon\u00edvel para validar o cache local.");
 assert.ok(app.includes("initializeCloudPlanSource"), "A inicializa\u00e7\u00e3o deve tentar a fonte online primeiro.");
 assert.ok(app.includes("migrateSelectedLocalPlans"), "A migra\u00e7\u00e3o local deve ser controlada pelo usu\u00e1rio.");
 assert.ok(app.includes("scheduleCloudSave"), "O salvamento online deve usar um controlador central.");

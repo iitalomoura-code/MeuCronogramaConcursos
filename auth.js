@@ -200,6 +200,7 @@
     watchAuthState,
     translateAuthError,
     isAuthenticated: () => Boolean(authenticatedState.user),
+    getAuthenticatedUser: () => authenticatedState.user,
   };
 
   watchAuthState();

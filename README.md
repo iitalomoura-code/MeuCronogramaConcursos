@@ -2,7 +2,7 @@
 
 Aplicativo estático para organizar estudos para concursos a partir do edital.
 
-O projeto funciona somente com HTML, CSS e JavaScript. Os dados ficam no navegador por `localStorage` e podem ser exportados/importados por arquivo JSON de backup.
+O projeto funciona somente com HTML, CSS e JavaScript. Após o login, os planejamentos ficam na conta do usuário no Supabase e podem ser exportados/importados por arquivo JSON de backup.
 
 ## Acesso online
 
@@ -21,11 +21,11 @@ No painel do Supabase, crie os usuários manualmente para esta primeira etapa. N
 
 Crie `public.study_plans` com as colunas `id` (UUID), `user_id` (UUID), `name` (text), `data` (jsonb), `version` (integer), `created_at` e `updated_at` (timestamptz). Ative RLS e crie políticas que permitam somente `auth.uid() = user_id` para leitura, criação, alteração e exclusão. O cliente nunca usa `service_role` e sempre obtém o usuário autenticado antes de consultar a tabela.
 
-Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
+Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. Um cache temporário da conta pode ser usado para a primeira pintura, mas a versão recebida do Supabase é sempre a fonte definitiva. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
 
 Ao abrir, atualizar a página, trocar de planejamento ou voltar para uma aba em segundo plano, a versão online mais recente é aplicada automaticamente quando não existem alterações locais pendentes. A confirmação só aparece se houver edição local ainda não salva concorrendo com uma versão mais nova da conta.
 
-Na primeira entrada, planejamentos locais são detectados e podem ser enviados pela ação **Enviar dados locais para a conta**. A migração é sempre explícita e nunca apaga os dados deste navegador.
+Na primeira entrada, planejamentos antigos deste navegador são detectados e podem ser adicionados à conta. A migração é sempre explícita e nunca apaga os dados antigos antes da confirmação.
 
 ## Arquivos principais
 
@@ -47,7 +47,7 @@ Na primeira entrada, planejamentos locais são detectados e podem ser enviados p
 - Revisões.
 - Caderno de resumos.
 - Painel de evolução.
-- Salvamento online por conta, com cache local temporário de segurança.
+- Salvamento online por conta, com cache temporário de segurança.
 - Backup e importação de backup em JSON.
 
 ## Publicar no GitHub Pages
@@ -66,6 +66,15 @@ Arquivos como `meu-cronograma-concursos-dados.json`, backups e pastas `backup-*`
 
 ## Observação
 
-Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abertos em outro computador após o login na mesma conta. O cache local não substitui automaticamente a versão online; ele permanece apenas como proteção temporária e fonte para a primeira migração.
+Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abertos em outro computador após o login na mesma conta. O cache temporário não substitui automaticamente a versão online; ele serve apenas para carregamento rápido, recuperação de conexão e migração explícita.
+
+### Chaves locais mantidas
+
+- `meu-cronograma-theme`: preferência de tema claro ou noite.
+- `meuCronogramaPlanoNuvemAtivo` e `meuCronogramaCloudCache:<id>`: identificação e cache temporário do último planejamento online; o cache é associado ao usuário autenticado.
+- `planejaConcursosPlanos`, `planejaConcursosPlanoAtivo`, `planejaConcursosEstado:<id>` e `planejaConcursosEstado`: planejamentos legados, preservados apenas para migração explícita e uso offline temporário.
+- `conteudoProgramaticoHistorico`: até 20 importações recentes para reaproveitar texto do edital durante a revisão.
+- `meuCronogramaMigracoesNuvem` e `meuCronogramaMigracaoNuvemDispensada`: registro de migrações confirmadas ou dispensadas.
+- `meuCronogramaUltimoBackup`: data do último backup exportado, sem conteúdo do planejamento.
 
 Projeto preparado para publicação no GitHub Pages.
