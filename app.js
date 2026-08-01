@@ -928,17 +928,40 @@ function outlineDescendants(node) {
   return node.children.flatMap((child) => [child, ...outlineDescendants(child)]);
 }
 
+function outlineContentsForStudy(node) {
+  const contents = [];
+  outlineDescendants(node).forEach((item) => {
+    const text = normalizeTopic(item.text);
+    if (text && !contents.some((entry) => normalizeForMatch(entry) === normalizeForMatch(text))) contents.push(text);
+  });
+  return contents;
+}
+
+function autonomousOutlineChildren(root) {
+  const directChildren = root.children.filter((child) => child.text);
+  const childrenWithOwnContents = directChildren.filter((child) => child.children.length > 0);
+  // A level-1 item becomes a structural umbrella only when it contains at
+  // least two independent branches. A lone detailed branch stays within its
+  // parent theme, preserving cases such as "Despesa pública > estágios".
+  return childrenWithOwnContents.length >= 2 ? childrenWithOwnContents : [];
+}
+
+function outlineStudyNodes(root) {
+  const autonomousChildren = autonomousOutlineChildren(root);
+  if (!autonomousChildren.length) return [{ node: root, context: null }];
+  return autonomousChildren.map((node) => ({ node, context: root }));
+}
+
 function convertOutlineToStudyStructure(materia, tree) {
   const subject = normalizeTopic(materia);
   if (!subject) return [];
-  return tree.roots.map((root, order) => {
-    const contents = [];
-    outlineDescendants(root).forEach((item) => {
-      const text = normalizeTopic(item.text);
-      if (text && !contents.some((entry) => normalizeForMatch(entry) === normalizeForMatch(text))) contents.push(text);
-    });
-    const title = root.text || `Tema ${root.number}`;
+  return tree.roots.flatMap((root) => outlineStudyNodes(root)).map(({ node, context }, order) => {
+    const contents = outlineContentsForStudy(node);
+    const title = node.text || `Tema ${node.number}`;
     const assunto = contents.length ? `${title}: ${contents.join("; ")}` : title;
+    const sourceNodes = context
+      ? [context, node, ...outlineDescendants(node)]
+      : [node, ...outlineDescendants(node)];
     return {
       materia: subject,
       assunto,
@@ -947,8 +970,9 @@ function convertOutlineToStudyStructure(materia, tree) {
       observacoes: "",
       temaExplicito: true,
       origemEdital: {
-        originalText: [root, ...outlineDescendants(root)].map((item) => item.originalText).join("\n"),
-        parsedStructure: outlineNodeSnapshot(root),
+        originalText: sourceNodes.map((item) => item.originalText).join("\n"),
+        parsedStructure: outlineNodeSnapshot(node),
+        contextoEstrutural: context ? outlineNodeSnapshot(context) : null,
       },
     };
   });

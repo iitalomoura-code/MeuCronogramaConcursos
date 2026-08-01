@@ -131,6 +131,31 @@ assert.ok(expense, "Despesa p\u00fablica deve permanecer como tema principal.");
 assert.equal(expense.origemEdital.parsedStructure.number, "3", "A origem deve preservar o n\u00famero do tema principal.");
 assert.equal(expense.origemEdital.parsedStructure.children[2].children[0].number, "3.3.1", "A \u00e1rvore original deve preservar o v\u00ednculo pai-filho.");
 
+const strategicOutline = parser.parseProgramContent(`
+ADMINISTRA\u00c7\u00c3O P\u00daBLICA
+1 Gest\u00e3o estrat\u00e9gica.
+1.1 Planejamento estrat\u00e9gico.
+1.1.1 Miss\u00e3o, vis\u00e3o e valores.
+1.1.2 An\u00e1lise SWOT.
+1.1.3 Indicadores.
+1.2 Gest\u00e3o de pessoas.
+1.2.1 Lideran\u00e7a.
+1.2.2 Motiva\u00e7\u00e3o.
+1.2.3 Gest\u00e3o por compet\u00eancias.
+`);
+assert.equal(strategicOutline.length, 2, "Ramos aut\u00f4nomos de segundo n\u00edvel devem virar temas de estudo.");
+const strategicPlanning = strategicOutline.find((row) => row.assunto.startsWith("Planejamento estrat\u00e9gico"));
+const peopleManagement = strategicOutline.find((row) => row.assunto.startsWith("Gest\u00e3o de pessoas"));
+assert.ok(strategicPlanning && peopleManagement, "Planejamento estrat\u00e9gico e gest\u00e3o de pessoas devem permanecer separados.");
+["Miss\u00e3o, vis\u00e3o e valores", "An\u00e1lise SWOT", "Indicadores"].forEach((content) => assert.ok(strategicPlanning.assunto.includes(content), `Conte\u00fado esperado em planejamento: ${content}`));
+["Lideran\u00e7a", "Motiva\u00e7\u00e3o", "Gest\u00e3o por compet\u00eancias"].forEach((content) => assert.ok(peopleManagement.assunto.includes(content), `Conte\u00fado esperado em gest\u00e3o de pessoas: ${content}`));
+assert.equal(strategicPlanning.origemEdital.parsedStructure.number, "1.1", "A origem deve preservar a numera\u00e7\u00e3o do tema promovido.");
+assert.equal(strategicPlanning.origemEdital.contextoEstrutural.number, "1", "O contexto estrutural do item pai deve ser preservado.");
+assert.deepEqual(strategicOutline.map((row) => row.assunto.split(":")[0]), ["Planejamento estrat\u00e9gico", "Gest\u00e3o de pessoas"], "A ordem dos ramos aut\u00f4nomos deve seguir o edital.");
+
+const orphanOutline = parser.detectOutlineProblems([{ text: "2.1 Item sem pai", sourceLine: 1 }]);
+assert.ok(orphanOutline.problems.some((problem) => problem.type === "missing-parent" && problem.number === "2.1"), "Subitem sem pai deve ser registrado para revis\u00e3o manual.");
+
 const continuation = parser.parseProgramContent(`
 GEST\u00c3O ESTRAT\u00c9GICA GOVERNAMENTAL
 1 Gest\u00e3o estrat\u00e9gica, planejamento institucional,
