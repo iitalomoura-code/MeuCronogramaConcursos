@@ -30,6 +30,19 @@ const wordClasses = grouping.groupRows([
 assert.equal(wordClasses.length, 2);
 assert.ok(titles(wordClasses).includes("Classes de palavras"));
 
+const grammarPairs = grouping.groupRows([
+  row("Língua Portuguesa", "Concordância nominal"),
+  row("Língua Portuguesa", "Concordância verbal"),
+  row("Língua Portuguesa", "Regência nominal"),
+  row("Língua Portuguesa", "Regência verbal"),
+  row("Língua Portuguesa", "Crase"),
+  row("Língua Portuguesa", "Interpretação de textos"),
+]);
+assert.equal(grammarPairs.length, 3);
+assert.ok(titles(grammarPairs).includes("Concordância nominal e verbal"));
+assert.ok(titles(grammarPairs).includes("Regência e crase"));
+assert.ok(titles(grammarPairs).includes("Interpretação de textos"), "Tema protegido deve permanecer separado.");
+
 const technology = grouping.groupRows([
   row("Tecnologia da Informação", "Internet"),
   row("Tecnologia da Informação", "Navegadores"),
@@ -39,6 +52,17 @@ const technology = grouping.groupRows([
 ]);
 assert.equal(technology.length, 2);
 assert.ok(titles(technology).includes("Internet, arquivos e serviços digitais"));
+
+const security = grouping.groupRows([
+  row("Informática", "Vírus e malware"),
+  row("Informática", "Phishing"),
+  row("Informática", "Engenharia social"),
+  row("Informática", "Firewall e antivírus"),
+  row("Informática", "Sistemas operacionais"),
+]);
+assert.equal(security.length, 2);
+assert.ok(titles(security).includes("Segurança da Informação"));
+assert.ok(titles(security).includes("Sistemas operacionais"));
 
 const planning = grouping.groupRows([
   row("Administração Geral e Pública", "Missão"),
@@ -61,6 +85,18 @@ const expense = grouping.groupRows([
 assert.equal(expense.length, 2);
 assert.ok(titles(expense).includes("Despesa pública"));
 assert.ok(titles(expense).includes("Receita pública"));
+
+const revenue = grouping.groupRows([
+  row("AFO", "Conceito de receita"),
+  row("AFO", "Previsão da receita"),
+  row("AFO", "Lançamento"),
+  row("AFO", "Arrecadação"),
+  row("AFO", "Recolhimento"),
+  row("AFO", "Despesa pública"),
+]);
+assert.equal(revenue.length, 2);
+assert.ok(titles(revenue).includes("Receita pública"));
+assert.ok(titles(revenue).includes("Despesa pública"));
 
 const contracting = grouping.groupRows([
   row("Licitações e Contratos", "PCA"),
@@ -89,5 +125,8 @@ const law = grouping.groupRows([
   row("Direito Administrativo", "Responsabilidade civil do Estado"),
 ]);
 assert.equal(law.length, 4, "Temas jurídicos autônomos devem permanecer separados.");
+
+assert.equal(grouping.TAXONOMY.length, 10, "A taxonomia deve cobrir as dez matérias iniciais.");
+assert.ok(grouping.GENERIC_TERMS.includes("classificacao"), "Termos genéricos devem permanecer identificados fora das regras de decisão.");
 
 console.log("OK - agrupamento pedagógico conservador preserva conteúdos e temas autônomos.");

@@ -15,6 +15,7 @@ assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos q
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260801-pedagogical-grouping"), "O CSS deve usar o cache-busting atual.");
 assert.ok(index.includes("app.js?v=20260801-outline-hierarchy"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("pedagogical-grouping.js?v=20260801-subject-taxonomy"), "A taxonomia pedagógica deve usar o cache-busting atual.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");
