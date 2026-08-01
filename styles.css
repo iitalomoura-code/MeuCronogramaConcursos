@@ -4849,7 +4849,7 @@ details[open] > :not(summary),
   inset: 0 !important;
   display: flex !important;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   padding: clamp(14px, 4vh, 34px) clamp(14px, 4vw, 42px);
 }
 
@@ -4862,7 +4862,7 @@ details[open] > :not(summary),
 .performance-modal.floating-performance-modal .performance-drawer {
   position: relative !important;
   flex: 0 1 auto;
-  width: min(620px, calc(100vw - 28px));
+  width: min(580px, calc(100vw - 28px));
   height: min(880px, calc(100dvh - 28px));
   max-height: calc(100dvh - 28px);
   border: 1px solid var(--border);
@@ -4870,32 +4870,38 @@ details[open] > :not(summary),
   padding: clamp(20px, 3vw, 28px);
   background: var(--card);
   box-shadow: 0 24px 70px rgba(15, 20, 32, 0.28), 0 4px 18px rgba(15, 20, 32, 0.12);
-  animation: floatingPerformanceIn 220ms ease both;
+  animation: floatingPerformanceDrawerIn 220ms ease both;
 }
 
 .performance-modal.floating-performance-modal.is-closing .performance-drawer {
-  animation: floatingPerformanceOut 180ms ease both;
+  animation: floatingPerformanceDrawerOut 180ms ease both;
 }
 
-@keyframes floatingPerformanceIn {
+/* A animação da aba ativa criava um contexto que prendia o modal à rolagem. */
+.tab-panel.active:has(.performance-modal.floating-performance-modal) {
+  animation: none;
+  transform: none;
+}
+
+@keyframes floatingPerformanceDrawerIn {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.985);
+    transform: translateX(20px) scale(0.99);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0) scale(1);
   }
 }
 
-@keyframes floatingPerformanceOut {
+@keyframes floatingPerformanceDrawerOut {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateY(8px) scale(0.99);
+    transform: translateX(12px) scale(0.99);
   }
 }
 
@@ -4909,6 +4915,7 @@ details[open] > :not(summary),
 
 @media (max-width: 560px) {
   .performance-modal.floating-performance-modal {
+    justify-content: center;
     padding: 10px;
   }
 
