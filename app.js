@@ -137,6 +137,10 @@ let contentFilter = "all";
 let contentUndoSnapshot = null;
 let contentSearchTimer = 0;
 let openSubjectKeys = new Set();
+let contentView = "review";
+let editalMapSearchTerm = "";
+let editalMapFilter = "all";
+let editalMapOpenSubjects = new Set();
 let continueAlternativesOpen = true;
 let continueDetailsOpen = false;
 let focusedStudyIndex = -1;
@@ -229,6 +233,13 @@ const els = {
   processButton: document.querySelector("#processButton"),
   clearButton: document.querySelector("#clearButton"),
   contentSummary: document.querySelector("#contentSummary"),
+  contentViewSwitch: document.querySelector("#contentViewSwitch"),
+  contentReviewViewButton: document.querySelector("#contentReviewViewButton"),
+  contentMapViewButton: document.querySelector("#contentMapViewButton"),
+  editalMapCard: document.querySelector("#editalMapCard"),
+  editalMapBody: document.querySelector("#editalMapBody"),
+  editalMapSearch: document.querySelector("#editalMapSearch"),
+  clearEditalMapSearch: document.querySelector("#clearEditalMapSearch"),
   historySelect: document.querySelector("#historySelect"),
   topicsBody: document.querySelector("#topicsBody"),
   emptyState: document.querySelector("#emptyState"),
@@ -1270,6 +1281,7 @@ function animatePanelNumbers(tabName) {
 }
 
 function renderActiveTabContent(tabName) {
+  if (tabName === "conteudo") safeRender("Conteúdo Programático", renderEditalMap);
   if (tabName === "continuar") safeRender("Continuar", renderContinuePanel, renderContinueError);
   if (tabName === "cronograma") safeRender("Ciclo atual", renderGeneratedSchedule);
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
@@ -1936,6 +1948,159 @@ function renderRowsLegacy() {
   markUnconfirmed();
 }
 
+function allStudyRecordsForMap() {
+  return [
+    ...(state.generatedBlocks || []),
+    ...(state.completedHistory || []),
+    ...(state.cycleHistory || []).flatMap((cycle) => [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])]),
+    ...(state.cycleResults || []).flatMap((cycle) => cycle.completed || []),
+  ].filter(Boolean);
+}
+
+function editalMapTopicState(row = {}) {
+  const materia = row.materia || "";
+  const assunto = row.assunto || "";
+  const metaId = pedagogicalMetaId(materia, assunto);
+  const relatedBlocks = allKnownMetaBlocks(metaId);
+  const blocks = relatedBlocks.length
+    ? relatedBlocks
+    : allStudyRecordsForMap().filter((block) => topicMatches(block, materia, assunto));
+  const completed = blocks.some((block) => isMetaComplete(block))
+    || isThemeCompleteForPlanning(materia, assunto);
+  const hasInProgress = blocks.some((block) => normalizeStatus(block.status) === "Em andamento");
+  const hasReprogrammed = blocks.some((block) => normalizeStatus(block.status) === "Reprogramar");
+  const hasContact = completed || blocks.some((block) => {
+    const status = normalizeStatus(block.status);
+    return status !== "Não iniciado"
+      || Number(block.questoes) > 0
+      || Number(block.acertos) > 0
+      || Number(block.tempoEstudado) > 0
+      || Boolean(block.concluidoEm);
+  });
+  const review = reviewAttentionFor(materia, assunto);
+  const reviewPending = review.related.length;
+  const status = completed
+    ? "Concluído"
+    : hasInProgress
+      ? "Em andamento"
+      : hasReprogrammed
+        ? "Reprogramar"
+        : "Não iniciado";
+  return { row, materia, assunto, status, hasContact, reviewPending, review };
+}
+
+function editalMapSubjectPriority(materia = "") {
+  const subject = state.planningBase?.materias?.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia));
+  return subject ? priorityScore(subject) : 0;
+}
+
+function editalMapTopicMatchesFilter(topic) {
+  const query = normalizeForMatch(editalMapSearchTerm);
+  if (query) {
+    const searchable = normalizeForMatch(`${topic.materia} ${topic.assunto} ${themeDetails(topic.assunto)}`);
+    if (!searchable.includes(query)) return false;
+  }
+  if (editalMapFilter === "not-started") return topic.status === "Não iniciado";
+  if (editalMapFilter === "in-progress") return topic.status === "Em andamento" || topic.status === "Reprogramar";
+  if (editalMapFilter === "completed") return topic.status === "Concluído";
+  if (editalMapFilter === "review-pending") return topic.reviewPending > 0;
+  return true;
+}
+
+function editalMapStatusMarkup(topic) {
+  const statusClass = topic.status === "Concluído"
+    ? "completed"
+    : topic.status === "Em andamento" || topic.status === "Reprogramar"
+      ? "in-progress"
+      : "not-started";
+  const statusLabel = topic.status === "Reprogramar" ? "Reprogramado" : topic.status;
+  return `<span class="map-topic-status ${statusClass}"><b class="map-status-symbol ${statusClass}">${statusClass === "completed" ? "✓" : statusClass === "in-progress" ? "◐" : "○"}</b>${statusLabel}</span>`;
+}
+
+function renderEditalMap() {
+  const hasRows = state.rows.length > 0;
+  const organizer = els.topicsBody?.closest(".content-organizer-card");
+  if (els.contentViewSwitch) els.contentViewSwitch.hidden = !hasRows;
+  if (els.editalMapCard) els.editalMapCard.hidden = !hasRows || contentView !== "map";
+  if (organizer) organizer.hidden = !hasRows || contentView !== "review";
+  if (els.contentReviewViewButton) {
+    const active = contentView === "review";
+    els.contentReviewViewButton.classList.toggle("is-active", active);
+    els.contentReviewViewButton.setAttribute("aria-pressed", String(active));
+  }
+  if (els.contentMapViewButton) {
+    const active = contentView === "map";
+    els.contentMapViewButton.classList.toggle("is-active", active);
+    els.contentMapViewButton.setAttribute("aria-pressed", String(active));
+  }
+  if (!hasRows || contentView !== "map" || !els.editalMapBody) return;
+
+  const groups = subjectGroups()
+    .map((group) => ({
+      ...group,
+      priority: editalMapSubjectPriority(group.materia),
+      topics: group.rows.map(editalMapTopicState),
+    }))
+    .sort((a, b) => b.priority - a.priority || a.materia.localeCompare(b.materia, "pt-BR"));
+  const visibleGroups = groups
+    .map((group) => ({ ...group, visibleTopics: group.topics.filter(editalMapTopicMatchesFilter) }))
+    .filter((group) => group.visibleTopics.length);
+
+  if (!visibleGroups.length) {
+    els.editalMapBody.innerHTML = `<div class="edital-map-empty"><i data-lucide="search-x"></i><strong>Nenhum tema encontrado</strong><span>Ajuste a busca ou os filtros para consultar o mapa.</span></div>`;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+
+  els.editalMapBody.innerHTML = visibleGroups.map((group) => {
+    const completed = group.topics.filter((topic) => topic.status === "Concluído").length;
+    const inProgress = group.topics.filter((topic) => topic.status === "Em andamento" || topic.status === "Reprogramar").length;
+    const notStarted = group.topics.filter((topic) => topic.status === "Não iniciado").length;
+    const reviews = group.topics.reduce((total, topic) => total + topic.reviewPending, 0);
+    const coverage = group.topics.filter((topic) => topic.hasContact).length;
+    const percent = group.topics.length ? Math.round((coverage / group.topics.length) * 100) : 0;
+    const key = normalizeForMatch(group.materia);
+    const open = editalMapOpenSubjects.size ? editalMapOpenSubjects.has(key) : percent > 0;
+    return `
+      <details class="edital-map-subject" data-edital-map-subject="${escapeHtml(key)}"${open ? " open" : ""}>
+        <summary>
+          <div class="edital-map-subject-title">
+            <strong>${escapeHtml(group.materia)}</strong>
+            <span>${coverage} de ${group.topics.length} temas com contato</span>
+          </div>
+          <div class="edital-map-subject-progress">
+            <span>${percent}% cobertura</span>
+            <div class="edital-map-progress" role="progressbar" aria-label="${percent}% de cobertura em ${escapeHtml(group.materia)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div>
+          </div>
+        </summary>
+        <div class="edital-map-subject-body">
+          <div class="edital-map-stats">
+            <span><b>${completed}</b> concluídos</span>
+            <span><b>${inProgress}</b> em andamento</span>
+            <span><b>${notStarted}</b> não iniciados</span>
+            <span><b>${reviews}</b> revis${reviews === 1 ? "ão pendente" : "ões pendentes"}</span>
+          </div>
+          <div class="edital-map-topics">
+            ${group.visibleTopics.map((topic) => `
+              <article class="edital-map-topic ${topic.reviewPending ? "has-review" : ""}">
+                <div>
+                  <strong>${escapeHtml(themeTitle(topic.assunto))}</strong>
+                  ${themeDetails(topic.assunto) ? `<span>${escapeHtml(shortText(themeDetails(topic.assunto), 150))}</span>` : ""}
+                </div>
+                <div class="edital-map-topic-meta">
+                  ${editalMapStatusMarkup(topic)}
+                  ${topic.reviewPending ? `<span class="map-topic-review"><b class="map-status-symbol review">↻</b>${topic.reviewPending} revis${topic.reviewPending === 1 ? "ão pendente" : "ões pendentes"}</span>` : ""}
+                </div>
+              </article>
+            `).join("")}
+          </div>
+        </div>
+      </details>
+    `;
+  }).join("");
+  if (window.lucide) window.lucide.createIcons();
+}
+
 function renderRows(options = {}) {
   const allGroups = subjectGroups();
   const visibleGroups = visibleContentGroups();
@@ -2092,6 +2257,7 @@ function renderRows(options = {}) {
   updateSelectAllControl();
   renderContentSummary();
   updateContentFlowSteps();
+  renderEditalMap();
   if (window.lucide) window.lucide.createIcons();
   if (isRestoring || options.preserveState) return;
   markUnconfirmed();
@@ -10051,6 +10217,45 @@ els.clearContentSearch?.addEventListener("click", () => {
   renderRows({ preserveState: true });
   els.contentSearch?.focus();
 });
+
+els.contentReviewViewButton?.addEventListener("click", () => {
+  contentView = "review";
+  renderEditalMap();
+});
+
+els.contentMapViewButton?.addEventListener("click", () => {
+  contentView = "map";
+  renderEditalMap();
+});
+
+els.editalMapSearch?.addEventListener("input", () => {
+  editalMapSearchTerm = els.editalMapSearch.value.trim();
+  clearTimeout(contentSearchTimer);
+  contentSearchTimer = setTimeout(renderEditalMap, 160);
+});
+
+els.clearEditalMapSearch?.addEventListener("click", () => {
+  editalMapSearchTerm = "";
+  if (els.editalMapSearch) els.editalMapSearch.value = "";
+  renderEditalMap();
+  els.editalMapSearch?.focus();
+});
+
+document.querySelectorAll("[data-edital-map-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    editalMapFilter = button.dataset.editalMapFilter || "all";
+    document.querySelectorAll("[data-edital-map-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
+    renderEditalMap();
+  });
+});
+
+els.editalMapBody?.addEventListener("toggle", (event) => {
+  const subject = event.target.closest?.("[data-edital-map-subject]");
+  if (!subject || event.target !== subject) return;
+  const key = subject.dataset.editalMapSubject;
+  if (subject.open) editalMapOpenSubjects.add(key);
+  else editalMapOpenSubjects.delete(key);
+}, true);
 
 document.querySelectorAll("[data-content-filter]").forEach((button) => {
   button.addEventListener("click", () => {
