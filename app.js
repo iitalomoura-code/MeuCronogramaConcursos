@@ -2255,6 +2255,11 @@ function renderRows(options = {}) {
           </div>
         `;
         topicList.appendChild(article);
+        article.querySelector("[data-save-topic-edit]")?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          saveManualTopicEdit(article);
+        });
       });
       details.addEventListener("toggle", () => {
         if (details.open) openSubjectKeys.add(key);
@@ -10473,6 +10478,32 @@ els.contentProblemSummary?.addEventListener("click", (event) => {
 function topicStateIndex(topic) {
   const index = Number(topic?.dataset.rowIndex);
   return Number.isInteger(index) ? index : -1;
+}
+
+function saveManualTopicEdit(topic) {
+  const index = topicStateIndex(topic);
+  if (index < 0 || !state.rows[index]) return false;
+  const current = state.rows[index];
+  const title = normalizeManualThemeText(topic.querySelector("[data-theme-title]")?.value || "");
+  const details = normalizeManualThemeText(topic.querySelector("[data-theme-details]")?.value || "");
+  if (!title && !details) {
+    notifyContent("Informe ao menos o nome ou o conteúdo do tema.", "warning");
+    return false;
+  }
+  rememberContentUndo("Edição manual do tema.");
+  const assunto = title && details ? `${title}: ${details}` : title || details;
+  state.rows[index] = enrichThemeRow({
+    ...current,
+    assunto,
+    conteudosOriginais: details ? topicAtoms(details) : [],
+    agrupamentoPedagogico: undefined,
+    editadoManualmente: true,
+  });
+  if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
+  renderRows({ preserveState: true });
+  void saveAppStateNow("Tema atualizado");
+  notifyContent("Tema atualizado. A edição manual foi preservada.");
+  return true;
 }
 
 els.topicsBody.addEventListener("click", async (event) => {

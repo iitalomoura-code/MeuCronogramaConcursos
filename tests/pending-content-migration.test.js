@@ -22,4 +22,5 @@ assert.ok(app.includes("renumberRows({ sync: false, preserveState: true })"), "C
 assert.ok(app.includes("function normalizeManualThemeText"), "A edição manual precisa limpar pontuação repetida antes de salvar.");
 assert.ok(app.includes("conteudosOriginais: details ? topicAtoms(details) : []"), "A edição manual não pode restaurar o conteúdo agrupado antigo.");
 assert.ok(app.includes('renderRows({ preserveState: true });\n    void saveAppStateNow("Tema atualizado")'), "Salvar tema manualmente precisa preservar o ciclo e persistir a alteração.");
+assert.ok(app.includes('article.querySelector("[data-save-topic-edit]")?.addEventListener("click"'), "O botão de salvar precisa de listener direto no card dinâmico.");
 console.log("pending-content-migration.test.js: ok");
