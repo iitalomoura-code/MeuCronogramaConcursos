@@ -32,4 +32,6 @@ assert.ok(app.includes("...(state.cycleHistory || []).flatMap"), "A geração de
 assert.ok(app.includes("function historicalCompletionMatches"), "Temas reorganizados devem ser relacionados ao conteúdo concluído nos ciclos anteriores.");
 assert.ok(app.includes('let evolutionView = { period: "all"'), "O painel deve abrir mostrando o histórico consolidado, não apenas o ciclo vazio atual.");
 assert.ok(app.includes("const wasCompleted = (topic)"), "A cobertura do painel deve reconhecer temas reorganizados a partir do histórico.");
+assert.ok(app.includes('record.statusInfo.group === "overdue"'), "A gera\u00e7\u00e3o do ciclo deve inserir apenas revis\u00f5es vencidas.");
+assert.ok(app.includes("function prunePrematureReviewBlocksFromCurrentCycle"), "Revis\u00f5es ainda n\u00e3o vencidas n\u00e3o devem permanecer como blocos de estudo novos.");
 console.log("pending-content-migration.test.js: ok");

@@ -784,6 +784,17 @@ function pruneHistoricalDuplicatesFromCurrentCycle() {
   return before - state.generatedBlocks.length;
 }
 
+function prunePrematureReviewBlocksFromCurrentCycle() {
+  const before = state.generatedBlocks.length;
+  state.generatedBlocks = state.generatedBlocks.filter((block) => {
+    if (normalizeStatus(block.status) !== "Não iniciado") return true;
+    const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
+    if (!activity.includes("revis")) return true;
+    return reviewAttentionFor(block.materia, block.assunto).overdue.length > 0;
+  });
+  return before - state.generatedBlocks.length;
+}
+
 function availableStudyUnits(item, analysis) {
   const units = item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
   const completed = completedUnitKeys();
@@ -798,7 +809,7 @@ function reviewAttentionUnitsForSubject(materia = "") {
   return state.reviews
     .filter((record) => !["Concluída", "Cancelada"].includes(record.status) && normalizeForMatch(record.materia || "") === normalizeForMatch(materia))
     .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }))
-    .filter((record) => record.statusInfo.group === "overdue" || record.statusInfo.group === "today")
+    .filter((record) => record.statusInfo.group === "overdue")
     .sort((a, b) => a.statusInfo.remaining - b.statusInfo.remaining)
     .map((record) => record.assunto)
     .filter(Boolean);
@@ -4035,7 +4046,7 @@ function distributeAcrossSlots(queue, slots) {
 
 function activityForQueueItem(item = {}) {
   const review = reviewAttentionFor(item.materia, item.assunto);
-  if (review.hasAttention) return "Revisão";
+  if (review.overdue.length) return "Revisão";
   return "Teoria e questões";
 }
 
@@ -9246,6 +9257,7 @@ function applyAppSnapshot(saved = {}) {
   let repairedReviewEntries = 0;
   let repairedCycleLabels = false;
   let repairedHistoricalDuplicates = 0;
+  let repairedPrematureReviewBlocks = 0;
   clearUnsavedChanges();
   try {
   resetPlanningAccess();
@@ -9285,6 +9297,7 @@ function applyAppSnapshot(saved = {}) {
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
+  repairedPrematureReviewBlocks = prunePrematureReviewBlocksFromCurrentCycle();
   repairedCycleEntries = pruneTrailingEmptyCycleClosures();
   repairedReviewEntries = ensureReviewsArray();
   repairedCycleLabels = repairStoredCycleLabels();
@@ -9315,7 +9328,7 @@ function applyAppSnapshot(saved = {}) {
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
-    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates) scheduleAutoSave();
+    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates || repairedPrematureReviewBlocks) scheduleAutoSave();
   }
 }
 
