@@ -27,4 +27,6 @@ assert.ok(app.includes("function pendingMigrationSubjectSummary"), "A prévia de
 assert.ok(app.includes("Outros temas pendentes"), "A prévia deve deixar claro que temas não reorganizados permanecem no planejamento.");
 assert.ok(app.includes("if (!titleInput) {\n      // Temas fora da prévia não foram revisados manualmente e devem ficar intactos."), "A migração não pode desmarcar temas que não aparecem na prévia.");
 assert.ok(app.includes("planningBase: state.planningBase ? JSON.parse(JSON.stringify(state.planningBase)) : null"), "O backup da migração deve preservar pesos e dificuldades.");
+assert.ok(app.includes("function pruneHistoricalDuplicatesFromCurrentCycle"), "Blocos pendentes já concluídos em ciclos anteriores não podem voltar ao ciclo atual.");
+assert.ok(app.includes("...(state.cycleHistory || []).flatMap"), "A geração deve consultar o histórico de ciclos encerrados.");
 console.log("pending-content-migration.test.js: ok");

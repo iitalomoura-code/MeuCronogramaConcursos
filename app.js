@@ -727,11 +727,29 @@ function topicKey(materia, assunto) {
 
 function completedUnitKeys() {
   const keys = new Set();
-  state.completedHistory.forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
+  const historical = [
+    ...(state.completedHistory || []),
+    ...(state.cycleHistory || []).flatMap((cycle) => [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])]),
+    ...(state.cycleResults || []).flatMap((cycle) => cycle.completed || []),
+  ];
+  historical
+    .filter((item) => normalizeStatus(item?.status || "Concluído") === "Concluído")
+    .forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
   state.generatedBlocks
     .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block))
     .forEach((block) => keys.add(topicKey(block.materia, block.assunto)));
   return keys;
+}
+
+function pruneHistoricalDuplicatesFromCurrentCycle() {
+  const completed = completedUnitKeys();
+  const before = state.generatedBlocks.length;
+  state.generatedBlocks = state.generatedBlocks.filter((block) => {
+    if (normalizeStatus(block.status) !== "Não iniciado") return true;
+    if (normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "").includes("revis")) return true;
+    return !completed.has(topicKey(block.materia, block.assunto));
+  });
+  return before - state.generatedBlocks.length;
 }
 
 function availableStudyUnits(item, analysis) {
@@ -9174,6 +9192,7 @@ function applyAppSnapshot(saved = {}) {
   let repairedCycleEntries = 0;
   let repairedReviewEntries = 0;
   let repairedCycleLabels = false;
+  let repairedHistoricalDuplicates = 0;
   clearUnsavedChanges();
   try {
   resetPlanningAccess();
@@ -9211,6 +9230,7 @@ function applyAppSnapshot(saved = {}) {
     }))
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
+  repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   repairedCycleEntries = pruneTrailingEmptyCycleClosures();
   repairedReviewEntries = ensureReviewsArray();
@@ -9242,7 +9262,7 @@ function applyAppSnapshot(saved = {}) {
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
-    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels) scheduleAutoSave();
+    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates) scheduleAutoSave();
   }
 }
 
