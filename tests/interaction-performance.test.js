@@ -16,5 +16,8 @@ assert.ok(app.includes("if (getActiveTabName() === \"continuar\") renderContinue
 assert.ok(app.includes("if (focusedStudyIndex < 0) removeFocusedStudyOverlay();"), "O modo foco não deve reabrir automaticamente ao renderizar a tela Continuar.");
 assert.ok(!app.includes("renderAppViews();\n  applyLockState();\n  const restoredTab"), "A restauração não deve renderizar todos os painéis antes da aba ativa.");
 assert.ok(app.includes("void initializeCloudPlanSource().then"), "A sincronização remota deve iniciar sem bloquear a primeira tela.");
+assert.ok(app.includes("function shouldShowToast"), "Avisos de rotina devem ser filtrados antes de criar elementos na tela.");
+assert.ok(!app.includes("showToast((focusedStudySession?.context || context.context)"), "Iniciar estudo não deve abrir uma notificação de rotina.");
+assert.ok(app.includes("renderFocusedStudyOverlay();\n  // Atualiza o painel de fundo"), "O modo foco deve aparecer antes da atualização do painel de fundo.");
 
 console.log("OK - interações críticas respondem antes do autosave e evitam renderizações globais repetidas.");

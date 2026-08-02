@@ -3378,8 +3378,12 @@ function renderCycleLabel() {
   if (els.cycleLabel) els.cycleLabel.textContent = currentCycleLabel();
 }
 
-function showToast(message) {
-  if (!message) return;
+function shouldShowToast(message) {
+  return /(n[aã]o foi|n[aã]o consegui|erro|sem conex[aã]o|informe|conclua|h[aá] uma sess[aã]o|registre|falha|integra[cç][aã]o|sess[aã]o expirou)/i.test(String(message || ""));
+}
+
+function showToast(message, { force = false } = {}) {
+  if (!message || (!force && !shouldShowToast(message))) return;
   let container = document.querySelector(".toast-region");
   if (!container) {
     container = document.createElement("div");
@@ -4880,19 +4884,15 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
     state.activeFocusSession = context.standaloneReview ? null : focusedStudySession;
     focusedStudyIndex = index;
     focusedStudyDrafts.set(index, draft);
-    if (!context.standaloneReview) void persistFocusedSession({ immediate: true, label: "Sessão iniciada" });
+    if (!context.standaloneReview) void persistFocusedSession({ label: "Sessão iniciada" });
   }
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
-  renderContinuePanel();
-  // Garante que o overlay apareca mesmo se a re-renderizacao do painel
-  // (ou a transicao de tela) tiver desfeito a insercao acima.
-  requestAnimationFrame(() => {
-    if (focusedStudyIndex === index && !document.querySelector(".focused-study-modal")) {
-      renderFocusedStudyOverlay();
-    }
-  });
-  showToast((focusedStudySession?.context || context.context) === "revisao" ? "Revisão iniciada." : "Estudo iniciado.");
+  renderFocusedStudyOverlay();
+  // Atualiza o painel de fundo depois que o modo foco já respondeu ao clique.
+  window.setTimeout(() => {
+    if (focusedStudyIndex === index) renderContinuePanel();
+  }, 0);
 }
 
 function recordReviewAttempt(reviewId, block, draft, outcome) {
