@@ -10468,3 +10468,32 @@ textarea:focus {
   .pending-content-migration-dialog { width: min(100vw - 20px, 760px); }
   .pending-migration-item li { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
+
+/* O menu de acoes do tema deve ficar acima da lista, sem ser recortado pelo acordeao. */
+.subject-group {
+  overflow: visible;
+}
+
+.subject-group:has(.topic-actions-menu[open]) {
+  position: relative;
+  z-index: 30;
+}
+
+.topic-actions-menu {
+  position: relative;
+  z-index: 1;
+}
+
+.topic-actions-menu[open] {
+  z-index: 40;
+}
+
+.topic-actions-menu[open] > div {
+  z-index: 50;
+}
+
+@media (max-width: 560px) {
+  .topic-actions-menu[open] > div {
+    min-width: min(190px, calc(100vw - 38px));
+  }
+}
