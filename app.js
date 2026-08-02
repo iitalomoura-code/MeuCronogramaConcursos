@@ -5421,7 +5421,7 @@ async function saveFocusedStudy() {
   focusedStudySaving = true;
   const sessionHours = focusedTimerSeconds() / 3600;
   const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
-  const effectiveHours = Number((typedHours || sessionHours || 0).toFixed(2));
+  const effectiveHours = Number((typedHours || sessionHours || Number(block.duracao) || 0).toFixed(2));
   const standaloneReview = Boolean(block.reviewSessionOnly);
   const outcome = standaloneReview
     ? saveStandaloneReviewResult(block, draft, effectiveHours)
@@ -5923,8 +5923,9 @@ function saveStudyResult({
 
   const previousStatus = normalizeStatus(block.status);
   const nextStatus = normalizeStatus(status || block.status);
-  const parsedHours = typeof studiedHours === "number" ? studiedHours : parseDurationInput(studiedHours, Number(block.tempoEstudado) || 0);
-  const nextHours = Number.isFinite(parsedHours) && parsedHours >= 0 ? Number(parsedHours.toFixed(2)) : Number(block.tempoEstudado) || 0;
+  const fallbackHours = Number(block.tempoEstudado) || Number(block.duracao) || 0;
+  const parsedHours = typeof studiedHours === "number" ? studiedHours : parseDurationInput(studiedHours, fallbackHours);
+  const nextHours = Number.isFinite(parsedHours) && parsedHours > 0 ? Number(parsedHours.toFixed(2)) : fallbackHours;
   block.status = nextStatus;
   block.sessaoId = effectiveSessionId;
   block.lastSavedSessionId = effectiveSessionId;
@@ -6559,7 +6560,7 @@ function evolutionEntryFromBlock(block = {}, meta = {}) {
     questoes: totalQuestoes,
     acertos,
     percentual: totalQuestoes ? acertos / totalQuestoes : Number(block.percentual) || 0,
-    horas: Math.max(0, Number(block.tempoEstudado) || 0),
+    horas: blockDurationValue(block),
     atividade: evolutionActivityLabel(block.tipoAtividade || block.tipo || ""),
     reprogramacoes: Number(block.reprogramacoes) || (status === "Reprogramar" ? 1 : 0),
     dificuldade: block.dificuldade || "",
@@ -6895,7 +6896,7 @@ function renderEvolutionPerformance(performance) {
   if (!els.evolutionPerformance) return;
   const value = performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual);
   const trendText = performance.trend.delta === null ? performance.trend.label : `${performance.trend.label} ${performance.trend.delta >= 0 ? "+" : ""}${Math.round(performance.trend.delta * 100)} p.p.`;
-  els.evolutionPerformance.innerHTML = `<div class="evolution-performance-summary"><div><span>Desempenho geral</span><strong>${value}</strong><small>${performance.questoes ? `${performance.acertos} acertos em ${performance.questoes} questões` : "Registre questões e acertos para acompanhar."}</small></div><div><span>Tendência</span><strong>${escapeHtml(trendText)}</strong><small>${escapeHtml(performance.trend.confidence)}</small></div><div><span>Tempo registrado</span><strong>${performance.hasTime ? formatHours(performance.horas) : "Sem registro"}</strong><small>${performance.hasTime ? "Somente tempo efetivamente informado." : "A projeção usa a carga planejada."}</small></div></div>`;
+  els.evolutionPerformance.innerHTML = `<div class="evolution-performance-summary"><div><span>Desempenho geral</span><strong>${value}</strong><small>${performance.questoes ? `${performance.acertos} acertos em ${performance.questoes} questões` : "Registre questões e acertos para acompanhar."}</small></div><div><span>Tendência</span><strong>${escapeHtml(trendText)}</strong><small>${escapeHtml(performance.trend.confidence)}</small></div><div><span>Tempo estudado</span><strong>${performance.hasTime ? formatHours(performance.horas) : "Sem registro"}</strong><small>${performance.hasTime ? "Usa o tempo informado ou a duração escolhida para o bloco." : "A projeção usa a carga planejada."}</small></div></div>`;
 }
 
 function evolutionEntriesForCycleRecord(record, entries = []) {
@@ -7158,7 +7159,7 @@ function completedEntryFromBlock(block, weekLabel = els.referenceWeek.value) {
     metaPartKey: block.metaPartKey || "",
     metaRequiredBlocks: Number(block.metaRequiredBlocks) || 1,
     duracao: blockDurationValue(block),
-    tempoEstudado: Number(block.tempoEstudado) || 0,
+    tempoEstudado: blockDurationValue(block),
     questoes: block.questoes || 0,
     acertos: block.acertos || 0,
     percentual: block.percentual || 0,
