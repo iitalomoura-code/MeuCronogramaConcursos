@@ -2476,6 +2476,18 @@ function migrationRowsInSubjectOrder(rows = []) {
   });
 }
 
+function pendingMigrationSubjectSummary(rows = []) {
+  const subjects = new Map();
+  rows.forEach((row) => {
+    const materia = String(row?.materia || "Matéria sem identificação").trim() || "Matéria sem identificação";
+    const key = normalizeForMatch(materia);
+    const current = subjects.get(key) || { materia, count: 0 };
+    current.count += 1;
+    subjects.set(key, current);
+  });
+  return [...subjects.values()];
+}
+
 function pendingMigrationPreviewMarkup(plan) {
   const preservedCount = plan.preserved.length;
   const ambiguousCount = plan.ambiguities.length;
@@ -2491,6 +2503,9 @@ function pendingMigrationPreviewMarkup(plan) {
   const rows = plan.nextRows.map((row, index) => ({ row, index }))
     .filter(({ row }) => row.migracaoPedagogica || row.agrupamentoPedagogico);
   const preserved = plan.preserved.filter((item) => item.reason.includes("andamento"));
+  const unchangedRows = plan.nextRows.filter((row) => !row.migracaoPedagogica && !row.agrupamentoPedagogico);
+  const unchangedSubjects = pendingMigrationSubjectSummary(unchangedRows);
+  const preservedSubjects = pendingMigrationSubjectSummary(plan.preserved.map((item) => item.row));
   els.pendingContentMigrationList.innerHTML = `
     ${rows.length ? `<div class="pending-migration-section"><h3>Conteúdos reorganizados</h3>${rows.map(({ row, index }) => {
       const items = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais : [themeDetails(row.assunto)].filter(Boolean);
@@ -2503,6 +2518,13 @@ function pendingMigrationPreviewMarkup(plan) {
     }).join("")}</div>` : `<p class="muted-note">Não encontramos temas pendentes que possam ser reorganizados com segurança.</p>`}
     ${preserved.length ? `<div class="pending-migration-section pending-migration-ambiguous"><h3>Manter estrutura atual</h3>${preserved.map((item) => `<article><strong>${escapeHtml(item.row.materia)}</strong><span>${escapeHtml(themeTitle(item.row.assunto))}</span><small>${escapeHtml(item.reason)}</small></article>`).join("")}</div>` : ""}
   `;
+  const subjectSummaryMarkup = (subjects, singular, plural) => subjects.map((subject) => `<article><strong>${escapeHtml(subject.materia)}</strong><span>${subject.count} ${subject.count === 1 ? singular : plural}</span></article>`).join("");
+  if (unchangedSubjects.length) {
+    els.pendingContentMigrationList.innerHTML += `<div class="pending-migration-section"><h3>Outros temas pendentes</h3><p class="pending-migration-helper">Estes temas continuarão no planejamento exatamente como estão.</p><div class="pending-migration-subjects">${subjectSummaryMarkup(unchangedSubjects, "tema pendente mantido", "temas pendentes mantidos")}</div></div>`;
+  }
+  if (preservedSubjects.length) {
+    els.pendingContentMigrationList.innerHTML += `<div class="pending-migration-section pending-migration-ambiguous"><h3>Conteúdos já preservados</h3><p class="pending-migration-helper">Temas concluídos ou em andamento não serão reorganizados nesta etapa.</p><div class="pending-migration-subjects">${subjectSummaryMarkup(preservedSubjects, "tema preservado", "temas preservados")}</div></div>`;
+  }
 }
 
 function openPendingContentMigration() {

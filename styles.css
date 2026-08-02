@@ -10387,6 +10387,38 @@ textarea:focus {
   font-size: 14px;
 }
 
+.pending-migration-helper {
+  margin: -2px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pending-migration-subjects {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.pending-migration-subjects article {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--soft) 32%, var(--card));
+}
+
+.pending-migration-subjects strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.pending-migration-subjects span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .pending-migration-item,
 .pending-migration-ambiguous article {
   display: grid;

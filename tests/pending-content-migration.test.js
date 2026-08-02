@@ -23,4 +23,6 @@ assert.ok(app.includes("function normalizeManualThemeText"), "A edição manual 
 assert.ok(app.includes("conteudosOriginais: details ? topicAtoms(details) : []"), "A edição manual não pode restaurar o conteúdo agrupado antigo.");
 assert.ok(app.includes('renderRows({ preserveState: true });\n    void saveAppStateNow("Tema atualizado")'), "Salvar tema manualmente precisa preservar o ciclo e persistir a alteração.");
 assert.ok(app.includes('article.querySelector("[data-save-topic-edit]")?.addEventListener("click"'), "O botão de salvar precisa de listener direto no card dinâmico.");
+assert.ok(app.includes("function pendingMigrationSubjectSummary"), "A prévia deve informar também as matérias pendentes que não terão alteração.");
+assert.ok(app.includes("Outros temas pendentes"), "A prévia deve deixar claro que temas não reorganizados permanecem no planejamento.");
 console.log("pending-content-migration.test.js: ok");
