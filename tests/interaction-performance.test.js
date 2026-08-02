@@ -17,6 +17,9 @@ assert.ok(app.includes("if (focusedStudyIndex < 0) removeFocusedStudyOverlay();"
 assert.ok(!app.includes("renderAppViews();\n  applyLockState();\n  const restoredTab"), "A restauração não deve renderizar todos os painéis antes da aba ativa.");
 assert.ok(app.includes("void initializeCloudPlanSource().then"), "A sincronização remota deve iniciar sem bloquear a primeira tela.");
 assert.ok(app.includes("function shouldShowToast"), "Avisos de rotina devem ser filtrados antes de criar elementos na tela.");
+assert.ok(app.includes("function renderLucideIcons(root = document)"), "A renderização de ícones deve aceitar um painel específico.");
+assert.ok(app.includes("renderLucideIcons(els.continuePanel);"), "A tela Continuar não deve varrer o documento inteiro ao atualizar seus ícones.");
+assert.ok(app.includes("buildContinueRecommendation(pending, continueAlternativesOpen)"), "A recomendação deve reutilizar a ordenação já calculada no mesmo render.");
 assert.ok(!app.includes("showToast((focusedStudySession?.context || context.context)"), "Iniciar estudo não deve abrir uma notificação de rotina.");
 assert.ok(app.includes("renderFocusedStudyOverlay();\n  // Atualiza o painel de fundo"), "O modo foco deve aparecer antes da atualização do painel de fundo.");
 

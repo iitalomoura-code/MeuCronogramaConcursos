@@ -4287,6 +4287,11 @@ function safeRender(name, callback, onError = null) {
   }
 }
 
+function renderLucideIcons(root = document) {
+  if (!window.lucide?.createIcons) return;
+  window.lucide.createIcons({ icons: window.lucide.icons, root: root || document });
+}
+
 function renderAppViews(options = {}) {
   const settings = {
     cycle: true,
@@ -4539,14 +4544,14 @@ function rankedContinueEntries() {
   return hasActiveFilter ? filtered : entries;
 }
 
-function buildContinueRecommendation() {
-  const ranked = rankedContinueEntries();
+function buildContinueRecommendation(rankedEntries = null, includeAlternatives = false) {
+  const ranked = rankedEntries || rankedContinueEntries();
   if (!ranked.length) {
     return { recommendation: null, alternatives: [], reasons: [], suggestedMinutes: 0, activityType: "" };
   }
   if (continueSuggestionOffset >= ranked.length) continueSuggestionOffset = 0;
   const recommendation = ranked[continueSuggestionOffset % ranked.length];
-  const alternatives = continueAlternativeEntries(recommendation).slice(0, 3);
+  const alternatives = includeAlternatives ? continueAlternativeEntries(recommendation, ranked).slice(0, 3) : [];
   const explanation = explainStudySuggestion(recommendation.block, recommendation.suggestion);
   return {
     recommendation,
@@ -4818,8 +4823,8 @@ function explainStudySuggestion(block, context = {}) {
   return { text: factors.slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
 }
 
-function continueAlternativeEntries(suggested) {
-  const remaining = rankedContinueEntries().filter((entry) => entry.index !== suggested?.index);
+function continueAlternativeEntries(suggested, rankedEntries = null) {
+  const remaining = (rankedEntries || rankedContinueEntries()).filter((entry) => entry.index !== suggested?.index);
   const diversified = [];
   const subjects = new Set();
   remaining.forEach((entry) => {
@@ -5147,7 +5152,7 @@ function renderFocusedStudyOverlay() {
   const context = { context: session?.context || "estudo", reviewId: session?.reviewId || "" };
   const review = context.reviewId ? state.reviews.find((record) => record.id === context.reviewId) : null;
   document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex, context), explainStudySuggestion(block), { ...context, review }));
-  if (window.lucide) window.lucide.createIcons();
+  renderLucideIcons(document.querySelector(".focused-study-modal"));
   document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
 }
 
@@ -5628,7 +5633,7 @@ function renderContinuePanel() {
   const pendingCount = Math.max(0, total - completed);
   const progress = total ? Math.round((completed / total) * 100) : 0;
   renderContinueCycleProgress(completed, total, progress);
-  const recommendationResult = buildContinueRecommendation();
+  const recommendationResult = buildContinueRecommendation(pending, continueAlternativesOpen);
   const suggested = recommendationResult.recommendation;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
   const alternatives = recommendationResult.alternatives;
@@ -5672,7 +5677,7 @@ function renderContinuePanel() {
   });
   const startLabel = els.continuePanel.querySelector("[data-start-continue] span");
   if (startLabel && suggested) startLabel.textContent = normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Começar estudo";
-  if (window.lucide) window.lucide.createIcons();
+  renderLucideIcons(els.continuePanel);
 }
 
 function shortText(value, maxLength = 90) {
