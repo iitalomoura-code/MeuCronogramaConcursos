@@ -725,15 +725,17 @@ function topicKey(materia, assunto) {
   return `${normalizeForMatch(String(materia || ""))}::${normalizeForMatch(String(assunto || ""))}`;
 }
 
-function completedUnitKeys() {
-  const keys = new Set();
-  const historical = [
+function historicalCompletedBlocks() {
+  return [
     ...(state.completedHistory || []),
     ...(state.cycleHistory || []).flatMap((cycle) => [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])]),
     ...(state.cycleResults || []).flatMap((cycle) => cycle.completed || []),
-  ];
-  historical
-    .filter((item) => normalizeStatus(item?.status || "Concluído") === "Concluído")
+  ].filter((item) => normalizeStatus(item?.status || "Concluído") === "Concluído");
+}
+
+function completedUnitKeys() {
+  const keys = new Set();
+  historicalCompletedBlocks()
     .forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
   state.generatedBlocks
     .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block))
@@ -741,13 +743,43 @@ function completedUnitKeys() {
   return keys;
 }
 
+function comparableStudyContents(record = {}) {
+  const explicit = Array.isArray(record.metaConteudos) && record.metaConteudos.length
+    ? record.metaConteudos
+    : Array.isArray(record.conteudosOriginais) && record.conteudosOriginais.length
+      ? record.conteudosOriginais
+      : [record.conteudoBloco || themeDetails(record.assunto)];
+  return [...new Set(explicit
+    .flatMap((item) => topicAtoms(item))
+    .map((item) => normalizeForMatch(item))
+    .filter((item) => item.length > 3))];
+}
+
+function historicalCompletionMatches(block = {}, historical = {}) {
+  if (normalizeForMatch(block.materia) !== normalizeForMatch(historical.materia)) return false;
+  if (block.metaId && historical.metaId && block.metaId === historical.metaId) {
+    const required = Math.max(Number(block.metaRequiredBlocks) || 1, Number(historical.metaRequiredBlocks) || 1);
+    return required <= 1 || String(block.metaPartKey || "1") === String(historical.metaPartKey || "1");
+  }
+  const blockTitle = normalizeForMatch(themeTitle(block.assunto));
+  const historicalTitle = normalizeForMatch(themeTitle(historical.assunto));
+  const historicalParts = Number(historical.metaRequiredBlocks) || 1;
+  if (blockTitle && blockTitle === historicalTitle && historicalParts <= 1) return true;
+
+  const expected = comparableStudyContents(block);
+  const completed = comparableStudyContents(historical);
+  return expected.length > 0 && completed.length > 0 && expected.every((item) => completed.some((source) => source === item || source.includes(item) || item.includes(source)));
+}
+
 function pruneHistoricalDuplicatesFromCurrentCycle() {
+  const historical = historicalCompletedBlocks();
   const completed = completedUnitKeys();
   const before = state.generatedBlocks.length;
   state.generatedBlocks = state.generatedBlocks.filter((block) => {
     if (normalizeStatus(block.status) !== "Não iniciado") return true;
     if (normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "").includes("revis")) return true;
-    return !completed.has(topicKey(block.materia, block.assunto));
+    return !completed.has(topicKey(block.materia, block.assunto))
+      && !historical.some((item) => historicalCompletionMatches(block, item));
   });
   return before - state.generatedBlocks.length;
 }
@@ -3591,6 +3623,15 @@ function isThemeCompleteForPlanning(materia = "", assunto = "", completed = comp
   const metaId = pedagogicalMetaId(materia, assunto);
   const topic = topicPlanningData(materia, assunto);
   const required = Math.max(1, Number(topic.blocosSugeridos) || estimateThemeBlocks(assunto));
+  const historicalCandidate = {
+    materia,
+    assunto,
+    metaId,
+    metaPartKey: topic.metaPartKey || "1",
+    metaRequiredBlocks: required,
+    metaConteudos: themeContentItems(materia, assunto),
+  };
+  if (historicalCompletedBlocks().some((item) => historicalCompletionMatches(historicalCandidate, item))) return true;
   if (required > 1 || allKnownMetaBlocks(metaId).length) {
     return metaProgressForBlock({ metaId, metaRequiredBlocks: required }).completed;
   }
