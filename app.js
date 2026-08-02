@@ -155,7 +155,7 @@ let focusedLongSessionNoticeId = "";
 let focusedStudySaving = false;
 let pendingTabRenderFrame = 0;
 let pendingTabRenderTimer = 0;
-let evolutionView = { period: "cycle", subject: "all", activity: "all", sort: "attention" };
+let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
@@ -6487,6 +6487,10 @@ function evolutionTopicCatalog() {
       assunto: row.assunto,
       estudar: row.estudar,
       blocosSugeridos: Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto),
+      metaId: row.metaId || "",
+      metaPartKey: row.metaPartKey || "1",
+      metaRequiredBlocks: Math.max(1, Number(row.metaRequiredBlocks) || Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto)),
+      metaConteudos: Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [],
     }))
     : (state.planningBase?.materias || []).flatMap((materia) => (materia.assuntos || []).map((assunto) => ({
       materia: materia.materia,
@@ -6559,6 +6563,11 @@ function evolutionEntryFromBlock(block = {}, meta = {}) {
     atividade: evolutionActivityLabel(block.tipoAtividade || block.tipo || ""),
     reprogramacoes: Number(block.reprogramacoes) || (status === "Reprogramar" ? 1 : 0),
     dificuldade: block.dificuldade || "",
+    metaId: block.metaId || "",
+    metaPartKey: block.metaPartKey || "1",
+    metaRequiredBlocks: Math.max(1, Number(block.metaRequiredBlocks) || 1),
+    metaConteudos: Array.isArray(block.metaConteudos) ? block.metaConteudos.slice() : Array.isArray(block.conteudosOriginais) ? block.conteudosOriginais.slice() : [],
+    conteudoBloco: block.conteudoBloco || "",
     date,
     source: meta.source || "unknown",
     completed: status === "Concluído" || Boolean(meta.completed),
@@ -6624,13 +6633,16 @@ function evolutionEntriesForView(view = evolutionView) {
 
 function evolutionProgressMetrics() {
   const catalog = evolutionTopicCatalog();
-  const completedKeys = new Set(evolutionEntries().filter((entry) => entry.completed).map((entry) => topicKey(entry.materia, entry.assunto)));
+  const completedEntries = evolutionEntries().filter((entry) => entry.completed);
+  const completedKeys = new Set(completedEntries.map((entry) => topicKey(entry.materia, entry.assunto)));
+  const wasCompleted = (topic) => completedKeys.has(topicKey(topic.materia, topic.assunto))
+    || completedEntries.some((entry) => historicalCompletionMatches(topic, entry));
   const currentByTopic = new Map((state.generatedBlocks || []).map((block) => [topicKey(block.materia, block.assunto), normalizeStatus(block.status)]));
   const selected = catalog.filter((topic) => normalizeForMatch(topic.estudar || "sim") !== "nao");
   const removed = catalog.filter((topic) => normalizeForMatch(topic.estudar || "sim") === "nao");
-  const completed = selected.filter((topic) => completedKeys.has(topicKey(topic.materia, topic.assunto)));
-  const inProgress = selected.filter((topic) => !completedKeys.has(topicKey(topic.materia, topic.assunto)) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) === "Em andamento");
-  const pending = selected.filter((topic) => !completedKeys.has(topicKey(topic.materia, topic.assunto)) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) !== "Em andamento");
+  const completed = selected.filter(wasCompleted);
+  const inProgress = selected.filter((topic) => !wasCompleted(topic) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) === "Em andamento");
+  const pending = selected.filter((topic) => !wasCompleted(topic) && currentByTopic.get(topicKey(topic.materia, topic.assunto)) !== "Em andamento");
   return {
     catalog,
     selected,

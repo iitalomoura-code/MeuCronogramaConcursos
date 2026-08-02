@@ -30,4 +30,6 @@ assert.ok(app.includes("planningBase: state.planningBase ? JSON.parse(JSON.strin
 assert.ok(app.includes("function pruneHistoricalDuplicatesFromCurrentCycle"), "Blocos pendentes já concluídos em ciclos anteriores não podem voltar ao ciclo atual.");
 assert.ok(app.includes("...(state.cycleHistory || []).flatMap"), "A geração deve consultar o histórico de ciclos encerrados.");
 assert.ok(app.includes("function historicalCompletionMatches"), "Temas reorganizados devem ser relacionados ao conteúdo concluído nos ciclos anteriores.");
+assert.ok(app.includes('let evolutionView = { period: "all"'), "O painel deve abrir mostrando o histórico consolidado, não apenas o ciclo vazio atual.");
+assert.ok(app.includes("const wasCompleted = (topic)"), "A cobertura do painel deve reconhecer temas reorganizados a partir do histórico.");
 console.log("pending-content-migration.test.js: ok");
