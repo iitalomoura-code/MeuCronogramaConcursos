@@ -2335,7 +2335,7 @@ function renumberRows(options = {}) {
     counters.set(key, (counters.get(key) || 0) + 1);
     row.ordem = counters.get(key);
   });
-  renderRows();
+  renderRows({ preserveState: Boolean(options.preserveState) });
 }
 
 async function mergeSelectedTopicItems(items) {
@@ -2551,6 +2551,7 @@ async function applyPendingContentMigration() {
     };
   });
   state.rows = migrationRowsInSubjectOrder(nextRows);
+  if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
   closePendingContentMigration({ restoreFocus: false });
   renderRows({ preserveState: true });
   await saveAppStateNow("Organização pedagógica aplicada");
@@ -2565,6 +2566,7 @@ async function restorePendingContentMigrationBackup() {
   state.rows = copyContentRows(backup.rows).map(enrichThemeRow);
   state.contentOriginalRows = copyContentRows(backup.contentOriginalRows);
   state.confirmed = Boolean(backup.confirmed);
+  if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
   closePendingContentMigration({ restoreFocus: false });
   renderRows({ preserveState: true });
   await saveAppStateNow("Estrutura anterior restaurada");
@@ -2890,10 +2892,39 @@ function uniqueSubjects(rows) {
         tamanhoEstimado: row.tamanhoEstimado || "",
         blocosSugeridos: Number(row.blocosSugeridos) || 0,
         dificuldadeEstimada: row.dificuldadeEstimada || "",
+        metaId: row.metaId || "",
+        metaTitulo: row.metaTitulo || "",
+        metaPartKey: row.metaPartKey || "",
+        metaRequiredBlocks: Number(row.metaRequiredBlocks) || 0,
+        migracaoPedagogica: row.migracaoPedagogica || null,
       });
     }
   });
   return [...map.values()];
+}
+
+function refreshPlanningBaseFromRows({ preservePriorities = true } = {}) {
+  const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
+  const previous = new Map((state.planningBase?.materias || []).map((subject) => [normalizeForMatch(subject.materia), subject]));
+  const materias = uniqueSubjects(validRows).map((subject) => {
+    const previousSubject = previous.get(normalizeForMatch(subject.materia));
+    if (!preservePriorities || !previousSubject) return { ...subject, prioridade: priorityScore(subject) };
+    const merged = {
+      ...subject,
+      peso: Number(previousSubject.peso) || 3,
+      dominio: Number(previousSubject.dominio) || 3,
+    };
+    return { ...merged, prioridade: priorityScore(merged) };
+  });
+  state.planningBase = {
+    ...(state.planningBase || {}),
+    confirmedAt: new Date().toISOString(),
+    cadastro: getContestConfig(),
+    conteudoOriginal: state.originalHistory[0] || state.planningBase?.conteudoOriginal || null,
+    tabela: copyContentRows(state.rows),
+    materias,
+  };
+  return validRows;
 }
 
 function openContentProblemsModal(count = contentProblemAnalysis().length) {
@@ -2911,6 +2942,12 @@ function openContentProblemsModal(count = contentProblemAnalysis().length) {
       </div>
     </div>
   `;
+  const title = els.contentProblemsModal.querySelector("#contentProblemsTitle");
+  const message = els.contentProblemsModal.querySelector("p");
+  const reviewButton = els.contentProblemsModal.querySelector("[data-review-content-problems]");
+  if (title) title.textContent = "Trechos para conferir";
+  if (message) message.textContent = `O leitor sinalizou ${count} trecho${count === 1 ? "" : "s"} que pode${count === 1 ? "" : "m"} precisar de ajuste na leitura do edital. Isso não é uma pendência de estudo e não impede a confirmação.`;
+  if (reviewButton) reviewButton.textContent = "Ver trechos sinalizados";
   els.contentProblemsModal.hidden = false;
   if (window.lucide) window.lucide.createIcons();
   els.contentProblemsModal.querySelector("[data-review-content-problems]")?.focus();
@@ -2922,7 +2959,7 @@ function closeContentProblemsModal() {
 
 function confirmRows(options = {}) {
   syncRowsFromTable();
-  renumberRows();
+  renumberRows({ sync: false, preserveState: true });
   const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
   if (!validRows.length) {
     void dialogAlert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
@@ -2934,13 +2971,7 @@ function confirmRows(options = {}) {
     return;
   }
 
-  state.planningBase = {
-    confirmedAt: new Date().toISOString(),
-    cadastro: getContestConfig(),
-    conteudoOriginal: state.originalHistory[0] || null,
-    tabela: state.rows,
-    materias: uniqueSubjects(validRows),
-  };
+  refreshPlanningBaseFromRows({ preservePriorities: true });
   state.confirmed = true;
   els.confirmationStatus.textContent = "\u2713 Conte\u00fado confirmado";
   els.confirmationStatus.classList.add("confirmed");
