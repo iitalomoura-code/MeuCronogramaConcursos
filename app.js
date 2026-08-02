@@ -138,7 +138,6 @@ let contentFilter = "all";
 let contentUndoSnapshot = null;
 let contentSearchTimer = 0;
 let openSubjectKeys = new Set();
-let contentView = "review";
 let editalMapSearchTerm = "";
 let editalMapFilter = "all";
 let editalMapOpenSubjects = new Set();
@@ -235,9 +234,6 @@ const els = {
   processButton: document.querySelector("#processButton"),
   clearButton: document.querySelector("#clearButton"),
   contentSummary: document.querySelector("#contentSummary"),
-  contentViewSwitch: document.querySelector("#contentViewSwitch"),
-  contentReviewViewButton: document.querySelector("#contentReviewViewButton"),
-  contentMapViewButton: document.querySelector("#contentMapViewButton"),
   editalMapCard: document.querySelector("#editalMapCard"),
   editalMapBody: document.querySelector("#editalMapBody"),
   editalMapSearch: document.querySelector("#editalMapSearch"),
@@ -1368,6 +1364,7 @@ function renderActiveTabContent(tabName) {
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
   if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
+  if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
 }
 
@@ -2101,21 +2098,8 @@ function editalMapStatusMarkup(topic) {
 
 function renderEditalMap() {
   const hasRows = state.rows.length > 0;
-  const organizer = els.topicsBody?.closest(".content-organizer-card");
-  if (els.contentViewSwitch) els.contentViewSwitch.hidden = !hasRows;
-  if (els.editalMapCard) els.editalMapCard.hidden = !hasRows || contentView !== "map";
-  if (organizer) organizer.hidden = !hasRows || contentView !== "review";
-  if (els.contentReviewViewButton) {
-    const active = contentView === "review";
-    els.contentReviewViewButton.classList.toggle("is-active", active);
-    els.contentReviewViewButton.setAttribute("aria-pressed", String(active));
-  }
-  if (els.contentMapViewButton) {
-    const active = contentView === "map";
-    els.contentMapViewButton.classList.toggle("is-active", active);
-    els.contentMapViewButton.setAttribute("aria-pressed", String(active));
-  }
-  if (!hasRows || contentView !== "map" || !els.editalMapBody) return;
+  if (els.editalMapCard) els.editalMapCard.hidden = !hasRows;
+  if (!hasRows || !els.editalMapBody) return;
 
   const groups = subjectGroups()
     .map((group) => ({
