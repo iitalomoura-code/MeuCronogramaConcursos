@@ -19,4 +19,7 @@ assert.ok(plan.replacements.some((row) => row.assunto.startsWith("Ortografia, ac
 assert.ok(plan.replacements.filter((row) => row.metaTitulo === "Despesa pública").every((row) => row.metaRequiredBlocks >= 2), "Unidades do tema amplo precisam permanecer vinculadas à mesma meta.");
 assert.ok(app.includes("function refreshPlanningBaseFromRows"), "A migração precisa atualizar somente os temas futuros da base de planejamento.");
 assert.ok(app.includes("renumberRows({ sync: false, preserveState: true })"), "Confirmar conteúdo não pode limpar ciclos ao apenas renumerar temas.");
+assert.ok(app.includes("function normalizeManualThemeText"), "A edição manual precisa limpar pontuação repetida antes de salvar.");
+assert.ok(app.includes("conteudosOriginais: details ? topicAtoms(details) : []"), "A edição manual não pode restaurar o conteúdo agrupado antigo.");
+assert.ok(app.includes('renderRows({ preserveState: true });\n    void saveAppStateNow("Tema atualizado")'), "Salvar tema manualmente precisa preservar o ciclo e persistir a alteração.");
 console.log("pending-content-migration.test.js: ok");

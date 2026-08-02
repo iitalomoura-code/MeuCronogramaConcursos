@@ -369,6 +369,15 @@ function normalizeTopic(value) {
   return value.trim().replace(/\s*[.;]$/, "");
 }
 
+function normalizeManualThemeText(value) {
+  return String(value || "")
+    .replace(/(?:\s*\.\s*){3,}/g, ". ")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function parseThemeLine(value) {
   const clean = normalizeTopic(String(value || "").replace(/\s+/g, " "));
   const match = clean.match(/^Tema\s*\d*\s*(?:[-\u2013\u2014.:)]\s*)?(.+)$/i);
@@ -10612,6 +10621,33 @@ els.topicsBody.addEventListener("click", async (event) => {
     if (button) button.textContent = selected ? "Remover da jun\u00e7\u00e3o" : "Selecionar para juntar";
     updateMergeSelectionState(topic.closest(".subject-group"));
     topic.querySelector(".topic-actions-menu")?.removeAttribute("open");
+    return;
+  }
+
+  if (event.target.closest("[data-save-topic-edit]")) {
+    event.preventDefault();
+    const index = topicStateIndex(topic);
+    if (index < 0) return;
+    const current = state.rows[index];
+    const title = normalizeManualThemeText(topic.querySelector("[data-theme-title]")?.value || "");
+    const details = normalizeManualThemeText(topic.querySelector("[data-theme-details]")?.value || "");
+    if (!title && !details) {
+      notifyContent("Informe ao menos o nome ou o conteúdo do tema.", "warning");
+      return;
+    }
+    rememberContentUndo("Edição manual do tema.");
+    const assunto = title && details ? `${title}: ${details}` : title || details;
+    state.rows[index] = enrichThemeRow({
+      ...current,
+      assunto,
+      conteudosOriginais: details ? topicAtoms(details) : [],
+      agrupamentoPedagogico: undefined,
+      editadoManualmente: true,
+    });
+    if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
+    renderRows({ preserveState: true });
+    void saveAppStateNow("Tema atualizado");
+    notifyContent("Tema atualizado. A edição manual foi preservada.");
     return;
   }
 
