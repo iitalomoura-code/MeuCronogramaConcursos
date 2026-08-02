@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260802-edital-map" />
+    <link rel="stylesheet" href="./styles.css?v=20260802-pending-content-migration" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -333,10 +333,29 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
             </div>
              <button id="backToContestButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
              <button id="restoreOriginalContentButton" class="ghost-button" type="button"><i data-lucide="rotate-ccw"></i><span>Restaurar leitura original</span></button>
+             <button id="migratePendingContentButton" class="ghost-button" type="button"><i data-lucide="git-branch"></i><span>Reorganizar conteúdos pendentes</span></button>
              <button id="saveContentButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar conte&uacute;do</span></button>
             <button id="confirmButton" class="primary-button" type="button"><i data-lucide="check-circle-2"></i><span>Est&aacute; certo, continuar</span></button>
           </div>
           <div id="contentProblemsModal" class="content-problems-modal" hidden></div>
+          <div id="pendingContentMigrationModal" class="plan-delete-modal pending-content-migration-modal" hidden role="dialog" aria-modal="true" aria-labelledby="pendingContentMigrationTitle">
+            <button id="cancelPendingContentMigrationBackdrop" class="plan-delete-backdrop" type="button" aria-label="Fechar prévia de reorganização"></button>
+            <section class="plan-delete-dialog pending-content-migration-dialog">
+              <div>
+                <span class="section-kicker">Reorganização assistida</span>
+                <h2 id="pendingContentMigrationTitle">Revise os conteúdos que ainda faltam</h2>
+                <p>Histórico, ciclos encerrados, revisões e resumos não serão alterados. A nova estrutura será usada apenas nos próximos blocos ainda não gerados.</p>
+              </div>
+              <div id="pendingContentMigrationSummary" class="pending-migration-summary"></div>
+              <div id="pendingContentMigrationList" class="pending-migration-list"></div>
+              <p id="pendingContentMigrationNotice" class="pending-migration-notice" hidden></p>
+              <div class="plan-delete-actions pending-migration-actions">
+                <button id="cancelPendingContentMigrationButton" class="ghost-button" type="button">Cancelar</button>
+                <button id="restorePendingContentMigrationButton" class="ghost-button" type="button" hidden>Restaurar backup da reorganização</button>
+                <button id="confirmPendingContentMigrationButton" class="primary-button" type="button">Confirmar reorganização</button>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="tab-panel" id="tab-pesos">
@@ -707,8 +726,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./cloud-storage.js?v=20260717-cloud-refresh"></script>
     <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./js/pedagogical-grouping.js?v=20260801-subject-taxonomy"></script>
+    <script src="./js/pending-content-migration.js?v=20260802-pending-content-migration"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260802-edital-map"></script>
+    <script src="./app.js?v=20260802-pending-content-migration"></script>
   </body>
 </html>
 

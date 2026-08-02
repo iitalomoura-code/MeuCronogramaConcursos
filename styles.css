@@ -10350,3 +10350,121 @@ textarea:focus {
   .edital-map-topic-meta { justify-content: flex-start; }
   .edital-map-topic > div:first-child span { white-space: normal; }
 }
+
+.pending-content-migration-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.pending-migration-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pending-migration-summary strong { color: var(--text); }
+
+.pending-migration-list {
+  display: grid;
+  gap: 16px;
+  margin: 4px 0;
+}
+
+.pending-migration-section {
+  display: grid;
+  gap: 8px;
+}
+
+.pending-migration-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.pending-migration-item,
+.pending-migration-ambiguous article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.pending-migration-subject {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.pending-migration-item label:not(:has(input[type="checkbox"])) {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pending-migration-item input[type="text"],
+.pending-migration-item input:not([type]) {
+  width: 100%;
+}
+
+.pending-migration-item ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pending-migration-item li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pending-migration-item li label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--primary-soft-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.pending-migration-item small,
+.pending-migration-ambiguous small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pending-migration-ambiguous article > strong { color: var(--text); font-size: 13px; }
+.pending-migration-ambiguous article > span { color: var(--muted); font-size: 12px; }
+
+.pending-migration-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  .pending-content-migration-dialog { width: min(100vw - 20px, 760px); }
+  .pending-migration-item li { align-items: flex-start; flex-direction: column; gap: 3px; }
+}

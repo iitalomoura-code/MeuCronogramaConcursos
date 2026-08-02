@@ -69,6 +69,7 @@ const THEME_GROUPS = [
 const state = {
   rows: [],
   contentOriginalRows: [],
+  pendingContentMigrationBackup: null,
   currentPlanId: "",
   plans: [],
   dataSource: "local-migration",
@@ -141,6 +142,7 @@ let contentView = "review";
 let editalMapSearchTerm = "";
 let editalMapFilter = "all";
 let editalMapOpenSubjects = new Set();
+let pendingContentMigrationPlan = null;
 let continueAlternativesOpen = true;
 let continueDetailsOpen = false;
 let focusedStudyIndex = -1;
@@ -257,6 +259,15 @@ const els = {
   contentSelectedCount: document.querySelector("#contentSelectedCount"),
   contentProblemCount: document.querySelector("#contentProblemCount"),
   restoreOriginalContentButton: document.querySelector("#restoreOriginalContentButton"),
+  migratePendingContentButton: document.querySelector("#migratePendingContentButton"),
+  pendingContentMigrationModal: document.querySelector("#pendingContentMigrationModal"),
+  pendingContentMigrationSummary: document.querySelector("#pendingContentMigrationSummary"),
+  pendingContentMigrationList: document.querySelector("#pendingContentMigrationList"),
+  pendingContentMigrationNotice: document.querySelector("#pendingContentMigrationNotice"),
+  cancelPendingContentMigrationButton: document.querySelector("#cancelPendingContentMigrationButton"),
+  cancelPendingContentMigrationBackdrop: document.querySelector("#cancelPendingContentMigrationBackdrop"),
+  restorePendingContentMigrationButton: document.querySelector("#restorePendingContentMigrationButton"),
+  confirmPendingContentMigrationButton: document.querySelector("#confirmPendingContentMigrationButton"),
   organizeThemesButton: document.querySelector("#organizeThemesButton"),
   addRowButton: document.querySelector("#addRowButton"),
   splitButton: document.querySelector("#splitButton"),
@@ -1965,8 +1976,9 @@ function editalMapTopicState(row = {}) {
   const blocks = relatedBlocks.length
     ? relatedBlocks
     : allStudyRecordsForMap().filter((block) => topicMatches(block, materia, assunto));
-  const completed = blocks.some((block) => isMetaComplete(block))
-    || isThemeCompleteForPlanning(materia, assunto);
+  const completed = row.metaPartKey
+    ? isMetaPartCompleted(metaId, row.metaPartKey)
+    : blocks.some((block) => isMetaComplete(block)) || isThemeCompleteForPlanning(materia, assunto);
   const hasInProgress = blocks.some((block) => normalizeStatus(block.status) === "Em andamento");
   const hasReprogrammed = blocks.some((block) => normalizeStatus(block.status) === "Reprogramar");
   const hasContact = completed || blocks.some((block) => {
@@ -2423,6 +2435,140 @@ function organizeThemesFromTable() {
   const after = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
   els.confirmationStatus.textContent = `Temas organizados por pertin\u00eancia tem\u00e1tica (${before} para ${after} temas)`;
   els.confirmationStatus.classList.remove("confirmed");
+}
+
+function migrationTopicStatus(row = {}) {
+  const sameTopic = (block = {}) => normalizeForMatch(block.materia) === normalizeForMatch(row.materia)
+    && normalizeForMatch(themeTitle(block.assunto)) === normalizeForMatch(themeTitle(row.assunto));
+  const current = (state.generatedBlocks || []).filter(sameTopic);
+  const historical = [
+    ...(state.completedHistory || []),
+    ...(state.cycleHistory || []).flatMap((cycle) => [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])]),
+    ...(state.cycleResults || []).flatMap((cycle) => cycle.completed || []),
+  ].filter(sameTopic);
+  if (historical.some((block) => normalizeStatus(block.status) === "Concluído") || current.some((block) => normalizeStatus(block.status) === "Concluído")) return "completed";
+  if (current.some((block) => normalizeStatus(block.status) === "Em andamento")) return "in-progress";
+  if (current.some((block) => normalizeStatus(block.status) === "Reprogramar")) return "reprogrammed";
+  return "not-started";
+}
+
+function migrationRowsInSubjectOrder(rows = []) {
+  const counters = new Map();
+  return rows.map((row) => {
+    const key = normalizeForMatch(row.materia);
+    const ordem = (counters.get(key) || 0) + 1;
+    counters.set(key, ordem);
+    return enrichThemeRow({ ...row, ordem });
+  });
+}
+
+function pendingMigrationPreviewMarkup(plan) {
+  const preservedCount = plan.preserved.length;
+  const ambiguousCount = plan.ambiguities.length;
+  const changed = plan.changed;
+  if (els.pendingContentMigrationSummary) {
+    els.pendingContentMigrationSummary.innerHTML = `
+      <span><strong>${preservedCount}</strong> tema${preservedCount === 1 ? "" : "s"} preservado${preservedCount === 1 ? "" : "s"}</span>
+      <span><strong>${changed.length}</strong> unidade${changed.length === 1 ? "" : "s"} reorganizada${changed.length === 1 ? "" : "s"}</span>
+      <span><strong>${ambiguousCount}</strong> caso${ambiguousCount === 1 ? "" : "s"} para manter em revisão</span>
+    `;
+  }
+  if (!els.pendingContentMigrationList) return;
+  const rows = plan.nextRows.map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.migracaoPedagogica || row.agrupamentoPedagogico);
+  const preserved = plan.preserved.filter((item) => item.reason.includes("andamento"));
+  els.pendingContentMigrationList.innerHTML = `
+    ${rows.length ? `<div class="pending-migration-section"><h3>Conteúdos reorganizados</h3>${rows.map(({ row, index }) => {
+      const items = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais : [themeDetails(row.assunto)].filter(Boolean);
+      return `<article class="pending-migration-item" data-migration-row="${index}">
+        <span class="pending-migration-subject">${escapeHtml(row.materia)}</span>
+        <label>Tema / unidade de estudo<input data-migration-title="${index}" value="${escapeHtml(themeTitle(row.assunto))}" /></label>
+        <ul>${items.map((item) => `<li><label><input type="checkbox" data-migration-studied="${index}" value="${escapeHtml(item)}" /> Já estudado</label><span>${escapeHtml(item)}</span></li>`).join("")}</ul>
+        <small>${escapeHtml(row.migracaoPedagogica?.motivo || row.agrupamentoPedagogico?.motivo || "Conteúdos correlatos foram agrupados para estudo conjunto.")}</small>
+      </article>`;
+    }).join("")}</div>` : `<p class="muted-note">Não encontramos temas pendentes que possam ser reorganizados com segurança.</p>`}
+    ${preserved.length ? `<div class="pending-migration-section pending-migration-ambiguous"><h3>Manter estrutura atual</h3>${preserved.map((item) => `<article><strong>${escapeHtml(item.row.materia)}</strong><span>${escapeHtml(themeTitle(item.row.assunto))}</span><small>${escapeHtml(item.reason)}</small></article>`).join("")}</div>` : ""}
+  `;
+}
+
+function openPendingContentMigration() {
+  if (!state.rows.length) {
+    void dialogAlert("Adicione o conteúdo programático antes de reorganizar os temas pendentes.");
+    return;
+  }
+  const grouping = window.PedagogicalContentGrouping?.groupRows;
+  if (!window.PendingContentMigration?.buildPlan || !grouping) {
+    void dialogAlert("A organização pedagógica ainda não está disponível nesta versão.");
+    return;
+  }
+  pendingContentMigrationPlan = window.PendingContentMigration.buildPlan(copyContentRows(state.rows), migrationTopicStatus, grouping);
+  pendingMigrationPreviewMarkup(pendingContentMigrationPlan);
+  if (els.restorePendingContentMigrationButton) els.restorePendingContentMigrationButton.hidden = !state.pendingContentMigrationBackup;
+  if (els.pendingContentMigrationNotice) {
+    els.pendingContentMigrationNotice.hidden = false;
+    els.pendingContentMigrationNotice.textContent = pendingContentMigrationPlan.ambiguities.length
+      ? "Temas em andamento foram preservados porque o sistema não consegue identificar com segurança quais conteúdos internos já foram concluídos."
+      : "A aplicação só altera a estrutura dos temas ainda pendentes. Nenhum ciclo encerrado será modificado.";
+  }
+  els.pendingContentMigrationModal.hidden = false;
+  if (window.lucide) window.lucide.createIcons();
+  els.confirmPendingContentMigrationButton?.focus();
+}
+
+function closePendingContentMigration({ restoreFocus = true } = {}) {
+  const wasOpen = !els.pendingContentMigrationModal?.hidden;
+  if (els.pendingContentMigrationModal) els.pendingContentMigrationModal.hidden = true;
+  pendingContentMigrationPlan = null;
+  if (restoreFocus && wasOpen) els.migratePendingContentButton?.focus();
+}
+
+async function applyPendingContentMigration() {
+  const plan = pendingContentMigrationPlan;
+  if (!plan?.nextRows?.length) return;
+  const confirmed = await dialogConfirm("Aplicar esta reorganização apenas aos conteúdos pendentes? O histórico e os ciclos encerrados permanecerão intactos.", { title: "Confirmar reorganização", confirmLabel: "Aplicar reorganização" });
+  if (!confirmed) return;
+
+  state.pendingContentMigrationBackup = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    rows: copyContentRows(state.rows),
+    contentOriginalRows: copyContentRows(state.contentOriginalRows),
+    confirmed: state.confirmed,
+  };
+  const nextRows = plan.nextRows.map((row, index) => {
+    const titleInput = els.pendingContentMigrationList?.querySelector(`[data-migration-title="${index}"]`);
+    const newTitle = String(titleInput?.value || themeTitle(row.assunto)).trim();
+    const contents = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [];
+    const studied = [...(els.pendingContentMigrationList?.querySelectorAll(`[data-migration-studied="${index}"]:checked`) || [])].map((input) => input.value);
+    const remaining = contents.filter((item) => !studied.includes(item));
+    const details = remaining.length ? remaining.join("; ") : contents.join("; ");
+    return {
+      ...row,
+      assunto: details ? `${newTitle}: ${details}` : newTitle,
+      conteudosOriginais: remaining.length ? remaining : contents,
+      estudar: remaining.length ? row.estudar || "Sim" : "Nao",
+      migracaoMarcadoComoEstudado: studied,
+    };
+  });
+  state.rows = migrationRowsInSubjectOrder(nextRows);
+  closePendingContentMigration({ restoreFocus: false });
+  renderRows({ preserveState: true });
+  await saveAppStateNow("Organização pedagógica aplicada");
+  showToast("Estrutura dos conteúdos pendentes atualizada.");
+}
+
+async function restorePendingContentMigrationBackup() {
+  const backup = state.pendingContentMigrationBackup;
+  if (!backup?.rows?.length) return;
+  const confirmed = await dialogConfirm("Restaurar a estrutura anterior do conteúdo? Histórico, ciclos e revisões continuarão preservados.", { title: "Restaurar estrutura anterior", variant: "danger", confirmLabel: "Restaurar backup" });
+  if (!confirmed) return;
+  state.rows = copyContentRows(backup.rows).map(enrichThemeRow);
+  state.contentOriginalRows = copyContentRows(backup.contentOriginalRows);
+  state.confirmed = Boolean(backup.confirmed);
+  closePendingContentMigration({ restoreFocus: false });
+  renderRows({ preserveState: true });
+  await saveAppStateNow("Estrutura anterior restaurada");
+  showToast("Estrutura anterior restaurada.");
 }
 
 function addHistory(source, text) {
@@ -3279,7 +3425,8 @@ function topicPlanningData(materia = "", assunto = "") {
 }
 
 function pedagogicalMetaId(materia = "", assunto = "") {
-  return `tema::${topicKey(materia, themeTitle(assunto) || assunto)}`;
+  const topic = topicPlanningData(materia, assunto);
+  return topic.metaId || `tema::${topicKey(materia, themeTitle(assunto) || assunto)}`;
 }
 
 function themeContentItems(materia = "", assunto = "") {
@@ -3365,15 +3512,17 @@ function operationalStudyUnits(item, analysis) {
     const partsNeeded = reviewPending ? 1 : size === "Longo"
       ? Math.min(3, Math.max(requestedBlocks, Math.ceil(contents.length / 3)))
       : requestedBlocks;
-    const metaId = pedagogicalMetaId(item.materia, assunto);
+    const metaId = topic.metaId || pedagogicalMetaId(item.materia, assunto);
+    const firstPart = Math.max(1, Number(topic.metaPartKey) || 1);
+    const requiredMetaBlocks = Math.max(firstPart, Number(topic.metaRequiredBlocks) || 0, partsNeeded);
     return splitThemeContents(contents, partsNeeded)
       .map((part, index, parts) => ({
         assunto,
         metaId,
         metaTitulo: themeTitle(assunto),
         metaConteudos: contents,
-        metaPartKey: String(index + 1),
-        metaRequiredBlocks: parts.length,
+        metaPartKey: String(firstPart + index),
+        metaRequiredBlocks: Math.max(requiredMetaBlocks, firstPart + parts.length - 1),
         conteudoBloco: part.join("; "),
         tamanhoEstimado: size,
         blocosSugeridos: parts.length,
@@ -8918,6 +9067,7 @@ function captureAppState() {
     programText: els.programText.value,
     rows: state.rows,
     contentOriginalRows: state.contentOriginalRows,
+    pendingContentMigrationBackup: state.pendingContentMigrationBackup,
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
@@ -8953,6 +9103,9 @@ function applyAppSnapshot(saved = {}) {
   els.programText.value = saved.programText || "";
   state.rows = Array.isArray(saved.rows) ? saved.rows : [];
   state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows : [];
+  state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows
+    ? saved.pendingContentMigrationBackup
+    : null;
   renderRows();
   updateContentFlowSteps();
 
@@ -10142,6 +10295,11 @@ els.processButton.addEventListener("click", async () => {
 
 if (els.clearButton) els.clearButton.addEventListener("click", clearImportedContent);
 els.restoreOriginalContentButton?.addEventListener("click", restoreOriginalContentReading);
+els.migratePendingContentButton?.addEventListener("click", openPendingContentMigration);
+els.cancelPendingContentMigrationButton?.addEventListener("click", () => closePendingContentMigration());
+els.cancelPendingContentMigrationBackdrop?.addEventListener("click", () => closePendingContentMigration());
+els.confirmPendingContentMigrationButton?.addEventListener("click", () => void applyPendingContentMigration());
+els.restorePendingContentMigrationButton?.addEventListener("click", () => void restorePendingContentMigrationBackup());
 
 if (els.historySelect) els.historySelect.addEventListener("change", () => {
   const entry = state.originalHistory.find((item) => item.id === els.historySelect.value);
