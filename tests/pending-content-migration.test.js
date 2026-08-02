@@ -25,4 +25,6 @@ assert.ok(app.includes('renderRows({ preserveState: true });\n    void saveAppSt
 assert.ok(app.includes('article.querySelector("[data-save-topic-edit]")?.addEventListener("click"'), "O botão de salvar precisa de listener direto no card dinâmico.");
 assert.ok(app.includes("function pendingMigrationSubjectSummary"), "A prévia deve informar também as matérias pendentes que não terão alteração.");
 assert.ok(app.includes("Outros temas pendentes"), "A prévia deve deixar claro que temas não reorganizados permanecem no planejamento.");
+assert.ok(app.includes("if (!titleInput) {\n      // Temas fora da prévia não foram revisados manualmente e devem ficar intactos."), "A migração não pode desmarcar temas que não aparecem na prévia.");
+assert.ok(app.includes("planningBase: state.planningBase ? JSON.parse(JSON.stringify(state.planningBase)) : null"), "O backup da migração deve preservar pesos e dificuldades.");
 console.log("pending-content-migration.test.js: ok");

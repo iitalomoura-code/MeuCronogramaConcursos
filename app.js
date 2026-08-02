@@ -2569,12 +2569,19 @@ async function applyPendingContentMigration() {
     createdAt: new Date().toISOString(),
     rows: copyContentRows(state.rows),
     contentOriginalRows: copyContentRows(state.contentOriginalRows),
+    planningBase: state.planningBase ? JSON.parse(JSON.stringify(state.planningBase)) : null,
     confirmed: state.confirmed,
   };
   const nextRows = plan.nextRows.map((row, index) => {
     const titleInput = els.pendingContentMigrationList?.querySelector(`[data-migration-title="${index}"]`);
+    if (!titleInput) {
+      // Temas fora da prévia não foram revisados manualmente e devem ficar intactos.
+      return { ...row };
+    }
     const newTitle = String(titleInput?.value || themeTitle(row.assunto)).trim();
-    const contents = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [];
+    const contents = Array.isArray(row.conteudosOriginais) && row.conteudosOriginais.length
+      ? row.conteudosOriginais.slice()
+      : topicAtoms(themeDetails(row.assunto));
     const studied = [...(els.pendingContentMigrationList?.querySelectorAll(`[data-migration-studied="${index}"]:checked`) || [])].map((input) => input.value);
     const remaining = contents.filter((item) => !studied.includes(item));
     const details = remaining.length ? remaining.join("; ") : contents.join("; ");
@@ -2602,7 +2609,11 @@ async function restorePendingContentMigrationBackup() {
   state.rows = copyContentRows(backup.rows).map(enrichThemeRow);
   state.contentOriginalRows = copyContentRows(backup.contentOriginalRows);
   state.confirmed = Boolean(backup.confirmed);
-  if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
+  if (backup.planningBase?.materias?.length) {
+    state.planningBase = JSON.parse(JSON.stringify(backup.planningBase));
+  } else if (state.confirmed || state.planningBase) {
+    refreshPlanningBaseFromRows({ preservePriorities: true });
+  }
   closePendingContentMigration({ restoreFocus: false });
   renderRows({ preserveState: true });
   await saveAppStateNow("Estrutura anterior restaurada");
