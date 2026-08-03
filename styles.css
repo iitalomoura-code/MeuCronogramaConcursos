@@ -7705,7 +7705,7 @@ textarea:focus {
 .notebook-editor-header {
   gap: 5px;
   min-height: 42px;
-  padding: 2px 0;
+  padding: 8px 0 10px;
 }
 
 .notebook-editor-header strong {
@@ -7763,7 +7763,8 @@ textarea:focus {
 
 #notebookText .ql-editor {
   min-height: clamp(460px, 62vh, 720px);
-  max-width: 82ch;
+  width: 100%;
+  max-width: none;
   padding: clamp(20px, 3vw, 34px);
   font-size: 15px;
   line-height: 1.78;

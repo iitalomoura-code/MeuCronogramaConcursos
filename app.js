@@ -8437,9 +8437,10 @@ function renderNotebookEditor() {
   }
   const title = themeTitle(notebookSelection.assunto);
   const details = themeDetails(notebookSelection.assunto);
+  const hasDistinctDetails = details && normalizeForMatch(details) !== normalizeForMatch(title);
   els.notebookEditorHeader.innerHTML = `
     <strong>${escapeHtml(title)}</strong>
-    ${details ? `<span>${escapeHtml(shortText(details, 160))}</span>` : ""}
+    ${hasDistinctDetails ? `<span>${escapeHtml(shortText(details, 160))}</span>` : ""}
   `;
   setNotebookEditorEnabled(true);
   const saved = state.notebook[notebookKey(notebookSelection.materia, notebookSelection.assunto)] || "";
