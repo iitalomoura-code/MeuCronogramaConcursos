@@ -7706,6 +7706,8 @@ textarea:focus {
   gap: 5px;
   min-height: 42px;
   padding: 8px 0 10px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .notebook-editor-header strong {
@@ -7722,17 +7724,19 @@ textarea:focus {
 }
 
 #notebookToolbar.ql-toolbar {
+  position: relative;
+  z-index: 6;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
-  overflow-x: auto;
+  overflow: visible;
   border: 1px solid var(--border);
   border-bottom: 0;
   border-radius: var(--radius-control) var(--radius-control) 0 0;
   background: var(--soft);
   padding: 6px 8px;
-  scrollbar-width: thin;
+  box-shadow: 0 6px 16px rgba(30, 41, 59, 0.04);
 }
 
 #notebookToolbar.ql-toolbar .ql-formats {
@@ -7756,9 +7760,15 @@ textarea:focus {
 }
 
 #notebookText.ql-container {
+  position: relative;
+  z-index: 1;
   min-height: clamp(460px, 62vh, 720px);
   border-radius: 0 0 var(--radius-control) var(--radius-control);
   box-shadow: var(--shadow-card);
+}
+
+#notebookToolbar.ql-toolbar .ql-picker-options {
+  z-index: 20;
 }
 
 #notebookText .ql-editor {
@@ -7874,6 +7884,10 @@ textarea:focus {
     padding: 18px 16px;
     font-size: 14px;
     line-height: 1.7;
+  }
+
+  #notebookToolbar.ql-toolbar {
+    flex-wrap: wrap;
   }
 }
 
