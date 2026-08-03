@@ -7942,7 +7942,12 @@ const NOTEBOOK_SAFE_CLASSES = new Set([
   "note-align-right",
   "note-align-justify",
   "note-bullet",
+  "ql-align-center",
+  "ql-align-right",
+  "ql-align-justify",
 ]);
+
+const NOTEBOOK_QUILL_ALIGNMENTS = new Set(["center", "right", "justify"]);
 
 const NOTEBOOK_STYLE_GROUPS = [
   ["note-color-black", "note-color-muted", "note-color-blue", "note-color-red", "note-clear-style"],
@@ -7996,6 +8001,18 @@ function sanitizeNotebookHtml(value) {
     if (el.tagName === "A") {
       el.setAttribute("target", "_blank");
       el.setAttribute("rel", "noopener noreferrer");
+    }
+
+    const inlineAlignment = String(el.style?.textAlign || "").toLowerCase();
+    const attributeAlignment = String(el.getAttribute("align") || "").toLowerCase();
+    const alignment = NOTEBOOK_QUILL_ALIGNMENTS.has(inlineAlignment)
+      ? inlineAlignment
+      : (NOTEBOOK_QUILL_ALIGNMENTS.has(attributeAlignment) ? attributeAlignment : "");
+    if (alignment) {
+      el.classList.remove("ql-align-center", "ql-align-right", "ql-align-justify");
+      el.classList.add(`ql-align-${alignment}`);
+      el.style.removeProperty("text-align");
+      el.removeAttribute("align");
     }
   });
 
@@ -8064,7 +8081,7 @@ function setNotebookEditorEnabled(enabled) {
 function saveNotebookEditor() {
   if (!notebookSelection.assunto || !quillEditor) return;
   const key = notebookKey(notebookSelection.materia, notebookSelection.assunto);
-  const html = quillEditor.getSemanticHTML ? quillEditor.getSemanticHTML() : quillEditor.root.innerHTML;
+  const html = quillEditor.root.innerHTML;
   const isEmpty = !quillEditor.getText().trim() && !quillEditor.root.querySelector("img");
   state.notebook[key] = isEmpty ? "" : sanitizeNotebookHtml(html);
   els.notebookStatus.textContent = "Salvo automaticamente";

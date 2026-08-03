@@ -7726,6 +7726,7 @@ textarea:focus {
 #notebookToolbar.ql-toolbar {
   position: relative;
   z-index: 6;
+  isolation: isolate;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -7768,7 +7769,17 @@ textarea:focus {
 }
 
 #notebookToolbar.ql-toolbar .ql-picker-options {
-  z-index: 20;
+  z-index: 100;
+}
+
+#notebookToolbar.ql-toolbar .ql-picker.ql-expanded {
+  z-index: 101;
+}
+
+#notebookToolbar.ql-toolbar .ql-picker.ql-expanded .ql-picker-options {
+  top: calc(100% + 7px);
+  z-index: 102;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
 }
 
 #notebookText .ql-editor {
