@@ -12,6 +12,7 @@ assert.ok(app.includes("function renderEditalMap"), "O mapa deve ter renderizaç
 assert.ok(app.includes('if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);'), "O mapa deve ser renderizado ao abrir o Painel de Evolução.");
 assert.ok(app.includes("reviewAttentionFor(materia, assunto)"), "Revisões pendentes devem ser consultadas pelo mecanismo existente.");
 assert.ok(app.includes("editalMapSubjectPriority"), "As matérias devem ser ordenadas pela prioridade atual.");
+assert.ok(app.includes("const open = editalMapOpenSubjects.has(key);"), "As matérias do mapa devem iniciar recolhidas.");
 assert.ok(html.includes('data-edital-map-filter="review-pending"'), "O filtro de revisões pendentes deve existir.");
 assert.ok(css.includes(".edital-map-subject"), "O CSS precisa incluir o acabamento dos blocos expansíveis.");
 assert.ok(css.includes(".edital-map-progress"), "O CSS precisa incluir a barra de cobertura.");

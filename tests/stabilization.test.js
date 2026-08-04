@@ -13,8 +13,8 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260803-notebook-format-persistence"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260803-notebook-format-persistence"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260804-edital-map-collapsed"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260804-edital-map-collapsed"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes('class="ql-align" value="justify"'), "O Caderno de Resumos deve oferecer alinhamento justificado.");
 assert.ok(app.includes("NOTEBOOK_QUILL_ALIGNMENTS"), "Os alinhamentos do Quill devem ser normalizados antes do salvamento.");
 assert.ok(index.includes("pedagogical-grouping.js?v=20260801-subject-taxonomy"), "A taxonomia pedagógica deve usar o cache-busting atual.");

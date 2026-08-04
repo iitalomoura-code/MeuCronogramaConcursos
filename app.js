@@ -2126,7 +2126,7 @@ function renderEditalMap() {
     const coverage = group.topics.filter((topic) => topic.hasContact).length;
     const percent = group.topics.length ? Math.round((coverage / group.topics.length) * 100) : 0;
     const key = normalizeForMatch(group.materia);
-    const open = editalMapOpenSubjects.size ? editalMapOpenSubjects.has(key) : percent > 0;
+    const open = editalMapOpenSubjects.has(key);
     return `
       <details class="edital-map-subject" data-edital-map-subject="${escapeHtml(key)}"${open ? " open" : ""}>
         <summary>
