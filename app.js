@@ -24,6 +24,15 @@ const MAX_RELIABLE_SESSION_MINUTES = 240;
 const CYCLE_RECENCY_WEIGHT = 18;
 const CURRENT_CYCLE_COVERAGE_WEIGHT = 28;
 const DURATION_FIT_MARGIN_MINUTES = 5;
+const SCHEDULING_SIGNAL_WEIGHTS = Object.freeze({
+  historicalIncidence: 0.30,
+  subjectPriority: 0.20,
+  personalDifficulty: 0.15,
+  recentPerformance: 0.15,
+  timeWithoutContact: 0.10,
+  continuityAndReviews: 0.10,
+});
+const INCIDENCE_MAX_ADJUSTMENT = SCHEDULING_SIGNAL_WEIGHTS.historicalIncidence;
 const STATUS_OPTIONS = ["N\u00e3o iniciado", "Em andamento", "Conclu\u00eddo", "Reprogramar"];
 const REVIEW_INTERVALS = [
   { key: "24h", label: "24h", days: 1 },
@@ -3563,6 +3572,59 @@ function themeContentItems(materia = "", assunto = "") {
   return atoms.length > 1 ? [...new Set(atoms)] : [details || themeTitle(assunto) || "Selecionar tema"];
 }
 
+function planningBoard() {
+  return els.examBoard?.value?.trim() || state.planningBase?.banca || state.planningBase?.board || "";
+}
+
+function historicalIncidenceForTarget({ materia = "", assunto = "", subject = null } = {}) {
+  const engine = window.StudyIncidence;
+  if (!engine?.resolve || !materia) return { available: false, applied: false, normalized: 0, adjustment: 0 };
+
+  const resolveTopic = (topic) => engine.resolve({
+    board: planningBoard(),
+    subject: materia,
+    title: themeTitle(topic),
+    details: themeDetails(topic),
+    contents: themeContentItems(materia, topic),
+  });
+
+  if (assunto) {
+    const result = resolveTopic(assunto);
+    return {
+      ...result,
+      adjustment: result.applied ? Math.min(INCIDENCE_MAX_ADJUSTMENT, result.normalized * INCIDENCE_MAX_ADJUSTMENT) : 0,
+    };
+  }
+
+  const topics = (subject?.assuntos || subjectPlanningData(materia)?.assuntos || [])
+    .map((item) => typeof item === "string" ? item : item.assunto)
+    .filter(Boolean);
+  const matches = topics.map(resolveTopic).filter((result) => result.applied);
+  if (!matches.length) return { available: false, applied: false, normalized: 0, adjustment: 0 };
+  const topMatches = matches.sort((a, b) => b.normalized - a.normalized).slice(0, 3);
+  const normalized = topMatches.reduce((sum, item) => sum + item.normalized, 0) / topMatches.length;
+  return {
+    ...topMatches[0],
+    normalized,
+    adjustment: Math.min(INCIDENCE_MAX_ADJUSTMENT, normalized * INCIDENCE_MAX_ADJUSTMENT),
+    matchedTopics: topMatches.map((item) => item.topicId),
+  };
+}
+
+function schedulingPriorityForTarget(target = {}) {
+  const subject = target.subject || subjectPlanningData(target.materia) || target;
+  const base = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
+  const adaptive = adaptivePriorityForTarget({ ...target, ...subject, prioridade: base, prioridadeBase: base });
+  const incidence = historicalIncidenceForTarget({ materia: target.materia || subject.materia, assunto: target.assunto || "", subject });
+  return {
+    base,
+    adjusted: Math.min(1 + INCIDENCE_MAX_ADJUSTMENT, adaptive.adjusted + incidence.adjustment),
+    adaptive,
+    incidence,
+    incidenceAdjustment: incidence.adjustment || 0,
+  };
+}
+
 function splitThemeContents(items = [], partCount = 1) {
   const safeItems = items.filter(Boolean);
   if (partCount <= 1 || safeItems.length <= 1) return [safeItems];
@@ -3887,13 +3949,18 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
   if (!materias.length || totalBlocks <= 0) return [];
   const scored = materias.map((materia) => {
     const basePriority = priorityScore(materia);
-    const adaptive = options.adaptive ? adaptivePriorityForTarget({ ...materia, prioridade: basePriority, prioridadeBase: basePriority }) : null;
+    const scheduling = options.adaptive
+      ? schedulingPriorityForTarget({ ...materia, subject: materia, prioridade: basePriority, prioridadeBase: basePriority })
+      : { adjusted: basePriority, adaptive: null, incidence: { applied: false }, incidenceAdjustment: 0 };
+    const adaptive = scheduling.adaptive;
     return {
       ...materia,
       prioridadeBase: basePriority,
-      prioridade: adaptive ? adaptive.adjusted : basePriority,
+      prioridade: scheduling.adjusted,
       adaptiveAdjustment: adaptive?.adjustment || 0,
       adaptiveReason: adaptive?.reason || "",
+      incidenciaHistorica: scheduling.incidence,
+      incidenceAdjustment: scheduling.incidenceAdjustment || 0,
     };
   });
   const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0) || scored.length || 1;
@@ -3951,20 +4018,23 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
     const chosen = chosenCandidate?.item;
     if (!chosen) break;
     const topic = chooseTopicForBlock(chosen);
-    const topicAdaptive = adaptivePriorityForTarget({
+    const topicScheduling = schedulingPriorityForTarget({
       materia: chosen.materia,
       assunto: topic.assunto,
       prioridade: chosen.prioridade,
       prioridadeBase: chosen.prioridadeBase,
     });
+    const topicAdaptive = topicScheduling.adaptive;
     queue.push({
       ...topic,
       materia: chosen.materia,
       assunto: topic.assunto,
-      prioridade: Math.max(chosen.prioridade, topicAdaptive.adjusted),
+      prioridade: Math.max(chosen.prioridade, topicScheduling.adjusted),
       prioridadeBase: chosen.prioridadeBase,
       adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicAdaptive.adjustment || 0),
       adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
+      incidenciaHistorica: topicScheduling.incidence?.applied ? topicScheduling.incidence : chosen.incidenciaHistorica,
+      incidenceAdjustment: Math.max(chosen.incidenceAdjustment || 0, topicScheduling.incidenceAdjustment || 0),
       rotationReason: chosen.exposures === 0 ? "a matéria ainda não apareceu neste ciclo" : cycleAbsenceForSubject(chosen.materia) > 1 ? "a matéria voltou após ciclos sem aparecer" : "",
     });
     chosen.remaining = Math.max(0, chosen.remaining - 1);
@@ -3986,21 +4056,25 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
   return units
     .map((unit, index) => {
       const topic = typeof unit === "string" ? { assunto: unit } : unit;
-      const adaptive = adaptivePriorityForTarget({
+      const scheduling = schedulingPriorityForTarget({
         materia: subject.materia,
         assunto: topic.assunto,
         prioridade: subject.prioridade,
         prioridadeBase: subject.prioridadeBase,
       });
+      const adaptive = scheduling.adaptive;
       return {
         ...topic,
         originalIndex: index,
-        adaptiveScore: adaptive.adjusted,
+        adaptiveScore: scheduling.adjusted,
         adaptiveAdjustment: adaptive.adjustment,
         adaptiveReason: adaptive.reason,
+        incidenciaHistorica: scheduling.incidence,
+        incidenceAdjustment: scheduling.incidenceAdjustment || 0,
       };
     })
     .sort((a, b) =>
+      b.incidenceAdjustment - a.incidenceAdjustment ||
       b.adaptiveAdjustment - a.adaptiveAdjustment ||
       b.adaptiveScore - a.adaptiveScore ||
       a.originalIndex - b.originalIndex
@@ -4147,6 +4221,8 @@ function blockRow(number, duration, item, type, estimate = {}) {
     prioridadeBase: item.prioridadeBase ?? item.prioridade,
     adaptiveAdjustment: item.adaptiveAdjustment || 0,
     adaptiveReason: item.adaptiveReason || "",
+    incidenciaHistorica: item.incidenciaHistorica?.applied ? item.incidenciaHistorica : null,
+    incidenceAdjustment: Number(item.incidenceAdjustment) || 0,
     rotationReason: item.rotationReason || "",
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
@@ -4519,6 +4595,7 @@ function continueSuggestionScore(entry) {
   const block = entry.block || {};
   const adaptive = adaptivePriorityForTarget(block);
   const review = reviewAttentionFor(block.materia, block.assunto);
+  const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
   const status = normalizeStatus(block.status);
   const rotation = recommendationRotationFor(entry);
   let score = 0;
@@ -4527,9 +4604,10 @@ function continueSuggestionScore(entry) {
   if (status === "Em andamento") score += 105;
   score -= Math.min(32, (Number(block.reprogramacoes) || 0) * 10);
   score += (adaptive.adjustment || 0) * 70;
+  score += (incidence.adjustment || 0) * 60;
   score += (Number(block.prioridade) || 0) * 24;
   score += rotation.score;
-  return { score, adaptive, review, rotation };
+  return { score, adaptive, review, rotation, incidence };
 }
 
 function rankedContinueEntries() {
@@ -4800,6 +4878,7 @@ function explainStudySuggestion(block, context = {}) {
   if (!block) return { text: "", factors: [] };
   const adaptive = context.adaptive || adaptivePriorityForTarget(block);
   const review = context.review || reviewAttentionFor(block.materia, block.assunto);
+  const incidence = context.incidence || block.incidenciaHistorica || historicalIncidenceForTarget(block);
   const factors = [];
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
@@ -4817,6 +4896,9 @@ function explainStudySuggestion(block, context = {}) {
       else if (reason.includes("reprogram")) factors.push("tema reprogramado anteriormente");
       else if (reason.includes("queda")) factors.push("queda de desempenho recente");
     });
+  }
+  if (incidence?.applied && incidence.normalized >= 0.5) {
+    factors.push(incidence.kind === "fgv" ? "incid\u00eancia hist\u00f3rica relevante na FGV" : "incid\u00eancia hist\u00f3rica relevante na mat\u00e9ria");
   }
   if (!factors.length && priority.percent >= 60) factors.push("tema prioritário para a prova");
   if (!factors.length) return { text: "Este é o próximo bloco pendente do ciclo atual.", factors: [] };
