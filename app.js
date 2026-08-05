@@ -227,6 +227,9 @@ const els = {
   cancelManagePlanBackdrop: document.querySelector("#cancelManagePlanBackdrop"),
   contestName: document.querySelector("#contestName"),
   examBoard: document.querySelector("#examBoard"),
+  examBoardOther: document.querySelector("#examBoardOther"),
+  examBoardOtherField: document.querySelector("#examBoardOtherField"),
+  examBoardIncidenceStatus: document.querySelector("#examBoardIncidenceStatus"),
   jobRole: document.querySelector("#jobRole"),
   examDate: document.querySelector("#examDate"),
   planStartDate: document.querySelector("#planStartDate"),
@@ -2813,10 +2816,51 @@ async function readFile(file) {
   throw new Error("Formato n\u00e3o suportado.");
 }
 
+function normalizedExamBoardState(data = {}) {
+  const storedId = String(data.examBoardId || "").trim().toLowerCase();
+  const storedName = String(data.examBoardName ?? data.examBoard ?? "").trim();
+  const normalizedName = normalizeForMatch(storedName);
+  const examBoardId = storedId === "fgv" || (!storedId && (normalizedName === "fgv" || normalizedName.includes("fundacao getulio vargas")))
+    ? "fgv"
+    : storedId === "other" || storedName ? "other" : "";
+  const examBoardName = examBoardId === "fgv" ? "FGV" : storedName;
+  return {
+    examBoardId,
+    examBoardName,
+    useHistoricalIncidence: examBoardId === "fgv",
+  };
+}
+
+function currentExamBoardState() {
+  return normalizedExamBoardState({
+    examBoardId: els.examBoard?.value || "",
+    examBoardName: els.examBoard?.value === "other" ? els.examBoardOther?.value || "" : els.examBoard?.value === "fgv" ? "FGV" : "",
+  });
+}
+
+function updateExamBoardControls() {
+  const board = currentExamBoardState();
+  if (els.examBoardOtherField) els.examBoardOtherField.hidden = board.examBoardId !== "other";
+  if (els.examBoardIncidenceStatus) {
+    if (board.useHistoricalIncidence) {
+      els.examBoardIncidenceStatus.innerHTML = `<strong>Prioridade hist\u00f3rica FGV ativa</strong><span>O cronograma usar\u00e1 dados hist\u00f3ricos de cobran\u00e7a da FGV nas mat\u00e9rias dispon\u00edveis, sem deixar de cobrir todo o edital.</span>`;
+    } else if (board.examBoardId === "other") {
+      els.examBoardIncidenceStatus.innerHTML = `<strong>Priorizac\u00e3o hist\u00f3rica indispon\u00edvel para esta banca</strong><span>O cronograma usar\u00e1 a leitura normal do edital, prioridades, desempenho e revis\u00f5es.</span>`;
+    } else {
+      els.examBoardIncidenceStatus.textContent = "Selecione a banca para definir como o cronograma usar\u00e1 as prioridades.";
+    }
+  }
+  return board;
+}
+
 function getContestConfig() {
+  const board = currentExamBoardState();
   return {
     concurso: els.contestName.value.trim(),
-    banca: els.examBoard.value.trim(),
+    banca: board.examBoardName,
+    examBoardId: board.examBoardId,
+    examBoardName: board.examBoardName,
+    useHistoricalIncidence: board.useHistoricalIncidence,
     cargo: els.jobRole.value.trim(),
     dataProva: els.examDate.value,
     dataInicial: els.planStartDate.value,
@@ -3573,12 +3617,13 @@ function themeContentItems(materia = "", assunto = "") {
 }
 
 function planningBoard() {
-  return els.examBoard?.value?.trim() || state.planningBase?.banca || state.planningBase?.board || "";
+  const configured = currentExamBoardState();
+  return configured.examBoardId === "fgv" ? "FGV" : "";
 }
 
 function historicalIncidenceForTarget({ materia = "", assunto = "", subject = null } = {}) {
   const engine = window.StudyIncidence;
-  if (!engine?.resolve || !materia) return { available: false, applied: false, normalized: 0, adjustment: 0 };
+  if (!engine?.resolve || !materia || planningBoard() !== "FGV") return { available: false, applied: false, normalized: 0, adjustment: 0 };
 
   const resolveTopic = (topic) => engine.resolve({
     board: planningBoard(),
@@ -9263,9 +9308,14 @@ function togglePlanPopover() {
 }
 
 function formState() {
+  const board = currentExamBoardState();
   return {
     contestName: els.contestName.value,
-    examBoard: els.examBoard.value,
+    // examBoard remains for backups created before the explicit selector existed.
+    examBoard: board.examBoardName,
+    examBoardId: board.examBoardId,
+    examBoardName: board.examBoardName,
+    useHistoricalIncidence: board.useHistoricalIncidence,
     jobRole: els.jobRole.value,
     examDate: els.examDate.value,
     planStartDate: els.planStartDate.value,
@@ -9282,7 +9332,10 @@ function formState() {
 
 function applyFormState(data = {}) {
   els.contestName.value = data.contestName ?? "";
-  els.examBoard.value = data.examBoard ?? "";
+  const board = normalizedExamBoardState(data);
+  els.examBoard.value = board.examBoardId;
+  if (els.examBoardOther) els.examBoardOther.value = board.examBoardId === "other" ? board.examBoardName : "";
+  updateExamBoardControls();
   els.jobRole.value = data.jobRole ?? "";
   els.examDate.value = data.examDate ?? "";
   els.planStartDate.value = data.planStartDate ?? "";
@@ -9826,6 +9879,10 @@ function blankAppSnapshot(name = "") {
     activeTab: "continuar",
     form: {
       contestName: name,
+      examBoard: "",
+      examBoardId: "",
+      examBoardName: "",
+      useHistoricalIncidence: false,
       weeklyHours: "24",
       blockDuration: "1.5",
       referenceWeek: dateToWeekInput(new Date()),
@@ -9929,10 +9986,14 @@ async function createNewPlan() {
   const plan = createPlanMeta(name);
   plan.customName = plan.name;
   const snapshot = blankAppSnapshot(plan.name);
+  const newPlanBoard = normalizedExamBoardState({ examBoard: els.newPlanBoard?.value.trim() || "" });
   snapshot.form = {
     ...snapshot.form,
     contestName: name,
-    examBoard: els.newPlanBoard?.value.trim() || "",
+    examBoard: newPlanBoard.examBoardName,
+    examBoardId: newPlanBoard.examBoardId,
+    examBoardName: newPlanBoard.examBoardName,
+    useHistoricalIncidence: newPlanBoard.useHistoricalIncidence,
     jobRole: els.newPlanRole?.value.trim() || "",
     examDate: els.newPlanExamDate?.value || "",
     planStartDate: els.newPlanStartDate?.value || "",
@@ -10074,7 +10135,17 @@ async function duplicateCurrentPlan() {
   const copyCycleConfig = Boolean(els.duplicatePlanCycleConfig?.checked);
   const copyNotebook = Boolean(els.duplicatePlanNotebook?.checked);
   const duplicate = blankAppSnapshot(nextName);
-  if (copyData) duplicate.form = { ...duplicate.form, contestName: nextName, examBoard: source.form?.examBoard || "", jobRole: source.form?.jobRole || "", examDate: source.form?.examDate || "", planStartDate: source.form?.planStartDate || "" };
+  if (copyData) duplicate.form = {
+    ...duplicate.form,
+    contestName: nextName,
+    examBoard: source.form?.examBoard || source.form?.examBoardName || "",
+    examBoardId: normalizedExamBoardState(source.form || {}).examBoardId,
+    examBoardName: normalizedExamBoardState(source.form || {}).examBoardName,
+    useHistoricalIncidence: normalizedExamBoardState(source.form || {}).useHistoricalIncidence,
+    jobRole: source.form?.jobRole || "",
+    examDate: source.form?.examDate || "",
+    planStartDate: source.form?.planStartDate || "",
+  };
   else duplicate.form.contestName = nextName;
   if (copyCycleConfig) {
     ["weeklyHours", "blockDuration", "referenceWeek", "overrideWeeklyHours", "overrideCycleEnabled", "allowResidualBlock", "dailyHours"].forEach((key) => {
@@ -11355,6 +11426,7 @@ function initQuillEditor() {
   });
 }
 initQuillEditor();
+updateExamBoardControls();
 
 els.reviewFilter?.addEventListener("change", () => {
   renderReviews();
@@ -11501,6 +11573,14 @@ els.settingsMenu?.addEventListener("click", (event) => event.stopPropagation());
 els.saveNowButton?.addEventListener("click", () => saveAppStateNow("Salvo"));
 els.saveContestButton?.addEventListener("click", () => saveAppStateNow("Dados do concurso salvos"));
 els.goContentButton?.addEventListener("click", () => switchTab("conteudo"));
+els.examBoard?.addEventListener("change", () => {
+  updateExamBoardControls();
+  scheduleAutoSave();
+});
+els.examBoardOther?.addEventListener("input", () => {
+  updateExamBoardControls();
+  scheduleAutoSave();
+});
 els.backToContentFromPriorityButton?.addEventListener("click", () => switchTab("conteudo"));
 els.saveCycleAdjustmentsButton?.addEventListener("click", () => saveAppStateNow("Ajustes salvos"));
 els.overrideCycleToggle?.addEventListener("change", updateOverrideVisibility);

@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260805-incidence-fgv" />
+    <link rel="stylesheet" href="./styles.css?v=20260805-board-selector" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -132,7 +132,14 @@
                   <input id="contestName" type="text" placeholder="Ex.: TCE, CGU, Prefeitura..." />
                 </label>
                 <label>Banca
-                  <input id="examBoard" type="text" placeholder="Ex.: FCC, FGV, Cesgranrio" />
+                  <select id="examBoard" aria-describedby="examBoardIncidenceStatus">
+                    <option value="">Selecione a banca</option>
+                    <option value="fgv">FGV</option>
+                    <option value="other">Outra banca</option>
+                  </select>
+                </label>
+                <label id="examBoardOtherField" hidden>Nome da banca
+                  <input id="examBoardOther" type="text" placeholder="Ex.: Cebraspe, FCC, Vunesp" />
                 </label>
                 <label>Cargo
                   <input id="jobRole" type="text" placeholder="Ex.: Auditor de Controle" />
@@ -141,6 +148,7 @@
                   <input id="examDate" type="date" />
                 </label>
               </div>
+              <p id="examBoardIncidenceStatus" class="board-incidence-status" role="status"></p>
             </div>
 
             <div class="form-section">
@@ -697,7 +705,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./data/incidence/fgv-incidence-base-v1.js?v=20260805-incidence-fgv"></script>
     <script src="./js/incidence.js?v=20260805-incidence-fgv"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260805-incidence-fgv"></script>
+    <script src="./app.js?v=20260805-board-selector"></script>
   </body>
 </html>
 
