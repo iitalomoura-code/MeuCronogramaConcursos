@@ -803,6 +803,32 @@ function prunePrematureReviewBlocksFromCurrentCycle() {
   return before - state.generatedBlocks.length;
 }
 
+function generatedBlockDeduplicationKey(block = {}) {
+  const subject = normalizeForMatch(block.materia || "");
+  const topic = normalizeForMatch(themeTitle(block.assunto) || block.assunto || "");
+  const content = normalizeForMatch(block.conteudoBloco || block.assunto || "");
+  const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
+  return [subject, topic, block.metaId || "", block.metaPartKey || "", content, activity].join("::");
+}
+
+function pruneDuplicatePendingCycleBlocks() {
+  const seen = new Set();
+  const before = state.generatedBlocks.length;
+  state.generatedBlocks = state.generatedBlocks.filter((block) => {
+    const key = generatedBlockDeduplicationKey(block);
+    const status = normalizeStatus(block.status);
+    const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
+    if (status !== "Não iniciado" || activity.includes("revis")) {
+      seen.add(key);
+      return true;
+    }
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return before - state.generatedBlocks.length;
+}
+
 function availableStudyUnits(item, analysis) {
   const units = item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
   const completed = completedUnitKeys();
@@ -4042,16 +4068,18 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
   const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
 
   while (queue.length < totalBlocks && pool.length) {
-    const recentSubjects = queue.slice(-Math.max(3, pool.length * 2)).map((item) => item.materia);
+    const activePool = pool.filter((item) => item.topicCursor < item.studyUnits.length);
+    if (!activePool.length) break;
+    const recentSubjects = queue.slice(-Math.max(3, activePool.length * 2)).map((item) => item.materia);
     const lastSubject = queue.length ? queue[queue.length - 1].materia : "";
     const recentSequence = queue.slice(-MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT);
     const consecutive = recentSequence.length === MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT && recentSequence.every((item) => item.materia === lastSubject) ? lastSubject : "";
-    const candidates = pool.map((item) => {
+    const candidates = activePool.map((item) => {
       const recentCount = recentSubjects.filter((materia) => materia === item.materia).length;
       const recentShare = recentSubjects.length ? recentCount / recentSubjects.length : 0;
       const urgent = subjectHasUrgentReview(item.materia);
-      const excludedBySequence = pool.length > 2 && consecutive === item.materia && !urgent;
-      const excludedByShare = pool.length > 2 && recentSubjects.length >= 3 && recentShare > MAX_RECENT_SHARE_PER_SUBJECT && !urgent;
+      const excludedBySequence = activePool.length > 2 && consecutive === item.materia && !urgent;
+      const excludedByShare = activePool.length > 2 && recentSubjects.length >= 3 && recentShare > MAX_RECENT_SHARE_PER_SUBJECT && !urgent;
       const rotation = Math.min(32, cycleAbsenceForSubject(item.materia) * CYCLE_RECENCY_WEIGHT) + (item.exposures === 0 ? CURRENT_CYCLE_COVERAGE_WEIGHT : 0);
       const quota = item.remaining > 0 ? 22 : 0;
       const concentrationPenalty = recentShare > MAX_RECENT_SHARE_PER_SUBJECT ? 34 : recentCount * 5;
@@ -4091,8 +4119,8 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
 
 function chooseTopicForBlock(subject) {
   const topics = subject.studyUnits || subject.assuntos || [];
-  if (!topics.length) return { assunto: "Selecionar tema" };
-  const current = topics[subject.topicCursor % topics.length];
+  if (!topics.length || subject.topicCursor >= topics.length) return null;
+  const current = topics[subject.topicCursor];
   subject.topicCursor += 1;
   return typeof current === "string" ? { assunto: current } : current;
 }
@@ -5767,7 +5795,10 @@ function renderContinuePanel() {
   const reviews = continueAvailableReviews();
   const totalHours = performanceTotals(state.generatedBlocks).horas;
   const insights = buildPerformanceInsights(suggestion?.text || "").slice(0, 2);
-  const nextSteps = pending.filter((entry) => entry.index !== suggested?.index).slice(0, 3);
+  const nextSteps = pending
+    .filter((entry) => entry.index !== suggested?.index)
+    .filter((entry, index, list) => list.findIndex((candidate) => generatedBlockDeduplicationKey(candidate.block) === generatedBlockDeduplicationKey(entry.block)) === index)
+    .slice(0, 3);
 
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
@@ -5790,7 +5821,7 @@ function renderContinuePanel() {
     </section>
     <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
-    <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
+    <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
   `;
   const topicContext = els.continuePanel.querySelector(".continue-recommendation-card .continue-card-header p");
   if (topicContext) topicContext.classList.add("continue-topic-context");
@@ -9401,6 +9432,7 @@ function applyAppSnapshot(saved = {}) {
   let repairedCycleLabels = false;
   let repairedHistoricalDuplicates = 0;
   let repairedPrematureReviewBlocks = 0;
+  let repairedDuplicateCycleBlocks = 0;
   clearUnsavedChanges();
   try {
   resetPlanningAccess();
@@ -9440,6 +9472,7 @@ function applyAppSnapshot(saved = {}) {
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
+  repairedDuplicateCycleBlocks = pruneDuplicatePendingCycleBlocks();
   repairedPrematureReviewBlocks = prunePrematureReviewBlocksFromCurrentCycle();
   repairedCycleEntries = pruneTrailingEmptyCycleClosures();
   repairedReviewEntries = ensureReviewsArray();
@@ -9471,7 +9504,7 @@ function applyAppSnapshot(saved = {}) {
   activateTab(restoredTab);
   } finally {
     isRestoring = false;
-    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates || repairedPrematureReviewBlocks) scheduleAutoSave();
+    if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates || repairedDuplicateCycleBlocks || repairedPrematureReviewBlocks) scheduleAutoSave();
   }
 }
 

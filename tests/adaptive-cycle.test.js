@@ -67,6 +67,16 @@ assert.ok(cycle.blocks.reduce((sum, block) => sum + block.duracao, 0) <= 3, "O c
 assert.ok(cycle.blocks.every((block) => [0.5, 0.75, 1, 1.5, 2].includes(block.duracao)), "A duração deve usar faixas discretas.");
 assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[1], topic: "Tema longo com vários itens e exceções", activityType: "Revisão", referenceDuration: 1.5 }).minutes, 30, "Revisões curtas devem sugerir 30 minutos.");
 
+runtime.state.planningBase.materias = [{ materia: "Única", assuntos: ["Tema único"], peso: 5, dominio: 3 }];
+runtime.state.rows = [{ materia: "Única", assunto: "Tema único", estudar: "Sim", tamanhoEstimado: "Curto", blocosSugeridos: 1 }];
+runtime.state.generatedBlocks = [];
+runtime.state.completedHistory = [];
+runtime.state.cycleHistory = [];
+runtime.state.cycleResults = [];
+runtime.state.reviews = [];
+const noDuplicateCycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 3, duracaoBloco: 1.5 }, {});
+assert.strictEqual(noDuplicateCycle.blocks.length, 1, "Um tema com uma única parte não deve ser repetido para preencher a carga do ciclo.");
+
 runtime.state.planningBase.materias = [
   { materia: "Financeiro", assuntos: ["Receita"], peso: 3, dominio: 3 },
   { materia: "Português", assuntos: ["Sintaxe"], peso: 5, dominio: 3 },
