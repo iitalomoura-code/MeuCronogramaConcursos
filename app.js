@@ -7898,7 +7898,7 @@ function reviewCardMarkup(item) {
     actions.push(`<button class="text-action" type="button" data-review-postpone="${escapeHtml(item.id || "")}">Adiar</button>`);
     if (isAdaptiveReview(item)) actions.push(`<button class="text-action" type="button" data-adaptive-review-action="questions" data-adaptive-review-id="${escapeHtml(item.id || "")}">Quest\u00f5es</button>`);
     actions.push(`<button class="text-action" type="button" data-toggle-review-status="${escapeHtml(item.id || "")}">Concluir</button>`);
-    actions.push(`<button class="text-action danger-text" type="button" data-cancel-review="${escapeHtml(item.id || "")}">Cancelar</button>`);
+    actions.push(`<details class="review-more-actions"><summary class="review-more-toggle" aria-label="Mais ações" title="Mais ações"><i data-lucide="ellipsis"></i></summary><div class="review-more-menu"><button class="text-action danger-text" type="button" data-cancel-review="${escapeHtml(item.id || "")}">Cancelar</button></div></details>`);
   } else {
     actions.push(`<button class="ghost-button compact-button" type="button" data-review-history="${escapeHtml(item.id || "")}"><i data-lucide="history"></i><span>Ver hist\u00f3rico</span></button>`);
     if (isDone) actions.push(`<button class="text-action" type="button" data-toggle-review-status="${escapeHtml(item.id || "")}">Reabrir</button>`);
@@ -7919,7 +7919,7 @@ function reviewCardMarkup(item) {
         </div>
         <div class="review-card-reason"><strong>Motivo</strong><span>${escapeHtml(reviewReasonText(item))}</span></div>
         <div class="review-card-footer">
-          <span class="review-attempt-summary">${attempts.length ? `${attempts.length} tentativa${attempts.length === 1 ? "" : "s"}${latest ? ` · \u00faltima ${formatPercent(latest.percentual || 0)}` : ""}` : "Nenhuma tentativa registrada"}</span>
+          <span class="review-attempt-summary">${attempts.length ? `${latest ? `Última tentativa: ${formatPercent(latest.percentual || 0)} · ` : ""}${attempts.length} tentativa${attempts.length === 1 ? "" : "s"}` : "Nenhuma tentativa registrada"}</span>
           <div class="review-card-actions">${actions.join("")}</div>
         </div>
       </div>
