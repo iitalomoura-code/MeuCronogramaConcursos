@@ -3,6 +3,8 @@ const APP_STATE_KEY = "planejaConcursosEstado";
 const PLANS_INDEX_KEY = "planejaConcursosPlanos";
 const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
 const ACTIVE_CLOUD_PLAN_KEY = "meuCronogramaPlanoNuvemAtivo";
+const PLAN_SELECTION_VIEW_KEY = "meuCronogramaSelecaoCronograma";
+const SHOW_PLAN_SELECTION_AFTER_LOGIN_KEY = "meuCronogramaAbrirSelecaoAposLogin";
 const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
 const CLOUD_SAVE_DELAY = 1500;
 const FOCUS_SESSION_SAVE_DELAY = 700;
@@ -97,6 +99,7 @@ const state = {
   errors: [],
   notebook: {},
   activeFocusSession: null,
+  activeStudyPlanId: "",
   locked: false,
 };
 
@@ -168,6 +171,8 @@ let evolutionContext = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
+let planSelectionOpen = false;
+let planSelectionBusy = false;
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -183,6 +188,9 @@ const els = {
   mobileSaveButton: document.querySelector("#mobileSaveButton"),
   mobilePlanTitle: document.querySelector("#mobilePlanTitle"),
   mobileDrawerBackdrop: document.querySelector("#mobileDrawerBackdrop"),
+  planSelectionScreen: document.querySelector("#planSelectionScreen"),
+  planSelectionContent: document.querySelector("#planSelectionContent"),
+  returnToPlanSelectionButton: document.querySelector("#returnToPlanSelectionButton"),
   planSelect: document.querySelector("#planSelect"),
   planSwitcherButton: document.querySelector("#planSwitcherButton"),
   planPopover: document.querySelector("#planPopover"),
@@ -8989,6 +8997,7 @@ function restoreCloudCacheState() {
   state.dataSource = "cloud-cache";
   state.plans = [meta];
   state.currentPlanId = meta.id;
+  if (!planSelectionOpen) state.activeStudyPlanId = meta.id;
   state.cloudPlanVersion = meta.version;
   state.cloudPlanUpdatedAt = meta.updatedAt;
   renderPlanSelect();
@@ -9130,6 +9139,7 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   const record = await window.loadCloudPlan(planId);
   const meta = cloudPlanMeta(record);
   state.currentPlanId = meta.id;
+  if (!planSelectionOpen) state.activeStudyPlanId = meta.id;
   state.cloudPlanVersion = meta.version;
   state.cloudPlanUpdatedAt = meta.updatedAt;
   if (!state.plans.some((plan) => plan.id === meta.id)) state.plans.push(meta);
@@ -9146,7 +9156,7 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   return record;
 }
 
-async function initializeCloudPlanSource() {
+async function initializeCloudPlanSource({ loadActivePlan = true } = {}) {
   if (!cloudIsAvailable()) return false;
   try {
     const records = await window.listCloudPlans();
@@ -9168,7 +9178,15 @@ async function initializeCloudPlanSource() {
     state.plans = records.map(cloudPlanMeta);
     const rememberedId = localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
-    await loadCloudPlanIntoState(active.id, { restoreTab: true });
+    if (loadActivePlan) {
+      await loadCloudPlanIntoState(active.id, { restoreTab: true });
+    } else {
+      state.currentPlanId = state.plans.some((plan) => plan.id === state.currentPlanId) ? state.currentPlanId : active.id;
+      const current = state.plans.find((plan) => plan.id === state.currentPlanId);
+      state.cloudPlanVersion = Number(current?.version) || 0;
+      state.cloudPlanUpdatedAt = current?.updatedAt || "";
+      renderPlanSelect();
+    }
     return true;
   } catch {
     state.dataSource = "cloud-unavailable";
@@ -9269,6 +9287,166 @@ function planDisplayName(snapshot = captureAppState()) {
 
 function planVisibleName(plan = {}) {
   return plan.customName || plan.name || "Novo concurso";
+}
+
+function planSelectionStorageKey() {
+  const userId = window.authGate?.getAuthenticatedUser?.()?.id || "local";
+  return `${PLAN_SELECTION_VIEW_KEY}:${userId}`;
+}
+
+function shouldOpenPlanSelection() {
+  try {
+    if (sessionStorage.getItem(SHOW_PLAN_SELECTION_AFTER_LOGIN_KEY) === "true") return true;
+    return localStorage.getItem(planSelectionStorageKey()) !== "inside";
+  } catch {
+    return true;
+  }
+}
+
+function rememberPlanSelectionView(open) {
+  try {
+    localStorage.setItem(planSelectionStorageKey(), open ? "selection" : "inside");
+    if (!open) sessionStorage.removeItem(SHOW_PLAN_SELECTION_AFTER_LOGIN_KEY);
+  } catch {}
+}
+
+function planSnapshotForSelection(plan) {
+  if (!plan) return null;
+  if (plan.id === state.currentPlanId && state.rows.length) return captureAppState();
+  try {
+    const cache = JSON.parse(localStorage.getItem(cloudCacheKey(plan.id)) || "null");
+    if (cache?.data) return cache.data;
+    return JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function planSelectionSummary(plan) {
+  const snapshot = planSnapshotForSelection(plan) || {};
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+  const topics = rows.flatMap((row) => (row.topics || []).filter((topic) => topic?.selected !== false).map((topic) => ({
+    subject: row.subject || "",
+    topic: topic.title || topic.name || "",
+  }))).filter((topic) => topic.subject && topic.topic);
+  const topicKeys = new Set(topics.map((topic) => topicKey(topic.subject, topic.topic)));
+  const blocks = Array.isArray(snapshot.generatedBlocks) ? snapshot.generatedBlocks : [];
+  const completed = Array.isArray(snapshot.completedHistory) ? snapshot.completedHistory : [];
+  const history = Array.isArray(snapshot.cycleHistory) ? snapshot.cycleHistory : [];
+  const records = [...blocks, ...completed, ...history.flatMap((cycle) => cycle?.blocks || [])];
+  const contacted = new Set(records.filter((item) => {
+    const status = normalizeStatus(item?.status || item?.estado || "");
+    return status === "Concluído" || status === "Em andamento";
+  }).map((item) => topicKey(item.materia || item.subject || "", item.assunto || item.topic || "")).filter(Boolean));
+  const covered = [...topicKeys].filter((key) => contacted.has(key)).length;
+  const coverage = topics.length ? Math.round((covered / topics.length) * 100) : 0;
+  const timestamps = records.map((item) => item.concluidoEm || item.completedAt || item.updatedAt || item.savedAt || "").map((value) => new Date(value)).filter((date) => !Number.isNaN(date.getTime()));
+  const lastStudy = timestamps.sort((a, b) => b - a)[0];
+  return {
+    role: snapshot.form?.jobRole?.trim() || "Cargo não informado",
+    board: snapshot.form?.examBoardName || snapshot.form?.examBoard || "Banca não informada",
+    coverage,
+    hasContent: Boolean(topics.length),
+    lastStudy: lastStudy ? formatDateBR(lastStudy) : "Sem estudo registrado",
+  };
+}
+
+function planSelectionCardMarkup(plan) {
+  const summary = planSelectionSummary(plan);
+  return `<article class="plan-selection-card">
+    <button type="button" class="plan-selection-open" data-enter-study-plan="${escapeHtml(plan.id)}" aria-label="Abrir ${escapeHtml(planVisibleName(plan))}">
+      <span class="plan-selection-card-top"><span class="plan-selection-card-icon"><i data-lucide="book-open-check"></i></span><span class="plan-selection-coverage">${summary.coverage}% estudado</span></span>
+      <strong>${escapeHtml(planVisibleName(plan))}</strong>
+      <span class="plan-selection-role">${escapeHtml(summary.role)}</span>
+      <span class="plan-selection-board">${escapeHtml(summary.board)}</span>
+      <span class="plan-selection-card-footer">${summary.hasContent ? `${summary.coverage}% do conteúdo com contato` : "Pronto para configurar"}<small>Último estudo: ${escapeHtml(summary.lastStudy)}</small></span>
+    </button>
+    <details class="plan-selection-more">
+      <summary aria-label="Ações de ${escapeHtml(planVisibleName(plan))}"><i data-lucide="ellipsis"></i></summary>
+      <div class="plan-selection-more-menu">
+        <button type="button" data-plan-card-action="rename" data-plan-id="${escapeHtml(plan.id)}">Renomear</button>
+        <button type="button" data-plan-card-action="configure" data-plan-id="${escapeHtml(plan.id)}">Configurar</button>
+        <button type="button" data-plan-card-action="duplicate" data-plan-id="${escapeHtml(plan.id)}">Duplicar</button>
+        <button type="button" class="danger" data-plan-card-action="delete" data-plan-id="${escapeHtml(plan.id)}">Excluir</button>
+      </div>
+    </details>
+  </article>`;
+}
+
+function renderPlanSelection() {
+  if (!els.planSelectionContent) return;
+  const cards = state.plans.map(planSelectionCardMarkup).join("");
+  els.planSelectionContent.innerHTML = `${cards}<button type="button" class="plan-selection-create" data-create-plan-from-selection><span><i data-lucide="plus"></i></span><strong>Criar novo cronograma</strong><small>Comece um novo planejamento de estudos.</small></button>`;
+  if (window.lucide) window.lucide.createIcons({ nodes: [els.planSelectionContent] });
+}
+
+function openPlanSelectionScreen() {
+  if (!els.planSelectionScreen) return;
+  closeSettingsMenu();
+  closePlanPopover();
+  closeMobileDrawer({ restoreFocus: false });
+  planSelectionOpen = true;
+  state.activeStudyPlanId = "";
+  rememberPlanSelectionView(true);
+  renderPlanSelection();
+  els.planSelectionScreen.hidden = false;
+  document.body.classList.add("plan-selection-open");
+  window.requestAnimationFrame(() => els.planSelectionScreen.classList.add("is-visible"));
+  window.setTimeout(() => els.planSelectionContent?.querySelector("[data-enter-study-plan], [data-create-plan-from-selection]")?.focus(), 0);
+}
+
+function closePlanSelectionScreen() {
+  if (!els.planSelectionScreen) return;
+  planSelectionOpen = false;
+  rememberPlanSelectionView(false);
+  els.planSelectionScreen.classList.remove("is-visible");
+  document.body.classList.remove("plan-selection-open");
+  window.setTimeout(() => {
+    if (!planSelectionOpen) els.planSelectionScreen.hidden = true;
+  }, 180);
+}
+
+async function enterStudyPlan(planId, { tab = "continuar" } = {}) {
+  if (!planId || planSelectionBusy) return;
+  const plan = state.plans.find((item) => item.id === planId);
+  if (!plan) return;
+  planSelectionBusy = true;
+  const trigger = [...(els.planSelectionContent?.querySelectorAll("[data-enter-study-plan]") || [])]
+    .find((button) => button.dataset.enterStudyPlan === planId);
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.dataset.loading = "true";
+  }
+  try {
+    if (state.dataSource === "cloud" && cloudIsAvailable()) {
+      await loadCloudPlanIntoState(planId, { restoreTab: false });
+    } else if (state.currentPlanId !== planId) {
+      await switchPlan(planId);
+    }
+    state.activeStudyPlanId = planId;
+    closePlanSelectionScreen();
+    switchTab(tab);
+  } catch {
+    showToast("Não foi possível abrir este cronograma agora.");
+  } finally {
+    planSelectionBusy = false;
+    if (trigger) {
+      trigger.disabled = false;
+      delete trigger.dataset.loading;
+    }
+  }
+}
+
+async function handlePlanSelectionAction(action, planId) {
+  if (!action || !planId) return;
+  if (action === "configure") {
+    await enterStudyPlan(planId, { tab: "concurso" });
+    return;
+  }
+  await enterStudyPlan(planId);
+  if (action === "rename") renameCurrentPlan();
+  if (action === "duplicate") openDuplicatePlanModal();
+  if (action === "delete") openDeletePlanModal();
 }
 
 function readPlansIndex() {
@@ -9965,6 +10143,7 @@ async function switchPlan(planId) {
   }
   saveAppStateNow("Salvo");
   state.currentPlanId = planId;
+  if (!planSelectionOpen) state.activeStudyPlanId = planId;
   localStorage.setItem(ACTIVE_PLAN_KEY, planId);
   renderPlanSelect();
   const raw = localStorage.getItem(planStorageKey(planId));
@@ -10046,6 +10225,8 @@ async function createNewPlan() {
       renderPlanSelect();
       applyAppSnapshot(snapshot);
       updateSaveStatus({ state: "saved", destination: "cloud", message: "Novo planejamento criado" });
+      state.activeStudyPlanId = meta.id;
+      closePlanSelectionScreen();
       switchTab("conteudo");
     } catch {
       updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível criar o planejamento online." });
@@ -10062,6 +10243,8 @@ async function createNewPlan() {
   renderPlanSelect();
   applyAppSnapshot(snapshot);
   saveAppStateNow("Novo concurso criado");
+  state.activeStudyPlanId = plan.id;
+  closePlanSelectionScreen();
   switchTab("conteudo");
 }
 
@@ -10356,7 +10539,26 @@ els.planPopover?.addEventListener("click", (event) => {
 });
 els.openPlanSwitcherButton?.addEventListener("click", () => {
   closeSettingsMenu();
-  togglePlanPopover();
+  openPlanSelectionScreen();
+});
+els.returnToPlanSelectionButton?.addEventListener("click", openPlanSelectionScreen);
+els.mobilePlanTitle?.addEventListener("click", openPlanSelectionScreen);
+els.planSelectionContent?.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-enter-study-plan]");
+  if (open) {
+    enterStudyPlan(open.dataset.enterStudyPlan);
+    return;
+  }
+  if (event.target.closest("[data-create-plan-from-selection]")) {
+    openNewPlanModal();
+    return;
+  }
+  const action = event.target.closest("[data-plan-card-action]");
+  if (action) handlePlanSelectionAction(action.dataset.planCardAction, action.dataset.planId);
+});
+document.querySelector("[data-plan-selection-theme]")?.addEventListener("click", () => {
+  const nextTheme = document.documentElement.dataset.theme === "night" ? "day" : "night";
+  applyThemePreference(nextTheme);
 });
 els.openManagePlanButton?.addEventListener("click", openManagePlanModal);
 els.contestPlanMenuButton?.addEventListener("click", openManagePlanModal);
@@ -11754,7 +11956,8 @@ async function startMeuCronogramaApp() {
     updateSidebarActiveIndicator();
     animatePanelNumbers(getActiveTabName());
   });
-  void initializeCloudPlanSource().then((loadedFromCloud) => {
+  const openSelectorAfterLoad = shouldOpenPlanSelection();
+  void initializeCloudPlanSource({ loadActivePlan: !openSelectorAfterLoad }).then((loadedFromCloud) => {
     const cloudUnavailable = state.dataSource === "cloud-unavailable";
     if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredFromCloudCache)) {
       const restoredLegacy = restoreAppState({ preserveDataSource: cloudUnavailable, preferCloudCache: false });
@@ -11769,6 +11972,11 @@ async function startMeuCronogramaApp() {
     }
     scheduleLocalMigrationPrompt();
     renderBackupReminder();
+    if (openSelectorAfterLoad || shouldOpenPlanSelection()) {
+      openPlanSelectionScreen();
+    } else if (state.currentPlanId) {
+      state.activeStudyPlanId = state.currentPlanId;
+    }
   });
 }
 
