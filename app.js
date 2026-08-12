@@ -3,6 +3,9 @@ const APP_STATE_KEY = "planejaConcursosEstado";
 const PLANS_INDEX_KEY = "planejaConcursosPlanos";
 const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
 const ACTIVE_CLOUD_PLAN_KEY = "meuCronogramaPlanoNuvemAtivo";
+const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
+const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
+const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
 const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
 const CLOUD_SAVE_DELAY = 1500;
 const FOCUS_SESSION_SAVE_DELAY = 700;
@@ -80,6 +83,7 @@ const state = {
   contentOriginalRows: [],
   pendingContentMigrationBackup: null,
   currentPlanId: "",
+  activeStudyPlanId: "",
   plans: [],
   dataSource: "local-migration",
   cloudPlanVersion: 0,
@@ -9130,11 +9134,13 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   const record = await window.loadCloudPlan(planId);
   const meta = cloudPlanMeta(record);
   state.currentPlanId = meta.id;
+  state.activeStudyPlanId = meta.id;
   state.cloudPlanVersion = meta.version;
   state.cloudPlanUpdatedAt = meta.updatedAt;
   if (!state.plans.some((plan) => plan.id === meta.id)) state.plans.push(meta);
   else updateCloudPlanMeta(record);
   localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
+  localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
   saveCloudCache(record);
   renderPlanSelect();
   applyAppSnapshot(record.data || blankAppSnapshot(meta.name));
@@ -9166,7 +9172,7 @@ async function initializeCloudPlanSource() {
     }
     state.dataSource = "cloud";
     state.plans = records.map(cloudPlanMeta);
-    const rememberedId = localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
+    const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
     await loadCloudPlanIntoState(active.id, { restoreTab: true });
     return true;
@@ -9965,6 +9971,8 @@ async function switchPlan(planId) {
   }
   saveAppStateNow("Salvo");
   state.currentPlanId = planId;
+  state.activeStudyPlanId = planId;
+  localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, planId);
   localStorage.setItem(ACTIVE_PLAN_KEY, planId);
   renderPlanSelect();
   const raw = localStorage.getItem(planStorageKey(planId));
@@ -10039,8 +10047,10 @@ async function createNewPlan() {
       const meta = cloudPlanMeta(record);
       state.plans.push(meta);
       state.currentPlanId = meta.id;
+      state.activeStudyPlanId = meta.id;
       state.cloudPlanVersion = meta.version;
       localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
+      localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
       saveCloudCache(record, snapshot);
       closeNewPlanModal();
       renderPlanSelect();
@@ -10055,8 +10065,10 @@ async function createNewPlan() {
   }
   state.plans.push(plan);
   state.currentPlanId = plan.id;
+  state.activeStudyPlanId = plan.id;
   writePlansIndex();
   localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
+  localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, plan.id);
   localStorage.setItem(planStorageKey(plan.id), JSON.stringify(snapshot));
   closeNewPlanModal();
   renderPlanSelect();
@@ -10356,7 +10368,7 @@ els.planPopover?.addEventListener("click", (event) => {
 });
 els.openPlanSwitcherButton?.addEventListener("click", () => {
   closeSettingsMenu();
-  togglePlanPopover();
+  window.location.href = "./plans.html";
 });
 els.openManagePlanButton?.addEventListener("click", openManagePlanModal);
 els.contestPlanMenuButton?.addEventListener("click", openManagePlanModal);
@@ -11735,6 +11747,13 @@ let appInitializationStarted = false;
 async function startMeuCronogramaApp() {
   if (appInitializationStarted) return;
   appInitializationStarted = true;
+  const entryAction = sessionStorage.getItem(APP_ENTRY_ACTION_KEY) || "";
+  const activeStudyPlanId = localStorage.getItem(ACTIVE_STUDY_PLAN_KEY) || "";
+  if (!activeStudyPlanId && entryAction !== "new") {
+    window.location.replace("./plans.html");
+    return;
+  }
+  state.activeStudyPlanId = activeStudyPlanId;
   renderDailyInputs();
   applyThemePreference();
   defaultReferenceWeek();
@@ -11769,6 +11788,16 @@ async function startMeuCronogramaApp() {
     }
     scheduleLocalMigrationPrompt();
     renderBackupReminder();
+    const requestedTab = sessionStorage.getItem(APP_ENTRY_TAB_KEY) || "";
+    sessionStorage.removeItem(APP_ENTRY_TAB_KEY);
+    sessionStorage.removeItem(APP_ENTRY_ACTION_KEY);
+    if (entryAction === "new") {
+      openNewPlanModal();
+    } else if (entryAction === "duplicate") {
+      openDuplicatePlanModal();
+    } else if (requestedTab) {
+      switchTab(requestedTab);
+    }
   });
 }
 

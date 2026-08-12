@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Seus cronogramas | Meu Cronograma Concursos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";</script>
+    <link rel="stylesheet" href="./plans.css?v=20260812-plan-page" />
+    <script src="./vendor/lucide.min.js"></script>
+  </head>
+  <body class="auth-pending plans-page" data-auth-page="plans">
+    <div id="authLoadingScreen" class="plans-auth-loading" role="status" aria-live="polite">
+      <span></span><strong>Verificando acesso...</strong>
+    </div>
+
+    <main id="plansMain" class="plans-shell" hidden>
+      <header class="plans-topbar">
+        <a class="plans-brand" href="./plans.html" aria-label="Meu Cronograma Concursos">
+          <strong>Meu Cronograma</strong>
+          <span>Concursos</span>
+        </a>
+        <div class="plans-topbar-actions">
+          <button id="plansThemeButton" class="plans-icon-button" type="button" aria-label="Alternar modo de cor"><i data-lucide="moon"></i></button>
+          <button id="plansSignOutButton" class="plans-account-button" type="button"><i data-lucide="log-out"></i><span>Sair</span></button>
+        </div>
+      </header>
+
+      <section class="plans-intro" aria-labelledby="plansTitle">
+        <p id="plansGreeting" class="plans-greeting">Olá</p>
+        <h1 id="plansTitle">Seus cronogramas</h1>
+        <p>Escolha um cronograma para continuar seus estudos.</p>
+      </section>
+
+      <p id="plansFeedback" class="plans-feedback" role="status" hidden></p>
+
+      <section id="plansGrid" class="plans-grid" aria-live="polite">
+        <div id="plansLoading" class="plans-loading-card" role="status">
+          <span></span>
+          <strong>Carregando seus cronogramas...</strong>
+        </div>
+        <button id="createPlanCard" class="create-plan-card" type="button">
+          <span class="create-plan-icon"><i data-lucide="plus"></i></span>
+          <strong>Criar novo cronograma</strong>
+          <small>Comece um novo planejamento de estudos.</small>
+        </button>
+      </section>
+    </main>
+
+    <div id="planActionModal" class="plans-modal" hidden role="dialog" aria-modal="true" aria-labelledby="planActionTitle">
+      <button class="plans-modal-backdrop" type="button" data-close-plan-action aria-label="Fechar"></button>
+      <section class="plans-modal-dialog">
+        <h2 id="planActionTitle">Editar cronograma</h2>
+        <p id="planActionMessage"></p>
+        <label id="planActionField">Nome do cronograma<input id="planActionInput" type="text" /></label>
+        <div class="plans-modal-actions">
+          <button class="plans-button secondary" type="button" data-close-plan-action>Cancelar</button>
+          <button id="confirmPlanActionButton" class="plans-button primary" type="button">Confirmar</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js?v=20260717-cloud-sync"></script>
+    <script src="./auth.js?v=20260812-plan-page"></script>
+    <script src="./cloud-storage.js?v=20260717-cloud-refresh"></script>
+    <script src="./plans.js?v=20260812-plan-page"></script>
+  </body>
+</html>

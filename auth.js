@@ -1,6 +1,7 @@
 (function initializeAuthentication() {
   const LOGIN_PAGE = "./login.html";
   const APP_PAGE = "./index.html";
+  const PLANS_PAGE = "./plans.html";
   let authSubscription = null;
   let authenticatedState = { user: null, session: null };
 
@@ -16,6 +17,10 @@
 
   function currentPage() {
     return document.body?.dataset.authPage || "";
+  }
+
+  function isProtectedPage() {
+    return currentPage() === "app" || currentPage() === "plans";
   }
 
   function safeRedirect(path) {
@@ -75,7 +80,7 @@
 
   function releaseProtectedApplication(user, session) {
     authenticatedState = { user: user || null, session: session || null };
-    if (currentPage() !== "app") return;
+    if (!isProtectedPage()) return;
     document.body.classList.remove("auth-pending");
     document.body.classList.add("auth-verified");
     window.dispatchEvent(new CustomEvent("auth:ready", { detail: authenticatedState }));
@@ -94,21 +99,21 @@
 
   async function redirectAuthenticatedUser() {
     const result = await getCurrentUser();
-    if (result.user) safeRedirect(APP_PAGE);
+    if (result.user) safeRedirect(PLANS_PAGE);
     return result.user || null;
   }
 
   function watchAuthState() {
     if (!isConfigured() || authSubscription) return authSubscription;
     const { data } = window.supabaseClient.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" && currentPage() === "app") {
+      if (event === "SIGNED_OUT" && isProtectedPage()) {
         authenticatedState = { user: null, session: null };
         safeRedirect(LOGIN_PAGE);
         return;
       }
       if (session?.user) {
         authenticatedState = { user: session.user, session };
-        if (currentPage() === "app") releaseProtectedApplication(session.user, session);
+        if (isProtectedPage()) releaseProtectedApplication(session.user, session);
       }
     });
     authSubscription = data?.subscription || null;
@@ -186,7 +191,7 @@
         return;
       }
       setLoginMessage("");
-      safeRedirect(APP_PAGE);
+      safeRedirect(PLANS_PAGE);
     });
   }
 
@@ -207,7 +212,7 @@
   if (currentPage() === "login") {
     prepareLoginPage();
     void redirectAuthenticatedUser();
-  } else if (currentPage() === "app") {
+  } else if (isProtectedPage()) {
     void requireAuthenticatedUser();
   }
 })();

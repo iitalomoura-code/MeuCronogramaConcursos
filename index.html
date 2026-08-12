@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260811-cycle-duplicates" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-plan-page" />
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -70,7 +70,7 @@
             </div>
           </div>
         </div>
-        <div class="sidebar-plan">
+        <div class="sidebar-plan sidebar-plan-hidden" aria-hidden="true">
           <span class="sidebar-plan-label">Planejamento atual</span>
           <button id="planSwitcherButton" class="plan-switcher-button" type="button" aria-label="Trocar planejamento" aria-expanded="false" aria-controls="planPopover">
             <span class="plan-switcher-copy"><strong id="activePlanName">Novo concurso</strong><small id="activePlanRole" hidden></small></span>
@@ -96,6 +96,7 @@
           </section>
         </nav>
         <div class="sidebar-footer">
+          <a class="sidebar-switch-plan-link" href="./plans.html"><i data-lucide="repeat-2"></i><span>Trocar cronograma</span></a>
           <div class="status-pill" id="confirmationStatus">Aguardando cadastro</div>
         </div>
       </aside>
@@ -697,7 +698,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=20260717-cloud-sync"></script>
-    <script src="./auth.js?v=20260801-cloud-primary-cache"></script>
+    <script src="./auth.js?v=20260812-plan-page"></script>
     <script src="./cloud-storage.js?v=20260717-cloud-refresh"></script>
     <script src="./js/adaptive-review.js?v=20260716-plan-switcher"></script>
     <script src="./js/pedagogical-grouping.js?v=20260801-subject-taxonomy"></script>
@@ -705,7 +706,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./data/incidence/fgv-incidence-base-v1.js?v=20260805-incidence-fgv"></script>
     <script src="./js/incidence.js?v=20260805-incidence-fgv"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260811-cycle-duplicates"></script>
+    <script src="./app.js?v=20260812-plan-page"></script>
   </body>
 </html>
 

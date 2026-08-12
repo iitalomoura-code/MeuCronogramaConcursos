@@ -10680,3 +10680,34 @@ textarea:focus {
     min-width: min(190px, calc(100vw - 38px));
   }
 }
+
+/* Cronograma selection now lives on a lightweight page. */
+.sidebar-plan-hidden {
+  display: none !important;
+}
+
+.sidebar-switch-plan-link {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--sidebar-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.sidebar-switch-plan-link:hover,
+.sidebar-switch-plan-link:focus-visible {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text);
+  outline: none;
+}
+
+.sidebar-switch-plan-link svg {
+  width: 15px;
+  height: 15px;
+}
