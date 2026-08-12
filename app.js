@@ -9325,7 +9325,7 @@ function planSnapshotForSelection(plan) {
 function planSelectionSummary(plan) {
   const snapshot = planSnapshotForSelection(plan) || {};
   const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
-  const topics = rows.flatMap((row) => (Array.isArray(row?.topics) ? row.topics : []).filter((topic) => topic?.selected !== false).map((topic) => ({
+  const topics = rows.flatMap((row) => (row.topics || []).filter((topic) => topic?.selected !== false).map((topic) => ({
     subject: row.subject || "",
     topic: topic.title || topic.name || "",
   }))).filter((topic) => topic.subject && topic.topic);
@@ -9333,7 +9333,7 @@ function planSelectionSummary(plan) {
   const blocks = Array.isArray(snapshot.generatedBlocks) ? snapshot.generatedBlocks : [];
   const completed = Array.isArray(snapshot.completedHistory) ? snapshot.completedHistory : [];
   const history = Array.isArray(snapshot.cycleHistory) ? snapshot.cycleHistory : [];
-  const records = [...blocks, ...completed, ...history.flatMap((cycle) => Array.isArray(cycle?.blocks) ? cycle.blocks : [])];
+  const records = [...blocks, ...completed, ...history.flatMap((cycle) => cycle?.blocks || [])];
   const contacted = new Set(records.filter((item) => {
     const status = normalizeStatus(item?.status || item?.estado || "");
     return status === "Concluído" || status === "Em andamento";
@@ -9375,22 +9375,13 @@ function planSelectionCardMarkup(plan) {
 
 function renderPlanSelection() {
   if (!els.planSelectionContent) return;
-  const plans = Array.isArray(state.plans) ? state.plans : [];
-  const cards = plans.map((plan) => {
-    try {
-      return planSelectionCardMarkup(plan);
-    } catch (error) {
-      console.error("Falha ao resumir cronograma na seleção:", error);
-      return `<article class="plan-selection-card plan-selection-card-fallback"><button type="button" class="plan-selection-open" data-enter-study-plan="${escapeHtml(plan?.id || "")}"><span class="plan-selection-card-icon"><i data-lucide="book-open-check"></i></span><strong>${escapeHtml(planVisibleName(plan || {}))}</strong><span class="plan-selection-role">Cronograma disponível para continuar</span></button></article>`;
-    }
-  }).join("");
+  const cards = state.plans.map(planSelectionCardMarkup).join("");
   els.planSelectionContent.innerHTML = `${cards}<button type="button" class="plan-selection-create" data-create-plan-from-selection><span><i data-lucide="plus"></i></span><strong>Criar novo cronograma</strong><small>Comece um novo planejamento de estudos.</small></button>`;
-  renderLucideIcons(els.planSelectionContent);
+  if (window.lucide) window.lucide.createIcons({ nodes: [els.planSelectionContent] });
 }
 
 function openPlanSelectionScreen() {
   if (!els.planSelectionScreen) return;
-  if (planSelectionOpen && !els.planSelectionScreen.hidden) return;
   closeSettingsMenu();
   closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
@@ -9400,7 +9391,7 @@ function openPlanSelectionScreen() {
   renderPlanSelection();
   els.planSelectionScreen.hidden = false;
   document.body.classList.add("plan-selection-open");
-  els.planSelectionScreen.classList.add("is-visible");
+  window.requestAnimationFrame(() => els.planSelectionScreen.classList.add("is-visible"));
   window.setTimeout(() => els.planSelectionContent?.querySelector("[data-enter-study-plan], [data-create-plan-from-selection]")?.focus(), 0);
 }
 

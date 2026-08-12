@@ -7032,12 +7032,13 @@ body.auth-verified .auth-loading-screen {
   overflow: auto;
   background: var(--bg-main);
   color: var(--text);
-  opacity: 1;
-  transform: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .plan-selection-screen[hidden] { display: none; }
-.plan-selection-screen.is-visible { opacity: 1; transform: none; }
+.plan-selection-screen.is-visible { opacity: 1; transform: translateY(0); }
 
 body.plan-selection-open { overflow: hidden; }
 body.plan-selection-open .app-shell,
