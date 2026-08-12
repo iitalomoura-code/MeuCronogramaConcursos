@@ -6556,9 +6556,16 @@ body.auth-verified .auth-loading-screen {
   max-width: 300px;
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.45;
+}
+
+.institutional-slogan.institutional-slogan {
+  font-family: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 300;
+  font-style: normal;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .login-card h1 {

@@ -13,6 +13,12 @@ const styles = read("styles.css");
 const plansStyles = read("plans.css");
 const component = read("js/brand-logo.js");
 
+assert.ok(index.includes('class="brand-tagline institutional-slogan"'), "O slogan da sidebar deve reutilizar a classe institucional.");
+assert.ok(login.includes('class="brand-slogan institutional-slogan"'), "O slogan do login deve reutilizar a classe institucional.");
+assert.ok(plans.includes('class="institutional-slogan"'), "O slogan da selecao deve reutilizar a classe institucional.");
+assert.ok(styles.includes('font-family: "Source Sans 3", "Segoe UI", Arial, sans-serif;'), "O slogan deve usar Source Sans 3 com fallback local.");
+assert.ok(styles.includes("font-weight: 300"), "O slogan deve usar apenas o peso Light.");
+
 assert.ok(index.includes('<brand-logo class="brand-logo" variant="compact"></brand-logo>'), "A sidebar deve usar o componente de marca compacto.");
 assert.ok(index.includes('js/brand-logo.js?v=20260812-brand-logo'), "O componente deve ser carregado com cache-busting.");
 assert.ok(component.includes('customElements.define("brand-logo", BrandLogo)'), "A marca deve ser registrada como Web Component.");
