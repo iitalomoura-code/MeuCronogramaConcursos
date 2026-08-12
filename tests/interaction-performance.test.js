@@ -15,7 +15,7 @@ assert.ok(app.includes("void persistFocusedSession({ label: \"Cronômetro inicia
 assert.ok(app.includes("if (getActiveTabName() === \"continuar\") renderContinuePanel();"), "O resultado do modo foco deve atualizar somente o painel necessário.");
 assert.ok(app.includes("if (focusedStudyIndex < 0) removeFocusedStudyOverlay();"), "O modo foco não deve reabrir automaticamente ao renderizar a tela Continuar.");
 assert.ok(!app.includes("renderAppViews();\n  applyLockState();\n  const restoredTab"), "A restauração não deve renderizar todos os painéis antes da aba ativa.");
-assert.ok(app.includes("void initializeCloudPlanSource({ loadActivePlan: !openSelectorAfterLoad }).then"), "A sincronização remota deve iniciar sem bloquear a primeira tela.");
+assert.ok(app.includes("void initializeCloudPlanSource().then"), "A sincronização remota deve iniciar sem bloquear a primeira tela.");
 assert.ok(app.includes("function shouldShowToast"), "Avisos de rotina devem ser filtrados antes de criar elementos na tela.");
 assert.ok(app.includes("function renderLucideIcons(root = document)"), "A renderização de ícones deve aceitar um painel específico.");
 assert.ok(app.includes("renderLucideIcons(els.continuePanel);"), "A tela Continuar não deve varrer o documento inteiro ao atualizar seus ícones.");

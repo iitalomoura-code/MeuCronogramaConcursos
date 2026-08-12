@@ -186,7 +186,6 @@
         return;
       }
       setLoginMessage("");
-      try { sessionStorage.setItem("meuCronogramaAbrirSelecaoAposLogin", "true"); } catch {}
       safeRedirect(APP_PAGE);
     });
   }
