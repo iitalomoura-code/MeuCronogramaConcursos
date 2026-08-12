@@ -11,7 +11,8 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260812-plan-page" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-brand-logo" />
+    <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
   </head>
@@ -37,7 +38,7 @@
       <aside id="appSidebar" class="sidebar" aria-label="Navegação principal">
         <div class="brand sidebar-identity">
           <div class="brand-top">
-            <h1 class="brand-logo"><span>Meu Cronograma</span><span>Concursos</span></h1>
+            <brand-logo class="brand-logo" variant="compact"></brand-logo>
             <div class="brand-controls">
               <button id="themeToggleButton" class="sidebar-icon-button" type="button" aria-label="Alternar modo noite"><i data-lucide="moon"></i></button>
               <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir dados e backup" aria-expanded="false"><i data-lucide="settings"></i></button>
@@ -706,7 +707,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./data/incidence/fgv-incidence-base-v1.js?v=20260805-incidence-fgv"></script>
     <script src="./js/incidence.js?v=20260805-incidence-fgv"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260812-plan-page"></script>
+    <script src="./app.js?v=20260812-brand-logo"></script>
   </body>
 </html>
 
