@@ -8,14 +8,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script>document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";</script>
-    <link rel="stylesheet" href="./styles.css?v=20260717-auth" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-brand-slogan" />
+    <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
   </head>
   <body class="auth-page" data-auth-page="login">
     <main class="login-shell">
       <section class="login-card" aria-labelledby="loginTitle">
-        <div class="login-brand">
-          <span>Meu Cronograma</span>
-          <strong>Concursos</strong>
+        <div class="login-brand-area">
+          <brand-logo variant="default"></brand-logo>
+          <p class="brand-slogan">Seu edital em ciclos inteligentes de estudo.</p>
         </div>
         <div>
           <p class="section-kicker">Acesse seu planejamento</p>

@@ -75,24 +75,42 @@ body.auth-verified .plans-auth-loading { display: none; }
 }
 
 .plans-topbar {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 24px;
-  margin-bottom: 68px;
+  margin-bottom: 58px;
+}
+
+.plans-brand-area {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
 }
 
 .plans-brand {
-  display: grid;
-  gap: 2px;
-  color: var(--text);
+  display: inline-flex;
   text-decoration: none;
 }
 
-.plans-brand strong { font-size: 18px; letter-spacing: -.02em; }
-.plans-brand span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.plans-brand-area > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
 
-.plans-topbar-actions { display: flex; align-items: center; gap: 8px; }
+.plans-topbar-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .plans-icon-button,
 .plans-account-button {
@@ -228,7 +246,7 @@ body.auth-verified .plans-auth-loading { display: none; }
 
 @media (max-width: 620px) {
   .plans-shell { width: min(100% - 30px, 520px); padding-top: 18px; }
-  .plans-topbar { margin-bottom: 44px; }
+  .plans-topbar { margin-bottom: 44px; padding-top: 50px; }
   .plans-account-button span { display: none; }
   .plans-account-button { width: 38px; padding: 0; }
   .plans-grid { grid-template-columns: 1fr; gap: 13px; }
