@@ -7,7 +7,7 @@ const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
 const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
 const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
 const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
-const CLOUD_SAVE_DELAY = 1500;
+const CLOUD_SAVE_DELAY = 3000;
 const FOCUS_SESSION_SAVE_DELAY = 700;
 const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
 const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
@@ -117,6 +117,9 @@ let saveTimer = 0;
 let cloudSaveTimer = 0;
 let cloudSavePromise = null;
 let cloudSaveQueued = false;
+let pendingCloudCacheWrite = null;
+let cloudCacheWriteHandle = 0;
+let cloudCacheWriteUsesIdleCallback = false;
 let cloudConflictOpen = false;
 let cloudRefreshPromise = null;
 let lastCloudVersionCheckAt = 0;
@@ -1527,7 +1530,7 @@ function animatePanelNumbers(tabName) {
 }
 
 function renderActiveTabContent(tabName) {
-  if (tabName === "conteudo") safeRender("Conteúdo Programático", renderEditalMap);
+  if (tabName === "conteudo") safeRender("Conteúdo Programático", () => renderRows({ preserveState: true }));
   if (tabName === "continuar") safeRender("Continuar", renderContinuePanel, renderContinueError);
   if (tabName === "cronograma") safeRender("Ciclo atual", renderGeneratedSchedule);
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
@@ -1539,6 +1542,17 @@ function renderActiveTabContent(tabName) {
   if (tabName === "configuracoes" && els.settingsBackupStatus) {
     els.settingsBackupStatus.textContent = els.backupReminderStatus?.textContent || "Nenhum backup registrado neste navegador.";
   }
+}
+
+function stopGoalTimerInterval() {
+  if (!goalTimerInterval) return;
+  clearInterval(goalTimerInterval);
+  goalTimerInterval = null;
+}
+
+function syncGoalTimerIntervalForTab(tabName) {
+  if (tabName === "cronograma") ensureGoalTimerInterval();
+  else stopGoalTimerInterval();
 }
 
 function scheduleActiveTabRender(tabName) {
@@ -1568,6 +1582,7 @@ function activateTab(tabName, activeButton = null) {
   if (tabName === "revisar-planejamento") renderPlanningReview();
   updatePlanningContext(tabName);
   renderSetupProgress();
+  syncGoalTimerIntervalForTab(tabName);
   if (tabName !== "continuar") removeFocusedStudyOverlay();
   scheduleActiveTabRender(tabName);
   requestAnimationFrame(() => {
@@ -2504,8 +2519,13 @@ function renderRows(options = {}) {
   updateSelectAllControl();
   renderContentSummary();
   updateContentFlowSteps();
-  renderEditalMap();
-  if (window.lucide) window.lucide.createIcons();
+  if (getActiveTabName() === "evolucao") renderEditalMap();
+  renderLucideIcons(els.topicsBody);
+  if (state.locked) {
+    els.topicsBody.querySelectorAll("input, select, textarea, button").forEach((field) => {
+      if (!field.hasAttribute("data-lock-exempt")) field.disabled = true;
+    });
+  }
   if (isRestoring || options.preserveState) return;
   markUnconfirmed();
 }
@@ -5326,7 +5346,7 @@ function updateFocusedTimerDisplay() {
     if (toggle.dataset.timerState !== label) {
       toggle.dataset.timerState = label;
       toggle.innerHTML = "<i data-lucide=\"" + (session.status === "running" ? "pause" : "play") + "\"></i><span>" + label + "</span>";
-      if (window.lucide) window.lucide.createIcons();
+      renderLucideIcons(toggle);
     }
   }
 }
@@ -5637,10 +5657,6 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
   renderFocusedStudyOverlay();
-  // Atualiza o painel de fundo depois que o modo foco já respondeu ao clique.
-  window.setTimeout(() => {
-    if (focusedStudyIndex === index) renderContinuePanel();
-  }, 0);
 }
 
 function recordReviewAttempt(reviewId, block, draft, outcome) {
@@ -6248,11 +6264,7 @@ function saveStudyResult({
   syncBlockReviewRecords(block);
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
   updateBlockAccuracy(block);
-  renderContinuePanel();
-  renderCompleted();
-  renderReviews();
-  renderEvolution();
-  renderWeeklyResult();
+  updateNavigationState();
   if (persist) saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
   return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
 }
@@ -8921,6 +8933,7 @@ function goalTimerMarkup(block, index) {
 }
 
 function updateVisibleGoalTimers() {
+  if (getActiveTabName() !== "cronograma") return;
   let finishedAny = false;
   let iconChanged = false;
   state.generatedBlocks.forEach((block, index) => {
@@ -8946,7 +8959,7 @@ function updateVisibleGoalTimers() {
     }
   });
   if (finishedAny) saveAppStateNow("Tempo finalizado");
-  if (iconChanged && window.lucide) window.lucide.createIcons();
+  if (iconChanged) renderLucideIcons(els.scheduleWrap);
 }
 
 function ensureGoalTimerInterval() {
@@ -9120,6 +9133,36 @@ function saveCloudCache(record, snapshot = record?.data) {
   } catch {}
 }
 
+function cancelScheduledCloudCacheWrite() {
+  if (!cloudCacheWriteHandle) return;
+  if (cloudCacheWriteUsesIdleCallback && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(cloudCacheWriteHandle);
+  } else {
+    clearTimeout(cloudCacheWriteHandle);
+  }
+  cloudCacheWriteHandle = 0;
+  cloudCacheWriteUsesIdleCallback = false;
+}
+
+function scheduleCloudCacheWrite(record, snapshot = record?.data) {
+  if (!record?.id || !snapshot) return;
+  pendingCloudCacheWrite = { record, snapshot };
+  cancelScheduledCloudCacheWrite();
+  const writeLatest = () => {
+    cloudCacheWriteHandle = 0;
+    cloudCacheWriteUsesIdleCallback = false;
+    const pending = pendingCloudCacheWrite;
+    pendingCloudCacheWrite = null;
+    if (pending) saveCloudCache(pending.record, pending.snapshot);
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    cloudCacheWriteUsesIdleCallback = true;
+    cloudCacheWriteHandle = window.requestIdleCallback(writeLatest, { timeout: 5000 });
+  } else {
+    cloudCacheWriteHandle = window.setTimeout(writeLatest, 800);
+  }
+}
+
 function restoreCloudCacheState() {
   const cache = readCloudCache();
   if (!cache) return false;
@@ -9281,9 +9324,9 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   else updateCloudPlanMeta(record);
   localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
   localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
-  saveCloudCache(record);
-  renderPlanSelect();
   applyAppSnapshot(record.data || blankAppSnapshot(meta.name));
+  renderPlanSelect();
+  scheduleCloudCacheWrite(record);
   updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
   if (preserveCurrentTab) {
     const currentTarget = [...els.tabs].find((button) => button.dataset.tabTarget === currentTab);
@@ -9607,7 +9650,6 @@ function applyAppSnapshot(saved = {}) {
   state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows
     ? saved.pendingContentMigrationBackup
     : null;
-  renderRows();
   updateContentFlowSteps();
 
   state.confirmed = Boolean(saved.confirmed);
@@ -9651,7 +9693,6 @@ function applyAppSnapshot(saved = {}) {
   updateContestSummary();
   if (state.planningBase) {
     ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
-    renderPlanningBase();
   }
   if (state.generatedBlocks.length) {
     setTabEnabled("cronograma", true);
@@ -9827,8 +9868,7 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
         version: state.cloudPlanVersion,
       });
       updateCloudPlanMeta(record);
-      saveCloudCache(record, data);
-      renderPlanSelect();
+      scheduleCloudCacheWrite(record, data);
       clearUnsavedChanges();
       updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
       return true;
@@ -9922,7 +9962,15 @@ function scheduleAutoSave() {
   }
   clearTimeout(saveTimer);
   updateSaveStatus({ state: "pending", destination: "cache" });
-  saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 350);
+  saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 1000);
+}
+
+function shouldUseGlobalAutoSave(target) {
+  if (!(target instanceof Element)) return false;
+  // O modo foco e o Quill possuem persistência própria. Deixá-los passar por
+  // este listener criava um segundo salvamento completo para a mesma edição.
+  if (target.closest(".focused-study-modal, .ql-editor")) return false;
+  return Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
 }
 
 function restoreAppState({ preserveDataSource = false, cacheOnly = false, preferCloudCache = true } = {}) {
@@ -11928,10 +11976,12 @@ els.downloadButton.addEventListener("click", downloadJson);
 });
 document.addEventListener("input", (event) => {
   markPlanningSettingsDirty(event);
+  if (!shouldUseGlobalAutoSave(event.target)) return;
   scheduleAutoSave();
 });
 document.addEventListener("change", (event) => {
   markPlanningSettingsDirty(event);
+  if (!shouldUseGlobalAutoSave(event.target)) return;
   scheduleAutoSave();
 });
 document.addEventListener("click", (event) => {
@@ -12047,7 +12097,6 @@ async function startMeuCronogramaApp() {
     activateTab("continuar");
   }
   renderBackupReminder();
-  ensureGoalTimerInterval();
   if (window.lucide) window.lucide.createIcons();
   requestAnimationFrame(() => {
     updateSidebarActiveIndicator();
