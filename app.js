@@ -1588,12 +1588,9 @@ function switchTab(tabName, activeButton = null) {
   closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
   if (focusedStudySession && tabName !== "continuar") void suspendFocusedStudy({ silent: true });
-  const run = () => activateTab(tabName, activeButton);
-  if (!prefersReducedMotion() && document.startViewTransition) {
-    document.startViewTransition(run);
-    return;
-  }
-  run();
+  // Trocar o painel imediatamente evita o custo de capturar a página inteira
+  // que a View Transition API impõe em planejamentos maiores.
+  activateTab(tabName, activeButton);
 }
 
 function setTabEnabled(tabName, enabled, reason = "Conclua a etapa anterior para acessar esta área.") {
@@ -5284,7 +5281,7 @@ function persistFocusedSession({ immediate = false, label = "Sessão atualizada"
   if (!syncFocusedSessionToState() || isRestoring || !state.currentPlanId) return Promise.resolve(false);
   clearTimeout(focusedStudyPersistenceTimer);
   if (immediate) return saveAppStateNow(label);
-  focusedStudyPersistenceTimer = window.setTimeout(() => saveAppStateNow(label), FOCUS_SESSION_SAVE_DELAY);
+  focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave(), FOCUS_SESSION_SAVE_DELAY);
   return Promise.resolve(true);
 }
 
@@ -9553,8 +9550,11 @@ function applyFormState(data = {}) {
 }
 
 function captureAppState() {
-  syncRowsFromTable();
-  syncPlanningSliders();
+  const activeTab = getActiveTabName();
+  // Essas leituras percorrem centenas de campos. Fora das respectivas telas,
+  // o estado já foi atualizado pelos listeners e não precisa ser relido.
+  if (activeTab === "conteudo") syncRowsFromTable();
+  if (activeTab === "pesos" || planningSettingsContextTab === "pesos") syncPlanningSliders();
   if (!focusedStudySession?.standaloneReview) syncFocusedSessionToState();
   return {
     version: 1,
@@ -9815,7 +9815,6 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
   }
   clearTimeout(cloudSaveTimer);
   const data = snapshot || captureAppState();
-  saveLocalSafetyCopy(data);
   const plan = activePlan();
   if (!plan) return false;
   updateSaveStatus({ state: "saving", destination: "cloud" });
@@ -9834,6 +9833,9 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
       updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
       return true;
     } catch (error) {
+      // Uma única cópia local basta quando a rede falha. Antes, o mesmo
+      // snapshot era serializado repetidamente antes e depois de cada envio.
+      saveLocalSafetyCopy(data);
       if (error?.code === "cloud_conflict") {
         if (!state.hasUnsavedChanges) {
           await loadCloudPlanIntoState(state.currentPlanId, { preserveCurrentTab: true });
@@ -9864,7 +9866,7 @@ function scheduleCloudSave(label = "Salvo") {
     return;
   }
   updateSaveStatus({ state: "pending", destination: "cloud" });
-  cloudSaveTimer = setTimeout(() => saveCloudPlanNow(label), CLOUD_SAVE_DELAY);
+  cloudSaveTimer = setTimeout(() => saveAppStateNow(label), CLOUD_SAVE_DELAY);
 }
 
 async function flushCloudSave(label = "Salvo") {
@@ -9878,24 +9880,34 @@ async function flushCloudSave(label = "Salvo") {
   return saveCloudPlanNow(label);
 }
 
-function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
+function yieldForInteraction() {
+  return new Promise((resolve) => {
+    const finish = () => window.setTimeout(resolve, 0);
+    if (document.visibilityState === "visible" && typeof requestAnimationFrame === "function") requestAnimationFrame(finish);
+    else finish();
+  });
+}
+
+async function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) markUnsavedChanges();
   if (cloudIsPrimary() && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
     updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
-    return Promise.resolve(true);
+    return true;
   }
+  await yieldForInteraction();
   const snapshot = captureAppState();
-  saveLocalSafetyCopy(snapshot);
   if (state.dataSource === "cloud-unavailable") {
+    saveLocalSafetyCopy(snapshot);
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
-    return Promise.resolve(false);
+    return false;
   }
   if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot);
+  saveLocalSafetyCopy(snapshot);
   updateSaveStatus({ state: "saving", destination: "cache" });
   refreshCurrentPlanName(snapshot);
   updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
-  return Promise.resolve(true);
+  return true;
 }
 
 function scheduleAutoSave() {

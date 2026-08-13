@@ -22,5 +22,9 @@ assert.ok(app.includes("renderLucideIcons(els.continuePanel);"), "A tela Continu
 assert.ok(app.includes("buildContinueRecommendation(pending, continueAlternativesOpen)"), "A recomendação deve reutilizar a ordenação já calculada no mesmo render.");
 assert.ok(!app.includes("showToast((focusedStudySession?.context || context.context)"), "Iniciar estudo não deve abrir uma notificação de rotina.");
 assert.ok(app.includes("renderFocusedStudyOverlay();\n  // Atualiza o painel de fundo"), "O modo foco deve aparecer antes da atualização do painel de fundo.");
+assert.ok(!app.includes("document.startViewTransition(run)"), "A troca de aba não deve capturar a página inteira antes de responder.");
+assert.ok(app.includes("function yieldForInteraction()"), "Salvamentos pesados devem ceder a primeira pintura ao navegador.");
+assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A leitura da árvore do edital deve ocorrer somente em sua tela.");
+assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
 
 console.log("OK - interações críticas respondem antes do autosave e evitam renderizações globais repetidas.");
