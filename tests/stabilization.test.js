@@ -6,6 +6,7 @@ const path = require("path");
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const index = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
+const styles = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf8");
 
 assert.ok(app.includes("function saveStudyResult"), "O registro central de desempenho deve existir.");
 assert.ok(app.includes("function notebookThemeMatchesSearch"), "A busca local do Caderno de Resumos deve estar disponível.");
@@ -13,8 +14,9 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260813-settings-gear"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260813-settings-gear"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260813-sidebar-scroll"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260813-sidebar-scroll"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(styles.includes("overflow-x: hidden;\n  overflow-y: auto;"), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes("js/incidence.js?v=20260805-incidence-fgv"), "A base de incidÃªncia deve ser carregada antes do app.");
 assert.ok(index.includes('class="ql-align" value="justify"'), "O Caderno de Resumos deve oferecer alinhamento justificado.");
 assert.ok(app.includes("NOTEBOOK_QUILL_ALIGNMENTS"), "Os alinhamentos do Quill devem ser normalizados antes do salvamento.");

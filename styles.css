@@ -445,7 +445,8 @@ svg {
   min-height: 0;
   display: grid;
   gap: 4px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 2px 4px 2px 0;
 }
 
@@ -471,6 +472,7 @@ svg {
 
 .sidebar-flow::-webkit-scrollbar {
   width: 5px;
+  height: 0;
 }
 
 .sidebar-flow::-webkit-scrollbar-track {
