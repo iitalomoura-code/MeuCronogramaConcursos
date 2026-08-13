@@ -15,7 +15,7 @@ const auth = read("auth.js");
 
 assert.ok(plansHtml.includes('data-auth-page="plans"'), "A seleção deve exigir autenticação.");
 assert.ok(plansHtml.includes('id="createPlanCard"'), "A ação de criar cronograma deve existir mesmo sem registros.");
-assert.ok(plansHtml.includes("plans.js?v=20260812-plan-page"), "A página deve carregar seu controlador isolado.");
+assert.ok(plansHtml.includes("plans.js?v=20260812-guided-planning"), "A página deve carregar seu controlador isolado.");
 assert.ok(!plansHtml.includes("app.js"), "A seleção não deve carregar o aplicativo completo.");
 assert.ok(!plansHtml.includes("quill.js"), "A seleção não deve carregar o editor de resumos.");
 assert.ok(plansJs.includes('window.addEventListener("auth:ready", initialize, { once: true })'), "A inicialização deve ocorrer uma única vez.");

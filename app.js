@@ -102,6 +102,7 @@ const state = {
   notebook: {},
   activeFocusSession: null,
   locked: false,
+  setup: { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] },
 };
 
 let notebookSelection = { materia: "", assunto: "" };
@@ -172,6 +173,7 @@ let evolutionContext = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
+let planningSettingsContextTab = "";
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -181,6 +183,14 @@ const els = {
   settingsToggleButton: document.querySelector("#settingsToggleButton"),
   signOutButton: document.querySelector("#signOutButton"),
   settingsMenu: document.querySelector("#settingsMenu"),
+  planningSetupHeader: document.querySelector("#planningSetupHeader"),
+  planningSettingsContext: document.querySelector("#planningSettingsContext"),
+  planningSettingsContextTitle: document.querySelector("#planningSettingsContextTitle"),
+  planningSettingsImpactText: document.querySelector("#planningSettingsImpactText"),
+  planningReviewSummary: document.querySelector("#planningReviewSummary"),
+  backToPriorityFromReviewButton: document.querySelector("#backToPriorityFromReviewButton"),
+  generateFirstCycleButton: document.querySelector("#generateFirstCycleButton"),
+  settingsBackupStatus: document.querySelector("#settingsBackupStatus"),
   appSidebar: document.querySelector("#appSidebar"),
   mobileMenuButton: document.querySelector("#mobileMenuButton"),
   mobileSettingsButton: document.querySelector("#mobileSettingsButton"),
@@ -1343,6 +1353,120 @@ function openReviewCount() {
   return (Array.isArray(state.reviews) ? state.reviews : []).filter((review) => !["Concluída", "Cancelada"].includes(review.status)).length;
 }
 
+const SETUP_STEP_TABS = Object.freeze({ 1: "concurso", 2: "conteudo", 3: "pesos", 4: "revisar-planejamento", 5: "revisar-planejamento" });
+const PLANNING_TAB_TITLES = Object.freeze({
+  concurso: "Dados do concurso",
+  conteudo: "Conteúdo programático",
+  pesos: "Prioridade das matérias",
+});
+
+function normalizedSetupState(value, { legacy = false } = {}) {
+  if (!value || typeof value !== "object") {
+    return legacy
+      ? { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] }
+      : { status: "incomplete", currentStep: 1, completedSteps: [] };
+  }
+  const status = value.status === "incomplete" ? "incomplete" : "complete";
+  const currentStep = Math.min(5, Math.max(1, Number(value.currentStep) || (status === "complete" ? 5 : 1)));
+  const completedSteps = [...new Set((Array.isArray(value.completedSteps) ? value.completedSteps : [])
+    .map(Number).filter((step) => step >= 1 && step <= 5))];
+  return { status, currentStep, completedSteps: status === "complete" ? [1, 2, 3, 4, 5] : completedSteps };
+}
+
+function setupIsIncomplete() {
+  return state.setup?.status === "incomplete";
+}
+
+function setupTabForStep(step = state.setup?.currentStep || 1) {
+  return SETUP_STEP_TABS[Math.min(5, Math.max(1, Number(step) || 1))] || "concurso";
+}
+
+function renderSetupProgress() {
+  const incomplete = setupIsIncomplete();
+  document.body.classList.toggle("planning-setup-mode", incomplete);
+  if (els.planningSetupHeader) els.planningSetupHeader.hidden = !incomplete;
+  document.querySelectorAll("[data-setup-step]").forEach((item) => {
+    const step = Number(item.dataset.setupStep);
+    const completed = state.setup?.completedSteps?.includes(step) || step < Number(state.setup?.currentStep || 1);
+    item.classList.toggle("is-active", incomplete && step === Number(state.setup?.currentStep || 1));
+    item.classList.toggle("is-complete", incomplete && completed);
+    if (incomplete && step === Number(state.setup?.currentStep || 1)) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
+  });
+}
+
+function setSetupStep(step, { save = true } = {}) {
+  if (!setupIsIncomplete()) return;
+  const nextStep = Math.min(5, Math.max(1, Number(step) || 1));
+  const completed = new Set(state.setup.completedSteps || []);
+  for (let value = 1; value < nextStep; value += 1) completed.add(value);
+  state.setup = { status: "incomplete", currentStep: nextStep, completedSteps: [...completed].sort((a, b) => a - b) };
+  renderSetupProgress();
+  if (save) scheduleAutoSave();
+}
+
+function finishSetup() {
+  state.setup = { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] };
+  planningSettingsContextTab = "";
+  renderSetupProgress();
+  scheduleAutoSave();
+}
+
+function updatePlanningContext(tabName) {
+  const inPlanningSettings = !setupIsIncomplete() && Boolean(PLANNING_TAB_TITLES[tabName]) && planningSettingsContextTab === tabName;
+  document.body.classList.toggle("planning-settings-mode", inPlanningSettings);
+  if (!inPlanningSettings) document.body.classList.remove("planning-settings-dirty");
+  if (els.planningSettingsContext) els.planningSettingsContext.hidden = !inPlanningSettings;
+  if (inPlanningSettings && els.planningSettingsContextTitle) els.planningSettingsContextTitle.textContent = PLANNING_TAB_TITLES[tabName];
+  if (inPlanningSettings && els.planningSettingsImpactText) {
+    els.planningSettingsImpactText.textContent = state.generatedBlocks.length
+      ? "Essa alteração pode modificar os próximos ciclos. O ciclo atual e todo o histórico serão preservados."
+      : "As alterações serão usadas quando o primeiro ciclo for gerado.";
+  }
+}
+
+function openPlanningSettings(tabName) {
+  if (!PLANNING_TAB_TITLES[tabName]) return;
+  planningSettingsContextTab = tabName;
+  document.body.classList.remove("planning-settings-dirty");
+  switchTab(tabName);
+}
+
+function markPlanningSettingsDirty(event) {
+  if (!document.body.classList.contains("planning-settings-mode")) return;
+  if (!event.target.closest("#tab-concurso, #tab-conteudo, #tab-pesos")) return;
+  document.body.classList.add("planning-settings-dirty");
+}
+
+function markPlanningSettingsActionDirty(event) {
+  if (!document.body.classList.contains("planning-settings-mode")) return;
+  const mutatingAction = event.target.closest([
+    "#processButton", "#clearButton", "#addTopicButton", "#confirmButton",
+    "[data-add-subject-topic]", "[data-delete-subject]", "[data-delete-topic]",
+    "[data-duplicate-topic]", "[data-merge-selected]", "[data-merge-subject]",
+    "[data-merge-topic]", "[data-move-grouped-content]", "[data-move-topic]",
+    "[data-promote-topic]", "[data-confirm-split]", "[data-save-topic-edit]",
+    "[data-undo-content]",
+  ].join(","));
+  if (mutatingAction?.closest("#tab-concurso, #tab-conteudo, #tab-pesos")) {
+    document.body.classList.add("planning-settings-dirty");
+  }
+}
+
+function renderPlanningReview() {
+  if (!els.planningReviewSummary) return;
+  const subjects = Array.isArray(state.planningBase?.materias) ? state.planningBase.materias : [];
+  const selectedRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
+  const topics = subjects.reduce((sum, subject) => sum + (subject.assuntos?.length || 0), 0) || selectedRows.length;
+  const config = getContestConfig();
+  const board = currentExamBoardState();
+  els.planningReviewSummary.innerHTML = `
+    <section class="planning-review-lead"><span class="section-kicker">${escapeHtml(config.cargo || "Planejamento de estudos")}</span><h3>${escapeHtml(config.concurso || "Novo concurso")}</h3><p>${board.examBoardName ? `Banca ${escapeHtml(board.examBoardName)} · ` : ""}${formatHours(config.horasSemana)} por ciclo · referência de ${formatHours(config.duracaoBloco)}</p></section>
+    <div class="planning-review-metrics"><div><strong>${subjects.length}</strong><span>matérias</span></div><div><strong>${topics}</strong><span>temas selecionados</span></div><div><strong>${formatHours(config.horasSemana)}</strong><span>carga do ciclo</span></div></div>
+    <div class="planning-review-subjects">${subjects.map((subject) => `<article><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} temas · prioridade ${escapeHtml(priorityInfo(priorityScore(subject)).label.toLowerCase())}</span></article>`).join("")}</div>
+    <p class="planning-review-note">O primeiro ciclo será criado com a lógica atual. Você poderá ajustar esses dados depois em Configurações, sem alterar ciclos concluídos.</p>`;
+}
+
 function updateNavigationState() {
   const hasContest = Boolean(els.contestName?.value.trim() || els.jobRole?.value.trim());
   const hasContent = state.rows.some((row) => normalizeForMatch(String(row.estudar || "")) === "sim");
@@ -1369,6 +1493,7 @@ function updateNavigationState() {
   setTabEnabled("pesos", Boolean(state.confirmed), "Confirme o conteúdo programático antes de definir as prioridades.");
   setTabEnabled("cronograma", Boolean(state.generatedBlocks.length), "Defina as prioridades e gere o ciclo antes de acessar esta área.");
   updateMobilePlanTitle();
+  renderSetupProgress();
 }
 
 function animatePanelNumbers(tabName) {
@@ -1408,6 +1533,10 @@ function renderActiveTabContent(tabName) {
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
   if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
+  if (tabName === "revisar-planejamento") safeRender("Revisão do planejamento", renderPlanningReview);
+  if (tabName === "configuracoes" && els.settingsBackupStatus) {
+    els.settingsBackupStatus.textContent = els.backupReminderStatus?.textContent || "Nenhum backup registrado neste navegador.";
+  }
 }
 
 function scheduleActiveTabRender(tabName) {
@@ -1426,6 +1555,7 @@ function scheduleActiveTabRender(tabName) {
 }
 
 function activateTab(tabName, activeButton = null) {
+  if (setupIsIncomplete() && !Object.values(SETUP_STEP_TABS).includes(tabName)) tabName = setupTabForStep();
   els.tabs.forEach((button) => {
     const isActive = button.dataset.tabTarget === tabName;
     button.classList.toggle("active", isActive);
@@ -1433,6 +1563,9 @@ function activateTab(tabName, activeButton = null) {
     else button.removeAttribute("aria-current");
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
+  if (tabName === "revisar-planejamento") renderPlanningReview();
+  updatePlanningContext(tabName);
+  renderSetupProgress();
   if (tabName !== "continuar") removeFocusedStudyOverlay();
   scheduleActiveTabRender(tabName);
   requestAnimationFrame(() => {
@@ -1441,6 +1574,8 @@ function activateTab(tabName, activeButton = null) {
 }
 
 function switchTab(tabName, activeButton = null) {
+  if (setupIsIncomplete() && !Object.values(SETUP_STEP_TABS).includes(tabName)) tabName = setupTabForStep();
+  if (!PLANNING_TAB_TITLES[tabName]) planningSettingsContextTab = "";
   const target = [...els.tabs].find((button) => button.dataset.tabTarget === tabName);
   if (target?.getAttribute("aria-disabled") === "true") {
     showToast(target.dataset.lockReason || "Conclua a etapa anterior para acessar esta área.");
@@ -3153,6 +3288,8 @@ function confirmRows(options = {}) {
   ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
   renderPlanningBase();
   updateContentFlowSteps();
+  if (setupIsIncomplete()) setSetupStep(3);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
   switchTab("pesos");
 }
 
@@ -4376,7 +4513,7 @@ function unlockCycle() {
   scheduleAutoSave();
 }
 
-async function generateSchedule() {
+async function generateSchedule({ completeSetup = false } = {}) {
   if (!state.planningBase) {
     await dialogAlert("Confirme as mat\u00e9rias e temas antes de gerar o ciclo.");
     return;
@@ -4399,6 +4536,7 @@ async function generateSchedule() {
   const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis);
   state.distribution = cycle.distribution;
   state.generatedBlocks = cycle.blocks;
+  if ((completeSetup || setupIsIncomplete()) && state.generatedBlocks.length) finishSetup();
   setTabEnabled("cronograma", true);
   renderAppViews();
   lockCycle();
@@ -8914,6 +9052,9 @@ function dialogPrompt(message, defaultValue = "", options = {}) {
 }
 
 function getActiveTabName() {
+  if (!setupIsIncomplete() && planningSettingsContextTab) return "configuracoes";
+  const activePanel = document.querySelector(".tab-panel.active");
+  if (activePanel?.id?.startsWith("tab-")) return activePanel.id.slice(4);
   return document.querySelector(".tab-button.active")?.dataset.tabTarget || "continuar";
 }
 
@@ -9420,6 +9561,7 @@ function captureAppState() {
     notebook: state.notebook,
     activeFocusSession: state.activeFocusSession,
     locked: state.locked,
+    setup: normalizedSetupState(state.setup),
     showPendingOnly,
   };
 }
@@ -9487,6 +9629,7 @@ function applyAppSnapshot(saved = {}) {
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
   state.locked = Boolean(saved.locked);
+  state.setup = normalizedSetupState(saved.setup, { legacy: !Object.prototype.hasOwnProperty.call(saved, "setup") });
   showPendingOnly = Boolean(saved.showPendingOnly);
 
   updateContestSummary();
@@ -9503,7 +9646,9 @@ function applyAppSnapshot(saved = {}) {
   }
   updateContentFlowSteps();
   applyLockState();
-  const restoredTab = [...els.tabs].some((button) => button.dataset.tabTarget === saved.activeTab) ? saved.activeTab : "continuar";
+  const restoredTab = setupIsIncomplete()
+    ? setupTabForStep()
+    : [...els.tabs].some((button) => button.dataset.tabTarget === saved.activeTab) ? saved.activeTab : "continuar";
   // A aba ativa é renderizada de forma adiada por activateTab. Renderizar todos
   // os painéis aqui tornava o F5 desnecessariamente lento, sobretudo com Quill
   // e o Painel de Evolução já montados antes da primeira pintura.
@@ -9943,6 +10088,7 @@ function blankAppSnapshot(name = "") {
     reviews: [],
     errors: [],
     activeFocusSession: null,
+    setup: { status: "incomplete", currentStep: 1, completedSteps: [] },
     showPendingOnly: false,
   };
 }
@@ -10055,6 +10201,7 @@ async function createNewPlan() {
       closeNewPlanModal();
       renderPlanSelect();
       applyAppSnapshot(snapshot);
+      setSetupStep(2);
       updateSaveStatus({ state: "saved", destination: "cloud", message: "Novo planejamento criado" });
       switchTab("conteudo");
     } catch {
@@ -10073,6 +10220,7 @@ async function createNewPlan() {
   closeNewPlanModal();
   renderPlanSelect();
   applyAppSnapshot(snapshot);
+  setSetupStep(2, { save: false });
   saveAppStateNow("Novo concurso criado");
   switchTab("conteudo");
 }
@@ -10411,7 +10559,7 @@ els.mobileMenuButton?.addEventListener("click", () => {
   if (mobileDrawerOpen) closeMobileDrawer();
   else openMobileDrawer(els.mobileMenuButton);
 });
-els.mobileSettingsButton?.addEventListener("click", () => openMobileDrawer(els.mobileSettingsButton, { openSettings: true }));
+els.mobileSettingsButton?.addEventListener("click", () => switchTab("configuracoes"));
 els.mobileSaveButton?.addEventListener("click", () => saveAppStateNow("Dados salvos"));
 els.mobilePlanTitle?.addEventListener("click", () => {
   openMobileDrawer(els.mobilePlanTitle);
@@ -10541,17 +10689,20 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-open-contest]")) {
-    switchTab("concurso");
+    if (setupIsIncomplete()) switchTab("concurso");
+    else openPlanningSettings("concurso");
     return;
   }
 
   if (event.target.closest("[data-open-content]")) {
-    switchTab("conteudo");
+    if (setupIsIncomplete()) switchTab("conteudo");
+    else openPlanningSettings("conteudo");
     return;
   }
 
   if (event.target.closest("[data-open-priority]")) {
-    switchTab("pesos");
+    if (setupIsIncomplete()) switchTab("pesos");
+    else openPlanningSettings("pesos");
     return;
   }
 
@@ -10589,7 +10740,8 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-continue-generate]")) {
-    switchTab("pesos");
+    if (setupIsIncomplete()) switchTab("pesos");
+    else openPlanningSettings("pesos");
   }
 });
 document.addEventListener("input", (event) => {
@@ -11188,7 +11340,11 @@ els.topicsBody.addEventListener("change", (event) => {
   markUnconfirmed();
 });
 els.confirmButton.addEventListener("click", confirmRows);
-els.backToContestButton?.addEventListener("click", () => switchTab("concurso"));
+els.backToContestButton?.addEventListener("click", () => {
+  if (setupIsIncomplete()) setSetupStep(1);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "concurso";
+  switchTab("concurso");
+});
 els.saveContentButton?.addEventListener("click", () => saveAppStateNow("Conte\u00fado salvo"));
 els.planningGrid.addEventListener("input", (event) => {
   if (event.target.matches(".subject-slider")) {
@@ -11574,7 +11730,7 @@ els.themeToggleButton?.addEventListener("click", () => {
 });
 els.settingsToggleButton?.addEventListener("click", (event) => {
   event.stopPropagation();
-  toggleSettingsMenu();
+  switchTab("configuracoes");
 });
 els.signOutButton?.addEventListener("click", async () => {
   if (!window.authGate?.signOutUser) {
@@ -11617,7 +11773,11 @@ els.signOutButton?.addEventListener("click", async () => {
 els.settingsMenu?.addEventListener("click", (event) => event.stopPropagation());
 els.saveNowButton?.addEventListener("click", () => saveAppStateNow("Salvo"));
 els.saveContestButton?.addEventListener("click", () => saveAppStateNow("Dados do concurso salvos"));
-els.goContentButton?.addEventListener("click", () => switchTab("conteudo"));
+els.goContentButton?.addEventListener("click", () => {
+  if (setupIsIncomplete()) setSetupStep(2);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "conteudo";
+  switchTab("conteudo");
+});
 els.examBoard?.addEventListener("change", () => {
   updateExamBoardControls();
   scheduleAutoSave();
@@ -11626,7 +11786,11 @@ els.examBoardOther?.addEventListener("input", () => {
   updateExamBoardControls();
   scheduleAutoSave();
 });
-els.backToContentFromPriorityButton?.addEventListener("click", () => switchTab("conteudo"));
+els.backToContentFromPriorityButton?.addEventListener("click", () => {
+  if (setupIsIncomplete()) setSetupStep(2);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "conteudo";
+  switchTab("conteudo");
+});
 els.saveCycleAdjustmentsButton?.addEventListener("click", () => saveAppStateNow("Ajustes salvos"));
 els.overrideCycleToggle?.addEventListener("change", updateOverrideVisibility);
 els.backToGenerateFromScheduleButton?.addEventListener("click", () => switchTab("pesos"));
@@ -11652,7 +11816,68 @@ els.importBackupInput?.addEventListener("change", async () => {
     void dialogAlert("Não consegui importar esse backup. Verifique se o arquivo JSON está correto.", { title: "Backup inválido" });
   }
 });
-els.generateScheduleButton.addEventListener("click", generateSchedule);
+els.generateScheduleButton.addEventListener("click", () => {
+  if (setupIsIncomplete()) {
+    syncPlanningSliders();
+    setSetupStep(4);
+    renderPlanningReview();
+    switchTab("revisar-planejamento");
+    return;
+  }
+  void generateSchedule();
+});
+els.backToPriorityFromReviewButton?.addEventListener("click", () => {
+  setSetupStep(3);
+  switchTab("pesos");
+});
+els.generateFirstCycleButton?.addEventListener("click", () => {
+  setSetupStep(5);
+  void generateSchedule({ completeSetup: true });
+});
+document.addEventListener("click", async (event) => {
+  markPlanningSettingsActionDirty(event);
+  const setupExit = event.target.closest("[data-setup-exit]");
+  if (setupExit) {
+    event.preventDefault();
+    if (cloudIsPrimary()) await flushCloudSave("Configuração salva");
+    else saveAppStateNow("Configuração salva");
+    window.location.href = setupExit.href;
+    return;
+  }
+  const planningButton = event.target.closest("[data-settings-tab]");
+  if (planningButton) {
+    openPlanningSettings(planningButton.dataset.settingsTab);
+    return;
+  }
+  if (event.target.closest("[data-back-to-settings]")) {
+    planningSettingsContextTab = "";
+    switchTab("configuracoes");
+    return;
+  }
+  const impactAction = event.target.closest("[data-planning-impact]")?.dataset.planningImpact;
+  if (impactAction === "review") {
+    const currentBlocks = state.generatedBlocks.length;
+    const completedCycles = state.cycleHistory.length;
+    void dialogAlert(`O ciclo atual possui ${currentBlocks} bloco${currentBlocks === 1 ? "" : "s"}. Ele não será recalculado. ${completedCycles} ciclo${completedCycles === 1 ? " concluído será preservado" : "s concluídos serão preservados"}, assim como revisões, desempenho, resumos e tempo estudado.`, { title: "Impacto da alteração" });
+    return;
+  }
+  if (impactAction === "save" || impactAction === "future") {
+    saveAppStateNow(impactAction === "future" ? "Alterações aplicadas aos próximos ciclos" : "Alterações salvas; ciclo atual preservado");
+    document.body.classList.remove("planning-settings-dirty");
+    return;
+  }
+  const settingsAction = event.target.closest("[data-settings-action]")?.dataset.settingsAction;
+  if (!settingsAction) return;
+  const actions = {
+    manage: () => openManagePlanModal(),
+    new: () => openNewPlanModal(),
+    switch: () => { window.location.href = "./plans.html"; },
+    export: () => exportBackup(),
+    import: () => els.importBackupInput?.click(),
+    signout: () => els.signOutButton?.click(),
+  };
+  actions[settingsAction]?.();
+});
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-unlock]")) {
     unlockCycle();
@@ -11664,8 +11889,14 @@ els.downloadButton.addEventListener("click", downloadJson);
   input.addEventListener("input", updateContestSummary);
   input.addEventListener("change", updateContestSummary);
 });
-document.addEventListener("input", scheduleAutoSave);
-document.addEventListener("change", scheduleAutoSave);
+document.addEventListener("input", (event) => {
+  markPlanningSettingsDirty(event);
+  scheduleAutoSave();
+});
+document.addEventListener("change", (event) => {
+  markPlanningSettingsDirty(event);
+  scheduleAutoSave();
+});
 document.addEventListener("click", (event) => {
   if (!event.target.closest("#settingsMenu, #settingsToggleButton")) closeSettingsMenu();
   if (!event.target.closest("#planMenu, #planMenuButton")) closePlanMenu();

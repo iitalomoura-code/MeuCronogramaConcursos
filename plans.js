@@ -93,6 +93,15 @@
     };
   }
 
+  function planSetupSummary(snapshot = {}) {
+    const setup = snapshot?.setup;
+    if (!setup || typeof setup !== "object" || setup.status !== "incomplete") {
+      return { incomplete: false, step: 5, label: "Continuar estudos" };
+    }
+    const step = Math.min(5, Math.max(1, Number(setup.currentStep) || 1));
+    return { incomplete: true, step, label: "Continuar configuração" };
+  }
+
   function relativeDate(date) {
     if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "Ainda sem estudo registrado";
     const today = new Date();
@@ -125,19 +134,20 @@
 
   function planCardTemplate(plan) {
     const name = plan.name || "Novo concurso";
+    const setup = planSetupSummary(plan.data || {});
     return `
-      <article class="plan-card" data-plan-card="${escapeHtml(plan.id)}">
+      <article class="plan-card ${setup.incomplete ? "is-setup-incomplete" : ""}" data-plan-card="${escapeHtml(plan.id)}">
         <button class="plan-card-open" type="button" data-open-plan="${escapeHtml(plan.id)}" aria-label="Abrir ${escapeHtml(name)}">
           <span class="plan-card-heading">
             <span class="plan-card-icon"><i data-lucide="book-open"></i></span>
-            <span class="plan-card-coverage" data-plan-coverage>Carregando detalhes...</span>
+            <span class="plan-card-coverage" data-plan-coverage>${setup.incomplete ? `Configuração incompleta · etapa ${setup.step} de 5` : "Carregando detalhes..."}</span>
           </span>
           <strong data-plan-name>${escapeHtml(name)}</strong>
           <span class="plan-card-role" data-plan-role>Planejamento de estudos</span>
           <span class="plan-card-board" data-plan-board></span>
           <span class="plan-card-footer">
             <span data-plan-last>Atualizado recentemente</span>
-            <small>Selecionar cronograma</small>
+            <small data-plan-open-label>${setup.label}</small>
           </span>
         </button>
         <details class="plan-card-menu">
@@ -167,7 +177,11 @@
     const role = card.querySelector("[data-plan-role]");
     const board = card.querySelector("[data-plan-board]");
     const last = card.querySelector("[data-plan-last]");
-    if (coverage) coverage.textContent = `${summary.coverage}% do edital percorrido`;
+    const openLabel = card.querySelector("[data-plan-open-label]");
+    const setup = planSetupSummary(record.data || {});
+    card.classList.toggle("is-setup-incomplete", setup.incomplete);
+    if (coverage) coverage.textContent = setup.incomplete ? `Configuração incompleta · etapa ${setup.step} de 5` : `${summary.coverage}% do edital percorrido`;
+    if (openLabel) openLabel.textContent = setup.label;
     if (role) role.textContent = summary.role || "Planejamento de estudos";
     if (board) {
       board.textContent = summary.board || "";
@@ -306,7 +320,7 @@
       const planId = actionButton.dataset.planId;
       const action = actionButton.dataset.planAction;
       actionButton.closest("details")?.removeAttribute("open");
-      if (action === "configure") enterPlan(planId, { tab: "concurso" });
+      if (action === "configure") enterPlan(planId, { tab: "configuracoes" });
       else if (action === "duplicate") enterPlan(planId, { action: "duplicate" });
       else openActionModal(action, planId);
       return;

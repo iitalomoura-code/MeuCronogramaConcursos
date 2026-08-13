@@ -169,6 +169,9 @@ body.auth-verified .plans-auth-loading { display: none; }
 }
 
 .plan-card { box-shadow: var(--shadow); }
+.plan-card.is-setup-incomplete { border-color: color-mix(in srgb, var(--primary) 48%, var(--border)); }
+.plan-card.is-setup-incomplete .plan-card-icon { background: var(--primary-soft); color: var(--primary); }
+.plan-card.is-setup-incomplete .plan-card-coverage { color: var(--primary); }
 
 .plan-card-open {
   width: 100%;

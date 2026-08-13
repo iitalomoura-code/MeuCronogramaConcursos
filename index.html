@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260812-slogan-source-sans" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-guided-planning" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -41,7 +41,7 @@
             <brand-logo class="brand-logo" variant="compact"></brand-logo>
             <div class="brand-controls">
               <button id="themeToggleButton" class="sidebar-icon-button" type="button" aria-label="Alternar modo noite"><i data-lucide="moon"></i></button>
-              <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir dados e backup" aria-expanded="false"><i data-lucide="settings"></i></button>
+              <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir configurações"><i data-lucide="settings"></i></button>
             </div>
           </div>
           <p class="brand-tagline institutional-slogan">Seu edital em ciclos inteligentes de estudo.</p>
@@ -86,23 +86,43 @@
             <button class="tab-button locked" type="button" data-tab-target="cronograma" aria-disabled="true"><i data-lucide="calendar-range"></i><span>Ciclo Atual</span><em data-tab-state="cronograma"></em></button>
             <button class="tab-button" type="button" data-tab-target="revisoes"><i data-lucide="repeat-2"></i><span>Revis&otilde;es</span><em data-tab-state="revisoes"></em></button>
           </section>
-          <section class="sidebar-nav-group" aria-label="Planejamento"><h2>Planejamento</h2>
-            <button class="tab-button" type="button" data-tab-target="concurso"><i data-lucide="clipboard-list"></i><span>Dados do Concurso</span><em data-tab-state="concurso"></em></button>
-            <button class="tab-button" type="button" data-tab-target="conteudo"><i data-lucide="file-text"></i><span>Conte&uacute;do Program&aacute;tico</span><em data-tab-state="conteudo"></em></button>
-            <button class="tab-button locked" type="button" data-tab-target="pesos" aria-disabled="true"><i data-lucide="sliders-horizontal"></i><span>Prioridade das Mat&eacute;rias</span><em data-tab-state="pesos"></em></button>
-          </section>
           <section class="sidebar-nav-group" aria-label="Acompanhamento"><h2>Acompanhamento</h2>
             <button class="tab-button" type="button" data-tab-target="erros"><i data-lucide="notebook"></i><span>Caderno de Resumos</span><em data-tab-state="erros"></em></button>
             <button class="tab-button" type="button" data-tab-target="evolucao"><i data-lucide="trending-up"></i><span>Painel de Evolu&ccedil;&atilde;o</span><em data-tab-state="evolucao"></em></button>
           </section>
+          <section class="sidebar-nav-group" aria-label="Sistema"><h2>Sistema</h2>
+            <button class="tab-button" type="button" data-tab-target="configuracoes"><i data-lucide="settings"></i><span>Configura&ccedil;&otilde;es</span></button>
+            <a class="tab-button sidebar-system-link" href="./plans.html"><i data-lucide="repeat-2"></i><span>Trocar cronograma</span></a>
+          </section>
         </nav>
         <div class="sidebar-footer">
-          <a class="sidebar-switch-plan-link" href="./plans.html"><i data-lucide="repeat-2"></i><span>Trocar cronograma</span></a>
-          <div class="status-pill" id="confirmationStatus">Aguardando cadastro</div>
+          <div class="status-pill" id="confirmationStatus" hidden>Aguardando cadastro</div>
         </div>
       </aside>
 
       <section id="main-content" class="content-area" tabindex="-1">
+        <div id="planningSetupHeader" class="planning-setup-header" hidden>
+          <div class="planning-setup-heading">
+            <div><span class="section-kicker">Configura&ccedil;&atilde;o inicial</span><strong>Prepare seu cronograma</strong></div>
+            <a href="./plans.html" data-setup-exit>Salvar e sair</a>
+          </div>
+          <ol class="planning-setup-steps" aria-label="Etapas da configura&ccedil;&atilde;o">
+            <li data-setup-step="1"><span>1</span><em>Dados</em></li>
+            <li data-setup-step="2"><span>2</span><em>Conte&uacute;do</em></li>
+            <li data-setup-step="3"><span>3</span><em>Prioridades</em></li>
+            <li data-setup-step="4"><span>4</span><em>Revisar</em></li>
+            <li data-setup-step="5"><span>5</span><em>Gerar ciclo</em></li>
+          </ol>
+        </div>
+        <div id="planningSettingsContext" class="planning-settings-context" hidden>
+          <div><span class="section-kicker">Planejamento do cronograma</span><strong id="planningSettingsContextTitle">Configura&ccedil;&atilde;o</strong><p id="planningSettingsImpactText">O ciclo atual permanecer&aacute; como est&aacute;. As altera&ccedil;&otilde;es poder&atilde;o orientar os pr&oacute;ximos ciclos.</p></div>
+          <div class="planning-settings-context-actions">
+            <button class="ghost-button planning-impact-action" type="button" data-planning-impact="review"><i data-lucide="search"></i><span>Revisar impacto</span></button>
+            <button class="ghost-button planning-impact-action" type="button" data-planning-impact="save"><i data-lucide="save"></i><span>Salvar sem reorganizar ciclo atual</span></button>
+            <button class="ghost-button planning-impact-action" type="button" data-planning-impact="future"><i data-lucide="calendar-range"></i><span>Aplicar aos pr&oacute;ximos ciclos</span></button>
+            <button class="ghost-button" type="button" data-back-to-settings><i data-lucide="arrow-left"></i><span>Voltar</span></button>
+          </div>
+        </div>
         <section class="tab-panel active" id="tab-continuar">
           <div class="panel-heading continue-heading">
             <div>
@@ -113,6 +133,43 @@
             </div>
           </div>
           <div class="continue-layout" id="continuePanel"></div>
+        </section>
+
+        <section class="tab-panel" id="tab-configuracoes">
+          <div class="panel-heading">
+            <div>
+              <span class="section-kicker">Sistema</span>
+              <h2>Configura&ccedil;&otilde;es</h2>
+              <p>Gerencie o planejamento, seus dados e a conta sem misturar essas a&ccedil;&otilde;es com o ambiente de estudo.</p>
+            </div>
+          </div>
+          <div class="settings-page-layout">
+            <section class="settings-page-section">
+              <div><span class="section-kicker">Planejamento do cronograma</span><h3>Estrutura do estudo</h3><p>Os mesmos dados usados na configura&ccedil;&atilde;o inicial continuam dispon&iacute;veis para ajustes futuros.</p></div>
+              <div class="settings-page-actions">
+                <button type="button" data-settings-tab="concurso"><i data-lucide="clipboard-list"></i><span><strong>Dados do concurso</strong><small>Banca, cargo, datas, carga e dura&ccedil;&atilde;o.</small></span><i data-lucide="chevron-right"></i></button>
+                <button type="button" data-settings-tab="conteudo"><i data-lucide="file-text"></i><span><strong>Conte&uacute;do program&aacute;tico</strong><small>Mat&eacute;rias, temas e estrutura revisada.</small></span><i data-lucide="chevron-right"></i></button>
+                <button type="button" data-settings-tab="pesos"><i data-lucide="sliders-horizontal"></i><span><strong>Prioridade das mat&eacute;rias</strong><small>Import&acirc;ncia, dificuldade e ajustes de ciclo.</small></span><i data-lucide="chevron-right"></i></button>
+              </div>
+            </section>
+            <section class="settings-page-section settings-page-compact">
+              <div><span class="section-kicker">Geral</span><h3>Planejamento atual</h3></div>
+              <div class="settings-inline-actions">
+                <button class="ghost-button" type="button" data-settings-action="manage"><i data-lucide="settings-2"></i><span>Gerenciar atual</span></button>
+                <button class="ghost-button" type="button" data-settings-action="new"><i data-lucide="plus-circle"></i><span>Novo planejamento</span></button>
+                <button class="ghost-button" type="button" data-settings-action="switch"><i data-lucide="repeat-2"></i><span>Trocar cronograma</span></button>
+              </div>
+            </section>
+            <section class="settings-page-section settings-page-compact">
+              <div><span class="section-kicker">Dados e seguran&ccedil;a</span><h3>Backup e conta</h3></div>
+              <div class="settings-inline-actions">
+                <button class="ghost-button" type="button" data-settings-action="export"><i data-lucide="download"></i><span>Exportar backup</span></button>
+                <button class="ghost-button" type="button" data-settings-action="import"><i data-lucide="upload"></i><span>Importar backup</span></button>
+                <button class="ghost-button" type="button" data-settings-action="signout"><i data-lucide="log-out"></i><span>Sair</span></button>
+              </div>
+              <p id="settingsBackupStatus" class="settings-backup-status">O status do backup aparece aqui.</p>
+            </section>
+          </div>
         </section>
 
         <section class="tab-panel" id="tab-concurso">
@@ -391,6 +448,17 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           </div>
         </section>
 
+        <section class="tab-panel" id="tab-revisar-planejamento">
+          <div class="panel-heading">
+            <div><span class="section-kicker">Etapa 4 de 5</span><h2>Revise seu planejamento</h2><p>Confira a estrutura antes de gerar o primeiro ciclo. Voc&ecirc; ainda pode voltar e ajustar qualquer etapa.</p></div>
+          </div>
+          <div id="planningReviewSummary" class="planning-review-summary"></div>
+          <div class="planning-review-actions">
+            <button id="backToPriorityFromReviewButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar &agrave;s prioridades</span></button>
+            <button id="generateFirstCycleButton" class="primary-button" type="button"><i data-lucide="calendar-plus"></i><span>Gerar primeiro ciclo</span></button>
+          </div>
+        </section>
+
         <section class="tab-panel" id="tab-cronograma">
           <div class="panel-heading">
             <div>
@@ -618,9 +686,12 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <div id="newPlanModal" class="plan-delete-modal" hidden role="dialog" aria-modal="true" aria-labelledby="newPlanTitle">
       <button id="cancelNewPlanBackdrop" class="plan-delete-backdrop" type="button" aria-label="Cancelar criação"></button>
       <section class="plan-delete-dialog new-plan-dialog">
+        <ol class="planning-setup-steps planning-setup-steps-modal" aria-label="Etapas da configura&ccedil;&atilde;o">
+          <li class="is-active"><span>1</span><em>Dados</em></li><li><span>2</span><em>Conte&uacute;do</em></li><li><span>3</span><em>Prioridades</em></li><li><span>4</span><em>Revisar</em></li><li><span>5</span><em>Gerar ciclo</em></li>
+        </ol>
         <div>
-          <span class="section-kicker">Novo planejamento</span>
-          <h2 id="newPlanTitle">Criar novo planejamento</h2>
+          <span class="section-kicker">Etapa 1 de 5</span>
+          <h2 id="newPlanTitle">Dados do concurso</h2>
           <p>Informe os dados básicos do concurso. O conteúdo programático poderá ser adicionado na etapa seguinte.</p>
         </div>
         <div class="new-plan-grid">
@@ -634,7 +705,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
         </div>
         <div class="plan-delete-actions">
           <button id="cancelNewPlanButton" class="ghost-button" type="button">Cancelar</button>
-          <button id="confirmNewPlanButton" class="primary-button" type="button">Criar planejamento</button>
+          <button id="confirmNewPlanButton" class="primary-button" type="button">Salvar e continuar</button>
         </div>
       </section>
     </div>
@@ -707,7 +778,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./data/incidence/fgv-incidence-base-v1.js?v=20260805-incidence-fgv"></script>
     <script src="./js/incidence.js?v=20260805-incidence-fgv"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260812-brand-logo"></script>
+    <script src="./app.js?v=20260812-guided-planning"></script>
   </body>
 </html>
 
