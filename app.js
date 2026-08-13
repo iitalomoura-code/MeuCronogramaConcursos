@@ -174,6 +174,8 @@ let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
 let planningSettingsContextTab = "";
+let newPlanCloudReadyPromise = null;
+let newPlanReturnToPlans = false;
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -9324,6 +9326,20 @@ async function initializeCloudPlanSource() {
   }
 }
 
+async function initializeNewPlanCloudSource() {
+  if (!cloudIsAvailable()) return false;
+  try {
+    const records = await window.listCloudPlans();
+    state.dataSource = "cloud";
+    state.plans = records.map(cloudPlanMeta);
+    return true;
+  } catch {
+    state.dataSource = "cloud-unavailable";
+    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para criar o planejamento." });
+    return false;
+  }
+}
+
 async function refreshCloudPlanIfNeeded({ force = false } = {}) {
   if (!cloudIsPrimary() || cloudSavePromise || cloudConflictOpen || document.visibilityState !== "visible") return false;
   const now = Date.now();
@@ -10128,25 +10144,33 @@ async function switchPlan(planId) {
   setSaveStatus("Planejamento carregado");
 }
 
-function openNewPlanModal() {
+function openNewPlanModal({ returnToPlans = false } = {}) {
   if (!els.newPlanModal) return;
   closeSettingsMenu();
   closePlanPopover();
-  const defaults = { weeklyHours: els.weeklyHours?.value || "24", blockDuration: els.blockDuration?.value || "1.5", planStartDate: els.planStartDate?.value || "" };
+  newPlanReturnToPlans = returnToPlans;
   if (els.newPlanName) els.newPlanName.value = "";
   if (els.newPlanBoard) els.newPlanBoard.value = "";
   if (els.newPlanRole) els.newPlanRole.value = "";
   if (els.newPlanExamDate) els.newPlanExamDate.value = "";
-  if (els.newPlanStartDate) els.newPlanStartDate.value = defaults.planStartDate;
-  if (els.newPlanWeeklyHours) els.newPlanWeeklyHours.value = defaults.weeklyHours;
-  if (els.newPlanBlockDuration) els.newPlanBlockDuration.value = defaults.blockDuration;
+  if (els.newPlanStartDate) els.newPlanStartDate.value = "";
+  if (els.newPlanWeeklyHours) els.newPlanWeeklyHours.value = "24";
+  if (els.newPlanBlockDuration) els.newPlanBlockDuration.value = "1.5";
+  document.body.classList.add("new-plan-creation-mode");
   els.newPlanModal.hidden = false;
   window.setTimeout(() => els.newPlanName?.focus(), 0);
 }
 
-function closeNewPlanModal() {
+function closeNewPlanModal({ created = false } = {}) {
   if (!els.newPlanModal) return;
   els.newPlanModal.hidden = true;
+  document.body.classList.remove("new-plan-creation-mode");
+  const shouldReturnToPlans = newPlanReturnToPlans && !created;
+  newPlanReturnToPlans = false;
+  if (shouldReturnToPlans) {
+    window.location.replace("./plans.html");
+    return;
+  }
   els.newPlanButton?.focus();
 }
 
@@ -10163,13 +10187,14 @@ async function createNewPlan() {
     els.newPlanWeeklyHours?.focus();
     return;
   }
-  if (cloudIsPrimary()) {
+  if (newPlanCloudReadyPromise) await newPlanCloudReadyPromise;
+  if (state.currentPlanId && cloudIsPrimary()) {
     const saved = await flushCloudSave("Salvo antes de criar");
     if (!saved) {
       showToast("Não foi possível salvar o planejamento atual. Tente novamente.");
       return;
     }
-  } else saveAppStateNow("Salvo");
+  } else if (state.currentPlanId) saveAppStateNow("Salvo");
   const plan = createPlanMeta(name);
   plan.customName = plan.name;
   const snapshot = blankAppSnapshot(plan.name);
@@ -10198,7 +10223,7 @@ async function createNewPlan() {
       localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
       localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
       saveCloudCache(record, snapshot);
-      closeNewPlanModal();
+      closeNewPlanModal({ created: true });
       renderPlanSelect();
       applyAppSnapshot(snapshot);
       setSetupStep(2);
@@ -10217,7 +10242,7 @@ async function createNewPlan() {
   localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
   localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, plan.id);
   localStorage.setItem(planStorageKey(plan.id), JSON.stringify(snapshot));
-  closeNewPlanModal();
+  closeNewPlanModal({ created: true });
   renderPlanSelect();
   applyAppSnapshot(snapshot);
   setSetupStep(2, { save: false });
@@ -11989,6 +12014,18 @@ async function startMeuCronogramaApp() {
   applyThemePreference();
   defaultReferenceWeek();
   renderHistory();
+  if (entryAction === "new") {
+    state.activeStudyPlanId = "";
+    state.currentPlanId = "";
+    applyAppSnapshot(blankAppSnapshot());
+    renderBackupReminder();
+    if (window.lucide) window.lucide.createIcons();
+    openNewPlanModal({ returnToPlans: true });
+    sessionStorage.removeItem(APP_ENTRY_TAB_KEY);
+    sessionStorage.removeItem(APP_ENTRY_ACTION_KEY);
+    newPlanCloudReadyPromise = initializeNewPlanCloudSource();
+    return;
+  }
   // O cache da conta melhora a primeira pintura, mas a versão remota permanece
   // a fonte definitiva e é aplicada assim que a consulta for concluída.
   const restoredFromCloudCache = restoreAppState({ cacheOnly: true });
@@ -12022,9 +12059,7 @@ async function startMeuCronogramaApp() {
     const requestedTab = sessionStorage.getItem(APP_ENTRY_TAB_KEY) || "";
     sessionStorage.removeItem(APP_ENTRY_TAB_KEY);
     sessionStorage.removeItem(APP_ENTRY_ACTION_KEY);
-    if (entryAction === "new") {
-      openNewPlanModal();
-    } else if (entryAction === "duplicate") {
+    if (entryAction === "duplicate") {
       openDuplicatePlanModal();
     } else if (requestedTab) {
       switchTab(requestedTab);

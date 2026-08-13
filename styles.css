@@ -6261,6 +6261,12 @@ details[open] > :not(summary),
 }
 .header-menu-button svg { width: 18px; height: 18px; }
 .new-plan-dialog { width: min(680px, 100%); }
+.new-plan-creation-mode { overflow: hidden; background: var(--bg-main); }
+.new-plan-creation-mode .app-shell,
+.new-plan-creation-mode .mobile-topbar,
+.new-plan-creation-mode .mobile-drawer-backdrop { visibility: hidden; }
+.new-plan-creation-mode #newPlanModal { background: var(--bg-main); }
+.new-plan-creation-mode #newPlanModal .plan-delete-backdrop { background: transparent; }
 .new-plan-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .new-plan-grid label,
 .duplicate-plan-options > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
