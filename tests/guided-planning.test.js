@@ -15,7 +15,9 @@ assert.strictEqual((index.match(/data-setup-step="[1-5]"/g) || []).length, 5, "O
 assert.ok(index.includes('id="tab-revisar-planejamento"'), "A revisão deve ocorrer antes da geração do primeiro ciclo.");
 assert.ok(index.includes('id="tab-configuracoes"'), "Configurações deve existir como seção interna.");
 assert.ok(!index.includes('aria-label="Planejamento"><h2>Planejamento</h2>'), "Planejamento não deve permanecer como grupo da sidebar.");
-assert.ok(index.includes('aria-label="Sistema"><h2>Sistema</h2>'), "A sidebar deve separar as ações de sistema.");
+assert.ok(!index.includes('aria-label="Sistema"><h2>Sistema</h2>'), "Configurações e troca de cronograma não devem se repetir na sidebar.");
+assert.ok(!index.includes('data-tab-target="configuracoes"'), "A tela de configurações deve ser aberta apenas pela engrenagem.");
+assert.ok(index.includes('id="settingsToggleButton"') && app.includes('switchTab("configuracoes")'), "A engrenagem deve continuar abrindo a tela interna de configurações.");
 assert.ok(app.includes("function normalizedSetupState") && app.includes("legacy: !Object.prototype.hasOwnProperty.call(saved, \"setup\")"), "Snapshots antigos devem ser tratados como configuração concluída.");
 assert.ok(app.includes('setup: { status: "incomplete", currentStep: 1'), "Novos snapshots devem começar incompletos.");
 assert.ok(app.includes("function finishSetup") && app.includes("completeSetup: true"), "A configuração só deve terminar ao gerar o primeiro ciclo.");

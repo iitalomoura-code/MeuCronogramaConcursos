@@ -10716,10 +10716,6 @@ textarea:focus {
 }
 
 /* Guided planning and consolidated settings */
-.sidebar-system-link {
-  text-decoration: none;
-}
-
 .planning-setup-header,
 .planning-settings-context {
   width: min(100%, 1180px);
