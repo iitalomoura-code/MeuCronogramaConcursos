@@ -21,5 +21,6 @@ assert.ok(openModal.includes('els.newPlanStartDate.value = ""'), "A data inicial
 assert.ok(openModal.includes('els.newPlanWeeklyHours.value = "24"'), "A carga deve usar o padrão de um planejamento novo.");
 assert.ok(!openModal.includes("els.weeklyHours?.value"), "O formulário novo não deve copiar valores do cronograma atual.");
 assert.ok(styles.includes(".new-plan-creation-mode .app-shell") && styles.includes("visibility: hidden"), "O ambiente anterior não deve aparecer ao fundo da criação.");
+assert.ok(app.includes('addEventListener("click", () => closeNewPlanModal())'), "Cancelar deve fechar a criação no primeiro clique.");
 
 console.log("OK - novo cronograma abre imediatamente com estado vazio e sem herdar o planejamento atual.");

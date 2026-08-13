@@ -10563,8 +10563,8 @@ els.planMenu?.addEventListener("click", (event) => {
 els.cancelDeletePlanButton?.addEventListener("click", closeDeletePlanModal);
 els.cancelDeletePlanBackdrop?.addEventListener("click", closeDeletePlanModal);
 els.confirmDeletePlanButton?.addEventListener("click", deleteCurrentPlan);
-els.cancelNewPlanButton?.addEventListener("click", closeNewPlanModal);
-els.cancelNewPlanBackdrop?.addEventListener("click", closeNewPlanModal);
+els.cancelNewPlanButton?.addEventListener("click", () => closeNewPlanModal());
+els.cancelNewPlanBackdrop?.addEventListener("click", () => closeNewPlanModal());
 els.confirmNewPlanButton?.addEventListener("click", createNewPlan);
 els.closeManagePlanButton?.addEventListener("click", closeManagePlanModal);
 els.cancelManagePlanBackdrop?.addEventListener("click", closeManagePlanModal);
