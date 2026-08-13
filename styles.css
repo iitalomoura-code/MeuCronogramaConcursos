@@ -10816,7 +10816,6 @@ textarea:focus {
 .planning-setup-steps-modal { margin-top: 0; margin-bottom: 8px; }
 
 .planning-setup-mode .sidebar-flow,
-.planning-setup-mode .sidebar-footer,
 .planning-setup-mode .mobile-bottom-nav { display: none !important; }
 .planning-setup-mode .sidebar { justify-content: flex-start; }
 .planning-setup-mode .sidebar-identity { margin-bottom: 0; }
@@ -10919,4 +10918,140 @@ textarea:focus {
   .planning-review-metrics, .planning-review-subjects { grid-template-columns: 1fr; }
   .planning-review-actions { flex-direction: column-reverse; }
   .planning-review-actions .ghost-button, .planning-review-actions .primary-button { width: 100%; }
+}
+
+/* Sidebar spacing and utilities: use the quieter navigation to create more breathing room. */
+.sidebar {
+  gap: 24px;
+  padding: 24px 18px 16px;
+}
+
+.sidebar-identity {
+  padding: 0 7px;
+}
+
+.brand-top {
+  display: block;
+}
+
+.brand-logo span:first-child {
+  font-size: 22px;
+  font-weight: 680;
+}
+
+.brand-logo span:last-child {
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+
+.brand-tagline {
+  max-width: 220px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sidebar-flow {
+  flex: 1;
+  align-content: start;
+  gap: 28px;
+  padding: 8px 2px 8px 0;
+}
+
+.sidebar-nav-group {
+  gap: 6px;
+}
+
+.sidebar-nav-group > h2 {
+  margin: 0 0 7px;
+  padding: 0 11px;
+  font-size: 10px;
+}
+
+.tab-button {
+  min-height: 46px;
+  gap: 11px;
+  padding: 0 11px;
+  font-size: 14px;
+}
+
+.tab-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.sidebar-flow::before {
+  height: var(--active-indicator-height, 46px);
+}
+
+.sidebar-footer {
+  display: block;
+  margin-top: auto;
+  padding: 0 4px;
+}
+
+.sidebar-utility-actions {
+  display: grid;
+  grid-template-columns: 38px 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--sidebar-block);
+}
+
+.sidebar-utility-actions .sidebar-icon-button {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.sidebar-signout-button {
+  min-width: 0;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--sidebar-muted);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sidebar-signout-button:hover,
+.sidebar-signout-button:focus-visible {
+  background: rgba(180, 35, 24, .16);
+  color: #FFD6D1;
+}
+
+.sidebar-signout-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sidebar-signout-button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+@media (max-width: 860px) {
+  .sidebar {
+    gap: 22px;
+    padding: max(22px, env(safe-area-inset-top)) 18px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .sidebar-flow {
+    gap: 24px;
+    padding-top: 6px;
+  }
+
+  .sidebar-footer {
+    padding: 8px 4px 0;
+  }
 }

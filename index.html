@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260813-sidebar-scroll" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-sidebar-spacious" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -39,10 +39,6 @@
         <div class="brand sidebar-identity">
           <div class="brand-top">
             <brand-logo class="brand-logo" variant="compact"></brand-logo>
-            <div class="brand-controls">
-              <button id="themeToggleButton" class="sidebar-icon-button" type="button" aria-label="Alternar modo noite"><i data-lucide="moon"></i></button>
-              <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir configurações"><i data-lucide="settings"></i></button>
-            </div>
           </div>
           <p class="brand-tagline institutional-slogan">Seu edital em ciclos inteligentes de estudo.</p>
           <div id="settingsMenu" class="settings-popover" hidden>
@@ -63,10 +59,6 @@
                 <label class="backup-button" for="importBackupInput"><i data-lucide="upload"></i><span>Importar backup</span></label>
                 <input id="importBackupInput" type="file" accept="application/json,.json" />
                 <span id="backupReminderStatus" class="backup-last-export">Nenhum backup exportado neste navegador.</span>
-              </section>
-              <section class="settings-section" aria-labelledby="accountSettingsHeading">
-                <h2 id="accountSettingsHeading">Conta</h2>
-                <button id="signOutButton" class="backup-button" type="button"><i data-lucide="log-out"></i><span>Sair</span></button>
               </section>
             </div>
           </div>
@@ -92,6 +84,11 @@
           </section>
         </nav>
         <div class="sidebar-footer">
+          <div class="sidebar-utility-actions" aria-label="Preferências e conta">
+            <button id="themeToggleButton" class="sidebar-icon-button" type="button" aria-label="Alternar modo noite" title="Alternar tema"><i data-lucide="moon"></i></button>
+            <button id="settingsToggleButton" class="sidebar-icon-button" type="button" aria-label="Abrir configurações" title="Configurações"><i data-lucide="settings"></i></button>
+            <button id="signOutButton" class="sidebar-signout-button" type="button"><i data-lucide="log-out"></i><span>Sair</span></button>
+          </div>
           <div class="status-pill" id="confirmationStatus" hidden>Aguardando cadastro</div>
         </div>
       </aside>
@@ -774,7 +771,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./data/incidence/fgv-incidence-base-v1.js?v=20260805-incidence-fgv"></script>
     <script src="./js/incidence.js?v=20260805-incidence-fgv"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260813-sidebar-scroll"></script>
+    <script src="./app.js?v=20260813-sidebar-spacious"></script>
   </body>
 </html>
 
