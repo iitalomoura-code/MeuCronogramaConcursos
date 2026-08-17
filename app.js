@@ -97,6 +97,7 @@ const state = {
   completedHistory: [],
   cycleHistory: [],
   cycleResults: [],
+  weeklyGoals: [],
   reviews: [],
   errors: [],
   notebook: {},
@@ -161,6 +162,7 @@ let editalMapOpenSubjects = new Set();
 let pendingContentMigrationPlan = null;
 let continueAlternativesOpen = true;
 let continueDetailsOpen = false;
+let weeklyDetailsOpen = false;
 let focusedStudyIndex = -1;
 let focusedStudySession = null;
 let focusedStudyDrafts = new Map();
@@ -322,6 +324,7 @@ const els = {
   scheduleStatus: document.querySelector("#scheduleStatus"),
   continuePanel: document.querySelector("#continuePanel"),
   continueCycleProgress: document.querySelector("#continueCycleProgress"),
+  continueWeeklySummary: document.querySelector("#continueWeeklySummary"),
   pendingOnlyToggle: document.querySelector("#pendingOnlyToggle"),
   summaryGrid: document.querySelector("#summaryGrid"),
   scheduleWrap: document.querySelector("#scheduleWrap"),
@@ -4825,6 +4828,225 @@ function blockMatchesContinueFilters(block = {}) {
   return true;
 }
 
+function weeklyBlockKey(block = {}) {
+  return String(block.id || generatedBlockDeduplicationKey(block));
+}
+
+function weeklyRemainingBlockHours(block = {}) {
+  const planned = Math.max(0.25, Number(block.duracao) || 0.5);
+  const status = normalizeStatus(block.status);
+  const alreadyStudied = ["Em andamento", "Reprogramar"].includes(status) ? Math.max(0, Number(block.tempoEstudado) || 0) : 0;
+  return alreadyStudied > 0 ? Math.max(0.25, Number((planned - Math.min(planned, alreadyStudied)).toFixed(2))) : planned;
+}
+
+function weeklyEventDate(block = {}, fallback = "") {
+  const values = [block.atualizadoEm, block.completedAt, block.savedAt, block.concluidoEm, fallback].filter(Boolean);
+  for (const value of values) {
+    const date = value instanceof Date ? value : parseBrazilianDate(value) || new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return "";
+}
+
+function weeklyStudyEvents() {
+  const events = [];
+  const add = (block = {}, fallback = "", source = "") => {
+    if (!block?.materia || !block?.assunto) return;
+    const completedAt = weeklyEventDate(block, fallback);
+    if (!completedAt) return;
+    const status = normalizeStatus(block.status);
+    const hasActivity = status === "Concluído" || Number(block.tempoEstudado) > 0 || Number(block.questoes) > 0;
+    if (!hasActivity) return;
+    const key = weeklyBlockKey(block);
+    events.push({
+      key,
+      eventId: String(block.sessaoId || block.lastSavedSessionId || `${key}:${completedAt}`),
+      completedAt,
+      hours: blockDurationValue(block),
+      status,
+      materia: block.materia,
+      assunto: block.assunto,
+      questions: Number(block.questoes) || 0,
+      correct: Number(block.acertos) || 0,
+    });
+  };
+  state.generatedBlocks.forEach((block) => add(block, "", "current"));
+  state.completedHistory.forEach((block) => add(block, "", "history"));
+  state.cycleHistory.forEach((cycle) => {
+    (cycle.generatedBlocks || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || "", `cycle:${cycle.label || ""}`));
+    (cycle.completedHistory || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || "", `cycle-history:${cycle.label || ""}`));
+  });
+  state.cycleResults.forEach((cycle) => (cycle.completed || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || cycle.closedAt || "", `result:${cycle.label || ""}`)));
+  const byId = new Map();
+  events.forEach((event) => {
+    const previous = byId.get(event.eventId);
+    if (!previous || event.hours > previous.hours || event.status === "Concluído") byId.set(event.eventId, event);
+  });
+  return [...byId.values()];
+}
+
+function weeklyCompletedReviewEvents() {
+  return (state.reviews || [])
+    .filter((record) => normalizeReviewStatus(record.status) === "Concluída" && record.concluidaEm)
+    .map((record) => ({ id: record.id, eventId: `${record.id}:${record.concluidaEm}`, completedAt: record.concluidaEm }));
+}
+
+function weeklyReinforcementCandidates() {
+  const history = adaptiveHistoryEntries();
+  const subjectCache = new Map();
+  const subjectEntries = (materia) => {
+    const key = normalizeForMatch(materia);
+    if (!subjectCache.has(key)) subjectCache.set(key, history.filter((entry) => topicMatches(entry, materia)));
+    return subjectCache.get(key);
+  };
+  return pendingCycleEntries().map(({ block, index }) => {
+    const subjectHistory = subjectEntries(block.materia);
+    const topicEntries = subjectHistory.filter((entry) => topicMatches(entry, block.materia, block.assunto));
+    const entries = topicEntries.length ? topicEntries : subjectHistory;
+    const answered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
+    const recentAccuracy = accuracyFromEntries(answered);
+    const recentQuestions = answered.reduce((sum, entry) => sum + Number(entry.questoes || 0), 0);
+    const lowResultCount = answered.slice(-4).filter((entry) => Number(entry.questoes) >= 5 && Number(entry.percentual) < 0.75).length;
+    const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
+    const subject = subjectPlanningData(block.materia);
+    return {
+      key: weeklyBlockKey(block),
+      index,
+      materia: block.materia,
+      assunto: block.assunto,
+      minutes: Math.min(45, Math.max(30, Math.round((Number(block.duracao) || 0.5) * 60))),
+      priority: Number(block.prioridadeBase ?? block.prioridade ?? priorityScore(subject)) || 0,
+      recentAccuracy,
+      recentQuestions,
+      lowResultCount,
+      performanceDrop: recentPerformanceDrop(entries),
+      highDifficulty: block.dificuldade === "Alta" || Number(subject.dominio) >= 4,
+      daysWithoutContact: subjectHistory.length
+        ? Math.max(0, Math.floor((Date.now() - subjectHistory.reduce((latest, entry) => Math.max(latest, entryDateValue(entry)), 0)) / (1000 * 60 * 60 * 24)))
+        : null,
+      incidenceApplied: Boolean(incidence?.applied),
+      incidence: Number(incidence?.normalized) || 0,
+    };
+  });
+}
+
+function weeklyExamContext() {
+  const config = getContestConfig();
+  const exam = parseLocalDate(config.dataProva);
+  const rows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
+  const topics = rows.map(editalMapTopicState);
+  const contact = topics.filter((topic) => topic.hasContact).length;
+  const total = topics.length;
+  const weeksRemaining = exam ? Math.max(0, Math.ceil(daysBetween(new Date(), exam) / 7)) : null;
+  return {
+    examDate: config.dataProva || "",
+    weeksRemaining,
+    coveragePercent: total ? Math.round((contact / total) * 100) : 0,
+    contactedTopics: contact,
+    totalTopics: total,
+  };
+}
+
+function weeklyProgressFor(goal) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !goal) return null;
+  const events = weeklyStudyEvents();
+  return engine.weeklyProgress(goal, {
+    completedBlocks: events.filter((event) => event.status === "Concluído"),
+    completedReviews: weeklyCompletedReviewEvents(),
+    allStudyEvents: events,
+  });
+}
+
+function weeklyPerformanceSnapshot(goal) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !goal) return null;
+  const bounds = engine.weekBounds(goal.startDate);
+  const allEvents = weeklyStudyEvents();
+  const events = allEvents.filter((event) => engine.withinWeek(event.completedAt, bounds));
+  const answered = events.filter((event) => event.questions > 0);
+  const questions = answered.reduce((sum, event) => sum + event.questions, 0);
+  const correct = answered.reduce((sum, event) => sum + event.correct, 0);
+  const bySubject = new Map();
+  answered.forEach((event) => {
+    const item = bySubject.get(event.materia) || { materia: event.materia, questions: 0, correct: 0 };
+    item.questions += event.questions;
+    item.correct += event.correct;
+    bySubject.set(event.materia, item);
+  });
+  const highlights = [...bySubject.values()]
+    .filter((item) => item.questions >= 5)
+    .map((item) => ({ ...item, accuracy: item.correct / item.questions }))
+    .sort((a, b) => a.accuracy - b.accuracy)
+    .slice(0, 2)
+    .map((item) => `${item.materia}: ${Math.round(item.accuracy * 100)}% em ${item.questions} questões`);
+  const newTopicsContacted = new Set(events
+    .filter((event) => !allEvents.some((previous) => previous.key === event.key && new Date(previous.completedAt) < bounds.start))
+    .map((event) => event.key)).size;
+  if (newTopicsContacted) highlights.push(`${newTopicsContacted} ${newTopicsContacted === 1 ? "novo tema recebeu" : "novos temas receberam"} contato`);
+  if (!events.length && !questions) return null;
+  return { questions, correct, accuracy: questions ? correct / questions : null, newTopicsContacted, highlights: highlights.slice(0, 3) };
+}
+
+function currentWeeklyGoal() {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine) return null;
+  const key = engine.weekBounds(new Date()).key;
+  return (state.weeklyGoals || []).find((goal) => goal.id === key) || null;
+}
+
+function ensureCurrentWeeklyGoal() {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !state.generatedBlocks.length) return null;
+  state.weeklyGoals = Array.isArray(state.weeklyGoals) ? state.weeklyGoals : [];
+  const now = new Date();
+  const currentBounds = engine.weekBounds(now);
+  let changed = false;
+  state.weeklyGoals = state.weeklyGoals.map((goal) => {
+    if (goal.status !== "active" || goal.id === currentBounds.key || String(goal.endDate || "") >= currentBounds.startDate) return goal;
+    changed = true;
+    const progress = weeklyProgressFor(goal);
+    return engine.closeWeeklyGoal(goal, progress, weeklyPerformanceSnapshot(goal), now);
+  });
+  let goal = currentWeeklyGoal();
+  if (!goal) {
+    const config = scheduleConfig();
+    const eventsThisWeek = weeklyStudyEvents().filter((event) => engine.withinWeek(event.completedAt, currentBounds));
+    const remainingDays = 8 - (now.getDay() || 7);
+    const midweekFactor = eventsThisWeek.length ? 1 : Math.max(0.35, remainingDays / 7);
+    const plannedHours = Number((Math.max(0, Number(config.horasSemanaCronograma) || 0) * midweekFactor).toFixed(2));
+    const reviewRows = reviewScheduleRows("all")
+      .filter((record) => !["Concluída", "Cancelada"].includes(record.status))
+      .map((record) => ({ id: record.id, dueDate: record.dueDate }));
+    goal = engine.buildWeeklyGoal({
+      now,
+      plannedHours,
+      cycleLabel: currentCycleLabel(),
+      blocks: pendingCycleEntries().map(({ block, index }) => ({
+        key: weeklyBlockKey(block),
+        order: index,
+        hours: weeklyRemainingBlockHours(block),
+        status: normalizeStatus(block.status),
+        activityType: block.atividadeSugerida || block.tipoAtividade || block.tipo || "Teoria e questões",
+      })),
+      reviews: reviewRows,
+      reinforcementCandidates: weeklyReinforcementCandidates(),
+      examContext: weeklyExamContext(),
+    });
+    state.weeklyGoals.push(goal);
+    state.weeklyGoals = state.weeklyGoals.slice(-52);
+    changed = true;
+  }
+  if (changed && !isRestoring) scheduleAutoSave();
+  return goal;
+}
+
+function weeklyReinforcementForBlock(block = {}) {
+  const goal = currentWeeklyGoal();
+  const key = weeklyBlockKey(block);
+  return goal?.reinforcements?.find((item) => item.blockKey === key) || null;
+}
+
 function continueSuggestionScore(entry) {
   const block = entry.block || {};
   const adaptive = adaptivePriorityForTarget(block);
@@ -4832,6 +5054,7 @@ function continueSuggestionScore(entry) {
   const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
   const status = normalizeStatus(block.status);
   const rotation = recommendationRotationFor(entry);
+  const weeklyReinforcement = weeklyReinforcementForBlock(block);
   let score = 0;
   if (review.overdue.length) score += 130;
   else if (review.today.length) score += 100;
@@ -4841,7 +5064,8 @@ function continueSuggestionScore(entry) {
   score += (incidence.adjustment || 0) * 60;
   score += (Number(block.prioridade) || 0) * 24;
   score += rotation.score;
-  return { score, adaptive, review, rotation, incidence };
+  if (weeklyReinforcement) score += 72;
+  return { score, adaptive, review, rotation, incidence, weeklyReinforcement };
 }
 
 function rankedContinueEntries() {
@@ -4870,7 +5094,10 @@ function buildContinueRecommendation(rankedEntries = null, includeAlternatives =
     alternatives,
     reasons: explanation.factors,
     suggestedMinutes: Math.round((Number(recommendation.block.duracao) || 0) * 60),
-    activityType: recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
+    activityType: recommendation.suggestion.weeklyReinforcement
+      ? "Questões · Reforço recomendado"
+      : recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
+    weeklyReinforcement: recommendation.suggestion.weeklyReinforcement || null,
   };
 }
 
@@ -5115,6 +5342,9 @@ function explainStudySuggestion(block, context = {}) {
   const incidence = context.incidence || block.incidenciaHistorica || historicalIncidenceForTarget(block);
   const factors = [];
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
+  if (context.weeklyReinforcement?.reasons?.length) {
+    context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
+  }
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
@@ -5632,7 +5862,12 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
     return;
   } else {
     const block = state.generatedBlocks[index];
-    const draft = normalizeFocusDraft({ context: context.context || "estudo", reviewId: context.reviewId || "" }, block);
+    const focusContext = context.context || "estudo";
+    const draft = normalizeFocusDraft({
+      context: focusContext,
+      reviewId: context.reviewId || "",
+      tipoAtividade: focusContext === "reforco" ? "Questões" : undefined,
+    }, block);
     focusedStudySession = {
       id: draft.sessionId,
       context: draft.context,
@@ -5895,12 +6130,69 @@ function renderContinueCycleProgress(completed = 0, total = 0, progress = 0) {
   `;
 }
 
+function weeklyPeriodLabel(goal = {}) {
+  const start = parseLocalDate(goal.startDate);
+  const end = parseLocalDate(goal.endDate);
+  if (!start || !end) return "Semana atual";
+  return `${String(start.getDate()).padStart(2, "0")}/${String(start.getMonth() + 1).padStart(2, "0")} a ${String(end.getDate()).padStart(2, "0")}/${String(end.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function renderContinueWeeklySummary(goal, progress) {
+  if (!els.continueWeeklySummary) return;
+  if (!goal || !progress) {
+    els.continueWeeklySummary.hidden = true;
+    els.continueWeeklySummary.innerHTML = "";
+    return;
+  }
+  const percentage = Math.max(0, Math.min(100, Number(progress.compliance) || 0));
+  els.continueWeeklySummary.hidden = false;
+  els.continueWeeklySummary.innerHTML = `
+    <div class="continue-weekly-copy">
+      <span class="continue-weekly-label">Esta semana</span>
+      <div class="continue-weekly-track" role="progressbar" aria-label="Meta semanal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width:${percentage}%"></span></div>
+      <strong>${percentage}%</strong>
+    </div>
+    <div class="continue-weekly-metrics">
+      <span><b>${formatHours(progress.realizedHours)}</b> / ${formatHours(goal.plannedHours)}</span>
+      <span><b>${progress.completedBlocks}</b> / ${progress.plannedBlocks} blocos</span>
+      <span><b>${progress.completedReviews}</b> / ${progress.plannedReviews} revisões</span>
+    </div>
+    <button class="text-action" type="button" data-toggle-week-details aria-expanded="${weeklyDetailsOpen ? "true" : "false"}">${weeklyDetailsOpen ? "Ocultar semana" : "Ver semana"}</button>
+  `;
+}
+
+function weeklyDetailsMarkup(goal, progress) {
+  if (!weeklyDetailsOpen || !goal || !progress) return "";
+  const composition = goal.composition || {};
+  const items = [
+    ["Estudo do ciclo", composition.studyHours],
+    ["Questões direcionadas", composition.questionsHours],
+    ["Revisões", composition.reviewHours],
+    ["Reforços", composition.reinforcementHours],
+    ["Temas em andamento", composition.ongoingHours],
+  ].filter(([, hours]) => Number(hours) > 0);
+  const lastClosed = [...(state.weeklyGoals || [])].reverse().find((item) => item.status === "closed" && item.summary);
+  const remainingBlocks = Math.max(0, progress.plannedBlocks - progress.completedBlocks);
+  const exam = goal.examContext || {};
+  return `
+    <section class="continue-weekly-details" aria-label="Detalhes da meta semanal">
+      <div class="continue-card-header compact">
+        <div><span class="section-kicker">Sua semana · ${escapeHtml(weeklyPeriodLabel(goal))}</span><h3>${formatHours(progress.realizedHours)} de ${formatHours(goal.plannedHours)} realizadas</h3><p>${remainingBlocks ? `${remainingBlocks} ${remainingBlocks === 1 ? "bloco permanece disponível" : "blocos permanecem disponíveis"} para esta semana.` : "A composição prevista para a semana foi percorrida."}</p></div>
+      </div>
+      <div class="weekly-composition-list">${items.length ? items.map(([label, hours]) => `<span><em>${escapeHtml(label)}</em><strong>${formatHours(hours)}</strong></span>`).join("") : `<p class="muted-note">A composição será ajustada aos blocos e revisões disponíveis.</p>`}</div>
+      ${goal.reinforcements?.length ? `<div class="weekly-reinforcement-list"><strong>Reforços recomendados</strong>${goal.reinforcements.map((item) => `<article><div><b>${escapeHtml(item.materia)}</b><span>${escapeHtml(themeTitle(item.assunto))}</span></div><em>${item.minutes} min · Questões</em><small>${escapeHtml(item.reasons.join("; "))}</small></article>`).join("")}</div>` : ""}
+      ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${exam.weeksRemaining === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% do edital com contato. A projeção depende da continuidade do ritmo observado.</p>` : ""}
+      ${lastClosed ? `<div class="weekly-previous-summary"><p><strong>Semana anterior:</strong> ${lastClosed.summary.compliance || 0}% da meta · ${formatHours(lastClosed.summary.realizedHours)} estudadas · ${lastClosed.summary.completedBlocks || 0} blocos · ${lastClosed.summary.completedReviews || 0} revisões.</p>${lastClosed.summary.performance?.highlights?.length ? `<ul>${lastClosed.summary.performance.highlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+    </section>`;
+}
+
 function renderContinuePanel() {
   // A sessão em andamento deve continuar disponível após F5, mas o modo foco
   // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
   if (focusedStudyIndex < 0) removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
   renderContinueCycleProgress();
+  renderContinueWeeklySummary(null, null);
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -5937,6 +6229,9 @@ function renderContinuePanel() {
     return;
   }
 
+  const weeklyGoal = ensureCurrentWeeklyGoal();
+  const weeklyProgress = weeklyProgressFor(weeklyGoal);
+  renderContinueWeeklySummary(weeklyGoal, weeklyProgress);
   const pending = rankedContinueEntries();
   const total = state.generatedBlocks.length;
   const completed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
@@ -5959,6 +6254,7 @@ function renderContinuePanel() {
 
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
+    ${weeklyDetailsMarkup(weeklyGoal, weeklyProgress)}
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
         <div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
@@ -5966,7 +6262,7 @@ function renderContinuePanel() {
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
           <div><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
-          <div><span>Atividade sugerida</span><strong>${escapeHtml(suggested.block.atividadeSugerida || suggested.block.tipoAtividade || suggested.block.tipo || "Teoria e questões")}</strong></div>
+          <div><span>Atividade sugerida</span><strong>${escapeHtml(recommendationResult.activityType)}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
           <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
         </div>
@@ -9615,6 +9911,7 @@ function captureAppState() {
     completedHistory: state.completedHistory,
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
+    weeklyGoals: state.weeklyGoals,
     reviews: state.reviews,
     errors: state.errors,
     notebook: state.notebook,
@@ -9676,6 +9973,7 @@ function applyAppSnapshot(saved = {}) {
     }))
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
+  state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
   repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   repairedDuplicateCycleBlocks = pruneDuplicatePendingCycleBlocks();
@@ -10161,6 +10459,7 @@ function blankAppSnapshot(name = "") {
     completedHistory: [],
     cycleHistory: [],
     cycleResults: [],
+    weeklyGoals: [],
     reviews: [],
     errors: [],
     activeFocusSession: null,
@@ -10710,6 +11009,12 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  if (event.target.closest("[data-toggle-week-details]")) {
+    weeklyDetailsOpen = !weeklyDetailsOpen;
+    renderContinuePanel();
+    return;
+  }
+
   if (event.target.closest("[data-toggle-alternatives]")) {
     continueAlternativesOpen = !continueAlternativesOpen;
     renderContinuePanel();
@@ -10796,7 +11101,7 @@ document.addEventListener("click", (event) => {
     const index = Number(startButton.dataset.startContinue);
     const block = state.generatedBlocks[index];
     if (!block) return;
-    openFocusedStudy(index);
+    openFocusedStudy(index, { context: weeklyReinforcementForBlock(block) ? "reforco" : "estudo" });
     return;
   }
 
