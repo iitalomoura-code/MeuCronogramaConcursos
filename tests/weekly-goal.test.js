@@ -96,4 +96,95 @@ const index = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 assert.match(index, /js\/weekly-goal\.js/);
 assert.match(index, /id="continueWeeklySummary"/);
 
+// 16. Semana 100% concluída gera fechamento objetivo.
+const completeProgress = engine.weeklyProgress(normal, {
+  completedBlocks: normal.plannedBlockKeys.map((key, index) => ({ key, eventId: `complete-${index}`, completedAt: "2026-08-20T10:00:00-03:00", hours: 2 })),
+  allStudyEvents: normal.plannedBlockKeys.map((key, index) => ({ key, eventId: `complete-${index}`, completedAt: "2026-08-20T10:00:00-03:00", hours: 2 })),
+});
+assert.equal(completeProgress.compliance, 100);
+
+// 17. Melhoras e quedas usam pontos percentuais e exigem amostra mínima.
+const performance = {
+  subjects: [
+    { materia: "Português", questions: 20, accuracy: 0.81 },
+    { materia: "RLM", questions: 20, accuracy: 0.68 },
+    { materia: "AFO", questions: 4, accuracy: 0.25 },
+  ],
+};
+const previousPerformance = {
+  subjects: [
+    { materia: "Português", questions: 20, accuracy: 0.74 },
+    { materia: "RLM", questions: 20, accuracy: 0.72 },
+    { materia: "AFO", questions: 30, accuracy: 0.8 },
+  ],
+};
+const comparisons = engine.subjectPerformanceComparisons(performance, previousPerformance);
+assert.equal(comparisons.find((item) => item.materia === "Português").deltaPoints, 7);
+assert.equal(comparisons.find((item) => item.materia === "RLM").deltaPoints, -4);
+assert.equal(comparisons.some((item) => item.materia === "AFO"), false);
+
+// 18. O fechamento reúne cobertura, pendências, reforços e ajuste para a semana seguinte.
+const closure = engine.buildWeeklyClosure({
+  goal: normal,
+  progress: below,
+  performance,
+  previousPerformance,
+  coverage: { totalTopics: 20, beforeContact: 10, afterContact: 13, beforePercent: 50, afterPercent: 65, newTopics: 3, completedTopics: 2, inProgressTopics: 1 },
+  pending: {
+    ongoing: [{ blockKey: "b", materia: "Administração Pública", assunto: "Planejamento" }],
+    reprogrammed: [{ blockKey: "c", materia: "RLM", assunto: "Lógica" }],
+    relevantReviews: [{ id: "r1", materia: "Português" }],
+    reinforcements: [{ blockKey: "a", materia: "Português" }],
+  },
+  contactGaps: [{ materia: "Controle Externo", days: 9 }],
+  examContext: { examDate: "2026-10-01", weeksRemaining: 6, coveragePercent: 65 },
+});
+assert.equal(closure.coverage.newTopics, 3);
+assert.ok(closure.highlights.length <= 4);
+assert.ok(closure.highlights.some((item) => item.detail.includes("p.p.")));
+assert.ok(closure.adjustments.some((item) => item.blockKey === "b" && item.type === "continue"));
+assert.ok(closure.adjustments.some((item) => item.materia === "Controle Externo"));
+assert.equal(closure.examContext.weeksRemaining, 6);
+
+// 19. Semana sem estudo não acumula dívida nem inventa tendência.
+const emptyClosure = engine.buildWeeklyClosure({ goal: normal, progress: { compliance: 0 }, coverage: { totalTopics: 20 } });
+assert.equal(emptyClosure.noActivity, true);
+assert.equal(emptyClosure.highlights.length, 0);
+assert.match(emptyClosure.headline, /Não houve atividades/);
+
+// 20. Ajustes estruturados mudam a precedência sem recriar bloco concluído.
+const adjusted = engine.buildWeeklyGoal({
+  now: new Date("2026-08-24T12:00:00-03:00"),
+  plannedHours: 4,
+  blocks: [
+    { key: "first", materia: "Português", order: 0, hours: 1, status: "Não iniciado" },
+    { key: "return", materia: "Controle Externo", order: 3, hours: 1, status: "Não iniciado" },
+    { key: "done", materia: "AFO", order: 1, hours: 1, status: "Concluído" },
+  ],
+  adjustments: [{ type: "return", materia: "Controle Externo", weight: 55, reason: "retomar Controle Externo" }],
+  sourceWeekId: normal.id,
+});
+assert.equal(adjusted.plannedBlockKeys[0], "return");
+assert.equal(adjusted.plannedBlockKeys.includes("done"), false);
+assert.equal(adjusted.sourceWeekId, normal.id);
+
+// 21. A nova disponibilidade é respeitada em vez de copiar a carga anterior.
+const changedAvailability = engine.buildWeeklyGoal({ now: new Date("2026-08-24T12:00:00-03:00"), plannedHours: 8, blocks });
+assert.equal(changedAvailability.plannedHours, 8);
+assert.equal(next.plannedHours, 6);
+
+// 22. O snapshot completo permanece serializável e ligado ao fechamento.
+const closedWithClosure = engine.closeWeeklyGoal(normal, below, performance, new Date("2026-08-24T08:00:00-03:00"), closure);
+assert.equal(closedWithClosure.closure.coverage.afterPercent, 65);
+assert.doesNotThrow(() => JSON.stringify(closedWithClosure));
+
+// 23. Integração: fechamento pendente, prévia e confirmação não alteram ciclos encerrados.
+assert.match(app, /function weeklyClosureSnapshot/);
+assert.match(app, /function pendingWeeklyClosure/);
+assert.match(app, /function confirmNextWeeklyGoal/);
+assert.match(app, /data-prepare-next-week/);
+assert.match(app, /data-confirm-next-week/);
+assert.match(app, /nextWeekPreparedAt/);
+assert.match(app, /weeklyAdjustmentForBlock/);
+
 console.log("weekly-goal tests passed");

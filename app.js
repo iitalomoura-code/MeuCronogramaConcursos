@@ -163,6 +163,7 @@ let pendingContentMigrationPlan = null;
 let continueAlternativesOpen = true;
 let continueDetailsOpen = false;
 let weeklyDetailsOpen = false;
+let weeklyNextPreviewFor = "";
 let focusedStudyIndex = -1;
 let focusedStudySession = null;
 let focusedStudyDrafts = new Map();
@@ -4832,6 +4833,10 @@ function weeklyBlockKey(block = {}) {
   return String(block.id || generatedBlockDeduplicationKey(block));
 }
 
+function weeklyTopicKey(materia = "", assunto = "") {
+  return `${normalizeForMatch(materia)}::${normalizeForMatch(themeTitle(assunto))}`;
+}
+
 function weeklyRemainingBlockHours(block = {}) {
   const planned = Math.max(0.25, Number(block.duracao) || 0.5);
   const status = normalizeStatus(block.status);
@@ -4866,6 +4871,8 @@ function weeklyStudyEvents() {
       status,
       materia: block.materia,
       assunto: block.assunto,
+      topicKey: weeklyTopicKey(block.materia, block.assunto),
+      activityType: block.atividadeSugerida || block.tipoAtividade || block.tipo || "",
       questions: Number(block.questoes) || 0,
       correct: Number(block.acertos) || 0,
     });
@@ -4974,25 +4981,170 @@ function weeklyPerformanceSnapshot(goal) {
     item.correct += event.correct;
     bySubject.set(event.materia, item);
   });
-  const highlights = [...bySubject.values()]
+  const subjects = [...bySubject.values()]
     .filter((item) => item.questions >= 5)
     .map((item) => ({ ...item, accuracy: item.correct / item.questions }))
-    .sort((a, b) => a.accuracy - b.accuracy)
+    .sort((a, b) => a.accuracy - b.accuracy);
+  const highlights = subjects
     .slice(0, 2)
     .map((item) => `${item.materia}: ${Math.round(item.accuracy * 100)}% em ${item.questions} questões`);
-  const newTopicsContacted = new Set(events
-    .filter((event) => !allEvents.some((previous) => previous.key === event.key && new Date(previous.completedAt) < bounds.start))
-    .map((event) => event.key)).size;
+  const contentEvents = events.filter((event) => !normalizeForMatch(event.activityType).includes("revis"));
+  const priorContentEvents = allEvents.filter((event) => !normalizeForMatch(event.activityType).includes("revis"));
+  const newTopicsContacted = new Set(contentEvents
+    .filter((event) => !priorContentEvents.some((previous) => previous.topicKey === event.topicKey && new Date(previous.completedAt) < bounds.start))
+    .map((event) => event.topicKey)).size;
   if (newTopicsContacted) highlights.push(`${newTopicsContacted} ${newTopicsContacted === 1 ? "novo tema recebeu" : "novos temas receberam"} contato`);
   if (!events.length && !questions) return null;
-  return { questions, correct, accuracy: questions ? correct / questions : null, newTopicsContacted, highlights: highlights.slice(0, 3) };
+  return { questions, correct, accuracy: questions ? correct / questions : null, newTopicsContacted, subjects, highlights: highlights.slice(0, 3) };
+}
+
+function weeklyCoverageSnapshot(goal) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !goal) return null;
+  const bounds = engine.weekBounds(goal.startDate);
+  const rows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
+  const topicKeys = new Set(rows.map((row) => weeklyTopicKey(row.materia, row.assunto)));
+  const events = weeklyStudyEvents().filter((event) => topicKeys.has(event.topicKey) && !normalizeForMatch(event.activityType).includes("revis"));
+  const before = new Set(events.filter((event) => new Date(event.completedAt) < bounds.start).map((event) => event.topicKey));
+  const throughEnd = new Set(events.filter((event) => new Date(event.completedAt) <= bounds.end).map((event) => event.topicKey));
+  const weekEvents = events.filter((event) => engine.withinWeek(event.completedAt, bounds));
+  const newTopics = new Set(weekEvents.filter((event) => !before.has(event.topicKey)).map((event) => event.topicKey));
+  const completedTopics = new Set(weekEvents.filter((event) => event.status === "Concluído").map((event) => event.topicKey));
+  const inProgressTopics = new Set(state.generatedBlocks
+    .filter((block) => ["Em andamento", "Reprogramar"].includes(normalizeStatus(block.status)))
+    .map((block) => weeklyTopicKey(block.materia, block.assunto)));
+  const totalTopics = topicKeys.size;
+  return {
+    totalTopics,
+    beforeContact: before.size,
+    afterContact: throughEnd.size,
+    beforePercent: totalTopics ? Math.round((before.size / totalTopics) * 100) : 0,
+    afterPercent: totalTopics ? Math.round((throughEnd.size / totalTopics) * 100) : 0,
+    newTopics: newTopics.size,
+    completedTopics: completedTopics.size,
+    inProgressTopics: inProgressTopics.size,
+  };
+}
+
+function weeklyPendingSnapshot(goal, progress) {
+  const plannedKeys = new Set(goal?.plannedBlockKeys || []);
+  const plannedReviewIds = new Set(goal?.plannedReviewIds || []);
+  const describe = (block) => ({ blockKey: weeklyBlockKey(block), materia: block.materia, assunto: themeTitle(block.assunto) });
+  const plannedBlocks = state.generatedBlocks.filter((block) => plannedKeys.has(weeklyBlockKey(block)));
+  const ongoing = plannedBlocks.filter((block) => normalizeStatus(block.status) === "Em andamento").map(describe);
+  const reprogrammed = plannedBlocks.filter((block) => normalizeStatus(block.status) === "Reprogramar").map(describe);
+  const relevantReviews = reviewScheduleRows("all")
+    .filter((record) => !["Concluída", "Cancelada"].includes(record.status))
+    .filter((record) => plannedReviewIds.has(record.id) || ["overdue", "today"].includes(record.statusInfo?.group) || (record.dueDate && String(record.dueDate).slice(0, 10) <= String(goal.endDate || "")))
+    .map((record) => ({ id: record.id, materia: record.materia, assunto: record.assunto, dueDate: record.dueDate }));
+  const engine = window.WeeklyGoalEngine;
+  const bounds = engine?.weekBounds(goal.startDate);
+  const completedKeys = new Set(weeklyStudyEvents()
+    .filter((event) => event.status === "Concluído" && (!bounds || engine.withinWeek(event.completedAt, bounds)))
+    .map((event) => event.key));
+  const reinforcements = (goal?.reinforcements || [])
+    .filter((item) => !completedKeys.has(item.blockKey))
+    .map((item) => ({ blockKey: item.blockKey, materia: item.materia, assunto: item.assunto, reasons: item.reasons || [] }));
+  return { ongoing, reprogrammed, relevantReviews, reinforcements, total: ongoing.length + reprogrammed.length + relevantReviews.length + reinforcements.length, progress };
+}
+
+function weeklyContactGaps(goal) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !goal) return [];
+  const bounds = engine.weekBounds(goal.startDate);
+  const latest = new Map();
+  weeklyStudyEvents().forEach((event) => {
+    const time = new Date(event.completedAt).getTime();
+    if (!time || time > bounds.end.getTime()) return;
+    const key = normalizeForMatch(event.materia);
+    const previous = latest.get(key);
+    if (!previous || time > previous.time) latest.set(key, { materia: event.materia, time });
+  });
+  return [...latest.values()].map((item) => ({ materia: item.materia, days: Math.max(0, Math.floor((bounds.end.getTime() - item.time) / 86400000)) }));
+}
+
+function previousWeeklyPerformance(goal) {
+  return [...(state.weeklyGoals || [])]
+    .filter((item) => item.id !== goal.id && item.status === "closed" && item.summary?.performance && String(item.endDate || "") < String(goal.startDate || ""))
+    .sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0]?.summary?.performance || null;
+}
+
+function weeklyClosureSnapshot(goal, progress) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine || !goal) return null;
+  const performance = weeklyPerformanceSnapshot(goal);
+  return engine.buildWeeklyClosure({
+    goal,
+    progress,
+    performance,
+    previousPerformance: previousWeeklyPerformance(goal),
+    coverage: weeklyCoverageSnapshot(goal),
+    pending: weeklyPendingSnapshot(goal, progress),
+    contactGaps: weeklyContactGaps(goal),
+    examContext: goal.examContext || weeklyExamContext(),
+  });
+}
+
+function weeklyProgressFromSummary(goal) {
+  const summary = goal?.summary || {};
+  return {
+    realizedHours: Number(summary.realizedHours) || 0,
+    completedBlocks: Number(summary.completedBlocks) || 0,
+    plannedBlocks: (goal?.plannedBlockKeys || []).length,
+    completedReviews: Number(summary.completedReviews) || 0,
+    plannedReviews: (goal?.plannedReviewIds || []).length,
+    completedReinforcements: Number(summary.completedReinforcements) || 0,
+    plannedReinforcements: (goal?.reinforcements || []).length,
+    compliance: Number(summary.compliance) || 0,
+  };
+}
+
+function pendingWeeklyClosure() {
+  const currentKey = window.WeeklyGoalEngine?.weekBounds(new Date()).key;
+  if ((state.weeklyGoals || []).some((goal) => goal.id === currentKey && goal.status === "active")) return null;
+  return [...(state.weeklyGoals || [])]
+    .filter((goal) => goal.status === "closed" && !goal.nextWeekPreparedAt)
+    .sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0] || null;
+}
+
+function buildWeeklyGoalForDate(now = new Date(), options = {}) {
+  const engine = window.WeeklyGoalEngine;
+  if (!engine) return null;
+  const config = scheduleConfig();
+  const bounds = engine.weekBounds(now);
+  const eventsThisWeek = weeklyStudyEvents().filter((event) => engine.withinWeek(event.completedAt, bounds));
+  const remainingDays = 8 - (now.getDay() || 7);
+  const midweekFactor = eventsThisWeek.length || options.fullWeek ? 1 : Math.max(0.35, remainingDays / 7);
+  const plannedHours = Number((Math.max(0, Number(config.horasSemanaCronograma) || 0) * midweekFactor).toFixed(2));
+  const reviewRows = reviewScheduleRows("all")
+    .filter((record) => !["Concluída", "Cancelada"].includes(record.status))
+    .map((record) => ({ id: record.id, dueDate: record.dueDate }));
+  return engine.buildWeeklyGoal({
+    now,
+    plannedHours,
+    cycleLabel: currentCycleLabel(),
+    blocks: pendingCycleEntries().map(({ block, index }) => ({
+      key: weeklyBlockKey(block),
+      order: index,
+      hours: weeklyRemainingBlockHours(block),
+      status: normalizeStatus(block.status),
+      activityType: block.atividadeSugerida || block.tipoAtividade || block.tipo || "Teoria e questões",
+      materia: block.materia,
+      assunto: block.assunto,
+    })),
+    reviews: reviewRows,
+    reinforcementCandidates: weeklyReinforcementCandidates(),
+    examContext: weeklyExamContext(),
+    adjustments: options.adjustments || [],
+    sourceWeekId: options.sourceWeekId || "",
+  });
 }
 
 function currentWeeklyGoal() {
   const engine = window.WeeklyGoalEngine;
   if (!engine) return null;
   const key = engine.weekBounds(new Date()).key;
-  return (state.weeklyGoals || []).find((goal) => goal.id === key) || null;
+  return (state.weeklyGoals || []).find((goal) => goal.id === key && goal.status === "active") || null;
 }
 
 function ensureCurrentWeeklyGoal() {
@@ -5006,33 +5158,12 @@ function ensureCurrentWeeklyGoal() {
     if (goal.status !== "active" || goal.id === currentBounds.key || String(goal.endDate || "") >= currentBounds.startDate) return goal;
     changed = true;
     const progress = weeklyProgressFor(goal);
-    return engine.closeWeeklyGoal(goal, progress, weeklyPerformanceSnapshot(goal), now);
+    const performance = weeklyPerformanceSnapshot(goal);
+    return engine.closeWeeklyGoal(goal, progress, performance, now, weeklyClosureSnapshot(goal, progress));
   });
   let goal = currentWeeklyGoal();
-  if (!goal) {
-    const config = scheduleConfig();
-    const eventsThisWeek = weeklyStudyEvents().filter((event) => engine.withinWeek(event.completedAt, currentBounds));
-    const remainingDays = 8 - (now.getDay() || 7);
-    const midweekFactor = eventsThisWeek.length ? 1 : Math.max(0.35, remainingDays / 7);
-    const plannedHours = Number((Math.max(0, Number(config.horasSemanaCronograma) || 0) * midweekFactor).toFixed(2));
-    const reviewRows = reviewScheduleRows("all")
-      .filter((record) => !["Concluída", "Cancelada"].includes(record.status))
-      .map((record) => ({ id: record.id, dueDate: record.dueDate }));
-    goal = engine.buildWeeklyGoal({
-      now,
-      plannedHours,
-      cycleLabel: currentCycleLabel(),
-      blocks: pendingCycleEntries().map(({ block, index }) => ({
-        key: weeklyBlockKey(block),
-        order: index,
-        hours: weeklyRemainingBlockHours(block),
-        status: normalizeStatus(block.status),
-        activityType: block.atividadeSugerida || block.tipoAtividade || block.tipo || "Teoria e questões",
-      })),
-      reviews: reviewRows,
-      reinforcementCandidates: weeklyReinforcementCandidates(),
-      examContext: weeklyExamContext(),
-    });
+  if (!goal && !pendingWeeklyClosure()) {
+    goal = buildWeeklyGoalForDate(now);
     state.weeklyGoals.push(goal);
     state.weeklyGoals = state.weeklyGoals.slice(-52);
     changed = true;
@@ -5041,10 +5172,56 @@ function ensureCurrentWeeklyGoal() {
   return goal;
 }
 
+function weeklyNextGoalPreview(closedGoal) {
+  if (!closedGoal) return null;
+  return buildWeeklyGoalForDate(new Date(), {
+    adjustments: closedGoal.closure?.adjustments || [],
+    sourceWeekId: closedGoal.id,
+  });
+}
+
+function confirmNextWeeklyGoal(closedGoalId) {
+  if (currentWeeklyGoal()) return currentWeeklyGoal();
+  const closedGoal = (state.weeklyGoals || []).find((goal) => goal.id === closedGoalId && goal.status === "closed");
+  if (!closedGoal) return null;
+  const nextGoal = weeklyNextGoalPreview(closedGoal);
+  if (!nextGoal) return null;
+  state.weeklyGoals = (state.weeklyGoals || []).map((goal) => goal.id === closedGoal.id
+    ? { ...goal, nextWeekPreparedAt: new Date().toISOString(), nextWeekGoalId: nextGoal.id }
+    : goal);
+  state.weeklyGoals.push(nextGoal);
+  state.weeklyGoals = state.weeklyGoals.slice(-52);
+  weeklyNextPreviewFor = "";
+  weeklyDetailsOpen = false;
+  scheduleAutoSave();
+  return nextGoal;
+}
+
+function weeklyPreviewStats(goal) {
+  const blockKeys = new Set(goal?.plannedBlockKeys || []);
+  const blocks = state.generatedBlocks.filter((block) => blockKeys.has(weeklyBlockKey(block)));
+  return {
+    hours: Number(goal?.plannedHours) || 0,
+    blocks: blockKeys.size,
+    reviews: (goal?.plannedReviewIds || []).length,
+    reinforcements: (goal?.reinforcements || []).length,
+    subjects: new Set(blocks.map((block) => normalizeForMatch(block.materia)).filter(Boolean)).size,
+  };
+}
+
 function weeklyReinforcementForBlock(block = {}) {
   const goal = currentWeeklyGoal();
   const key = weeklyBlockKey(block);
   return goal?.reinforcements?.find((item) => item.blockKey === key) || null;
+}
+
+function weeklyAdjustmentForBlock(block = {}) {
+  const goal = currentWeeklyGoal();
+  if (!goal) return null;
+  const key = weeklyBlockKey(block);
+  return (goal.adjustments || [])
+    .filter((item) => item.blockKey ? item.blockKey === key : normalizeForMatch(item.materia) === normalizeForMatch(block.materia))
+    .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))[0] || null;
 }
 
 function continueSuggestionScore(entry) {
@@ -5055,6 +5232,7 @@ function continueSuggestionScore(entry) {
   const status = normalizeStatus(block.status);
   const rotation = recommendationRotationFor(entry);
   const weeklyReinforcement = weeklyReinforcementForBlock(block);
+  const weeklyAdjustment = weeklyAdjustmentForBlock(block);
   let score = 0;
   if (review.overdue.length) score += 130;
   else if (review.today.length) score += 100;
@@ -5065,7 +5243,8 @@ function continueSuggestionScore(entry) {
   score += (Number(block.prioridade) || 0) * 24;
   score += rotation.score;
   if (weeklyReinforcement) score += 72;
-  return { score, adaptive, review, rotation, incidence, weeklyReinforcement };
+  if (weeklyAdjustment) score += Math.min(95, Math.max(20, Number(weeklyAdjustment.weight) || 0));
+  return { score, adaptive, review, rotation, incidence, weeklyReinforcement, weeklyAdjustment };
 }
 
 function rankedContinueEntries() {
@@ -5345,6 +5524,7 @@ function explainStudySuggestion(block, context = {}) {
   if (context.weeklyReinforcement?.reasons?.length) {
     context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
   }
+  if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
@@ -6145,10 +6325,11 @@ function renderContinueWeeklySummary(goal, progress) {
     return;
   }
   const percentage = Math.max(0, Math.min(100, Number(progress.compliance) || 0));
+  const isClosed = goal.status === "closed";
   els.continueWeeklySummary.hidden = false;
   els.continueWeeklySummary.innerHTML = `
     <div class="continue-weekly-copy">
-      <span class="continue-weekly-label">Esta semana</span>
+      <span class="continue-weekly-label">${isClosed ? "Semana encerrada" : "Esta semana"}</span>
       <div class="continue-weekly-track" role="progressbar" aria-label="Meta semanal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width:${percentage}%"></span></div>
       <strong>${percentage}%</strong>
     </div>
@@ -6157,8 +6338,40 @@ function renderContinueWeeklySummary(goal, progress) {
       <span><b>${progress.completedBlocks}</b> / ${progress.plannedBlocks} blocos</span>
       <span><b>${progress.completedReviews}</b> / ${progress.plannedReviews} revisões</span>
     </div>
-    <button class="text-action" type="button" data-toggle-week-details aria-expanded="${weeklyDetailsOpen ? "true" : "false"}">${weeklyDetailsOpen ? "Ocultar semana" : "Ver semana"}</button>
+    <button class="text-action" type="button" data-toggle-week-details aria-expanded="${weeklyDetailsOpen ? "true" : "false"}">${weeklyDetailsOpen ? "Ocultar" : isClosed ? "Ver fechamento" : "Ver semana"}</button>
   `;
+}
+
+function weeklyClosureMarkup(goal) {
+  if (!weeklyDetailsOpen || !goal?.summary) return "";
+  const progress = weeklyProgressFromSummary(goal);
+  const closure = goal.closure || {};
+  const coverage = closure.coverage || {};
+  const pending = closure.pending || {};
+  const pendingCount = [pending.ongoing, pending.reprogrammed, pending.relevantReviews, pending.reinforcements]
+    .reduce((sum, items) => sum + (Array.isArray(items) ? items.length : 0), 0);
+  const preview = weeklyNextPreviewFor === goal.id ? weeklyNextGoalPreview(goal) : null;
+  const previewStats = weeklyPreviewStats(preview);
+  const comparisons = closure.comparisons || [];
+  const exam = closure.examContext || goal.examContext || {};
+  return `
+    <section class="weekly-closing" aria-label="Fechamento semanal">
+      <header class="weekly-closing-header">
+        <div><span class="section-kicker">Sua semana · ${escapeHtml(weeklyPeriodLabel(goal))}</span><h3>${closure.noActivity ? "Semana sem atividades registradas" : `${progress.compliance}% da meta cumprida`}</h3><p>${closure.noActivity ? "Não houve atividades registradas nesta semana." : `${formatHours(progress.realizedHours)} de ${formatHours(goal.plannedHours)} estudadas`}</p></div>
+        <strong>${progress.compliance}%</strong>
+      </header>
+      <div class="continue-weekly-track weekly-closing-track" role="progressbar" aria-label="Fechamento da meta semanal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.compliance}"><span style="width:${progress.compliance}%"></span></div>
+      <div class="weekly-closing-numbers"><span><b>${progress.completedBlocks}</b> blocos concluídos</span><span><b>${progress.completedReviews}</b> revisões realizadas</span><span><b>${progress.completedReinforcements}</b> reforços concluídos</span></div>
+      ${closure.highlights?.length ? `<div class="weekly-closing-section"><h4>Destaques da semana</h4><div class="weekly-highlight-list">${closure.highlights.map((item) => `<article><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail)}</p></article>`).join("")}</div></div>` : `<p class="muted-note">${closure.noActivity ? "Você pode preparar a próxima semana normalmente, sem acumular a carga anterior." : "Ainda não há dados suficientes para gerar destaques confiáveis."}</p>`}
+      <div class="weekly-closing-columns">
+        <section><h4>Evolução de desempenho</h4>${comparisons.length ? comparisons.slice(0, 4).map((item) => `<p><strong>${escapeHtml(item.materia)}</strong><span>${Math.round(item.previousAccuracy * 100)}% → ${Math.round(item.currentAccuracy * 100)}% <em class="${item.deltaPoints >= 0 ? "is-positive" : "is-attention"}">${item.deltaPoints >= 0 ? "↑ +" : "↓ "}${item.deltaPoints} p.p.</em></span></p>`).join("") : `<p class="muted-note">Dados insuficientes para comparar esta semana.</p>`}</section>
+        <section><h4>Cobertura do edital</h4>${Number(coverage.totalTopics) ? `<p class="weekly-coverage-change"><strong>${coverage.beforePercent || 0}% → ${coverage.afterPercent || 0}%</strong><span>+${coverage.newTopics || 0} ${Number(coverage.newTopics) === 1 ? "tema com primeiro contato" : "temas com primeiro contato"}</span><small>${coverage.completedTopics || 0} concluídos · ${coverage.inProgressTopics || 0} em andamento</small></p>` : `<p class="muted-note">A cobertura será exibida quando houver temas selecionados.</p>`}</section>
+      </div>
+      <div class="weekly-closing-section"><h4>Continua na próxima semana</h4><p>${pendingCount ? `${pendingCount} ${pendingCount === 1 ? "atividade será redistribuída" : "atividades serão redistribuídas"}.` : "Nenhuma pendência relevante precisa ser redistribuída."}</p><div class="weekly-pending-meta"><span>${pending.ongoing?.length || 0} em andamento</span><span>${pending.reprogrammed?.length || 0} reprogramadas</span><span>${pending.relevantReviews?.length || 0} revisões</span><span>${pending.reinforcements?.length || 0} reforços</span></div></div>
+      ${closure.adjustments?.length ? `<div class="weekly-closing-section"><h4>Ajustes para a próxima semana</h4><ul>${closure.adjustments.slice(0, 5).map((item) => `<li>${escapeHtml(item.reason)}</li>`).join("")}</ul></div>` : ""}
+      ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${Number(exam.weeksRemaining) === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% de cobertura atual.</p>` : ""}
+      ${preview ? `<div class="weekly-next-preview"><div><span class="section-kicker">Próxima semana</span><h4>${formatHours(previewStats.hours)} previstas</h4></div><dl><div><dt>Blocos</dt><dd>${previewStats.blocks}</dd></div><div><dt>Revisões</dt><dd>${previewStats.reviews}</dd></div><div><dt>Reforços</dt><dd>${previewStats.reinforcements}</dd></div><div><dt>Matérias</dt><dd>${previewStats.subjects}</dd></div></dl><div class="weekly-preview-actions"><button class="ghost-button" type="button" data-cancel-week-preview>Voltar</button><button class="primary-button" type="button" data-confirm-next-week="${escapeHtml(goal.id)}">Confirmar semana</button></div></div>` : `<button class="primary-button weekly-prepare-button" type="button" data-prepare-next-week="${escapeHtml(goal.id)}"><i data-lucide="calendar-plus"></i><span>Preparar próxima semana</span></button>`}
+    </section>`;
 }
 
 function weeklyDetailsMarkup(goal, progress) {
@@ -6182,7 +6395,7 @@ function weeklyDetailsMarkup(goal, progress) {
       <div class="weekly-composition-list">${items.length ? items.map(([label, hours]) => `<span><em>${escapeHtml(label)}</em><strong>${formatHours(hours)}</strong></span>`).join("") : `<p class="muted-note">A composição será ajustada aos blocos e revisões disponíveis.</p>`}</div>
       ${goal.reinforcements?.length ? `<div class="weekly-reinforcement-list"><strong>Reforços recomendados</strong>${goal.reinforcements.map((item) => `<article><div><b>${escapeHtml(item.materia)}</b><span>${escapeHtml(themeTitle(item.assunto))}</span></div><em>${item.minutes} min · Questões</em><small>${escapeHtml(item.reasons.join("; "))}</small></article>`).join("")}</div>` : ""}
       ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${exam.weeksRemaining === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% do edital com contato. A projeção depende da continuidade do ritmo observado.</p>` : ""}
-      ${lastClosed ? `<div class="weekly-previous-summary"><p><strong>Semana anterior:</strong> ${lastClosed.summary.compliance || 0}% da meta · ${formatHours(lastClosed.summary.realizedHours)} estudadas · ${lastClosed.summary.completedBlocks || 0} blocos · ${lastClosed.summary.completedReviews || 0} revisões.</p>${lastClosed.summary.performance?.highlights?.length ? `<ul>${lastClosed.summary.performance.highlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+      ${lastClosed ? `<div class="weekly-previous-summary"><p><strong>Último fechamento (${escapeHtml(weeklyPeriodLabel(lastClosed))}):</strong> ${lastClosed.summary.compliance || 0}% da meta · ${formatHours(lastClosed.summary.realizedHours)} estudadas · ${lastClosed.summary.completedBlocks || 0} blocos · ${lastClosed.summary.completedReviews || 0} revisões.</p>${lastClosed.closure?.highlights?.length ? `<ul>${lastClosed.closure.highlights.slice(0, 3).map((item) => `<li><strong>${escapeHtml(item.title)}:</strong> ${escapeHtml(item.detail)}</li>`).join("")}</ul>` : ""}</div>` : ""}
     </section>`;
 }
 
@@ -6230,8 +6443,9 @@ function renderContinuePanel() {
   }
 
   const weeklyGoal = ensureCurrentWeeklyGoal();
-  const weeklyProgress = weeklyProgressFor(weeklyGoal);
-  renderContinueWeeklySummary(weeklyGoal, weeklyProgress);
+  const weeklyClosure = pendingWeeklyClosure();
+  const weeklyProgress = weeklyGoal ? weeklyProgressFor(weeklyGoal) : weeklyProgressFromSummary(weeklyClosure);
+  renderContinueWeeklySummary(weeklyGoal || weeklyClosure, weeklyProgress);
   const pending = rankedContinueEntries();
   const total = state.generatedBlocks.length;
   const completed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
@@ -6254,7 +6468,7 @@ function renderContinuePanel() {
 
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
-    ${weeklyDetailsMarkup(weeklyGoal, weeklyProgress)}
+    ${weeklyClosure ? weeklyClosureMarkup(weeklyClosure) : weeklyDetailsMarkup(weeklyGoal, weeklyProgress)}
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
         <div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
@@ -11012,6 +11226,27 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-toggle-week-details]")) {
     weeklyDetailsOpen = !weeklyDetailsOpen;
     renderContinuePanel();
+    return;
+  }
+
+  const prepareNextWeek = event.target.closest("[data-prepare-next-week]");
+  if (prepareNextWeek) {
+    weeklyNextPreviewFor = prepareNextWeek.dataset.prepareNextWeek || "";
+    weeklyDetailsOpen = true;
+    renderContinuePanel();
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-week-preview]")) {
+    weeklyNextPreviewFor = "";
+    renderContinuePanel();
+    return;
+  }
+
+  const confirmNextWeek = event.target.closest("[data-confirm-next-week]");
+  if (confirmNextWeek) {
+    const goal = confirmNextWeeklyGoal(confirmNextWeek.dataset.confirmNextWeek || "");
+    if (goal) renderContinuePanel();
     return;
   }
 
