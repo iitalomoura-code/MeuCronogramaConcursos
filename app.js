@@ -98,12 +98,13 @@ const state = {
   cycleHistory: [],
   cycleResults: [],
   weeklyGoals: [],
+  initialDiagnosis: [],
   reviews: [],
   errors: [],
   notebook: {},
   activeFocusSession: null,
   locked: false,
-  setup: { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] },
+  setup: { status: "complete", flowVersion: 2, currentStep: 6, completedSteps: [1, 2, 3, 4, 5, 6] },
 };
 
 let notebookSelection = { materia: "", assunto: "" };
@@ -196,6 +197,11 @@ const els = {
   planningSettingsContextTitle: document.querySelector("#planningSettingsContextTitle"),
   planningSettingsImpactText: document.querySelector("#planningSettingsImpactText"),
   planningReviewSummary: document.querySelector("#planningReviewSummary"),
+  initialDiagnosisList: document.querySelector("#initialDiagnosisList"),
+  diagnosisBulkLevel: document.querySelector("#diagnosisBulkLevel"),
+  applyDiagnosisBulkButton: document.querySelector("#applyDiagnosisBulkButton"),
+  backToContentFromDiagnosisButton: document.querySelector("#backToContentFromDiagnosisButton"),
+  continueToPriorityFromDiagnosisButton: document.querySelector("#continueToPriorityFromDiagnosisButton"),
   backToPriorityFromReviewButton: document.querySelector("#backToPriorityFromReviewButton"),
   generateFirstCycleButton: document.querySelector("#generateFirstCycleButton"),
   settingsBackupStatus: document.querySelector("#settingsBackupStatus"),
@@ -1362,24 +1368,31 @@ function openReviewCount() {
   return (Array.isArray(state.reviews) ? state.reviews : []).filter((review) => !["Concluída", "Cancelada"].includes(review.status)).length;
 }
 
-const SETUP_STEP_TABS = Object.freeze({ 1: "concurso", 2: "conteudo", 3: "pesos", 4: "revisar-planejamento", 5: "revisar-planejamento" });
+const SETUP_STEP_TABS = Object.freeze({ 1: "concurso", 2: "conteudo", 3: "diagnostico", 4: "pesos", 5: "revisar-planejamento", 6: "revisar-planejamento" });
+const SETUP_FLOW_VERSION = 2;
 const PLANNING_TAB_TITLES = Object.freeze({
   concurso: "Dados do concurso",
   conteudo: "Conteúdo programático",
+  diagnostico: "Diagnóstico inicial",
   pesos: "Prioridade das matérias",
 });
 
 function normalizedSetupState(value, { legacy = false } = {}) {
   if (!value || typeof value !== "object") {
     return legacy
-      ? { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] }
-      : { status: "incomplete", currentStep: 1, completedSteps: [] };
+      ? { status: "complete", flowVersion: SETUP_FLOW_VERSION, currentStep: 6, completedSteps: [1, 2, 3, 4, 5, 6] }
+      : { status: "incomplete", flowVersion: SETUP_FLOW_VERSION, currentStep: 1, completedSteps: [] };
   }
   const status = value.status === "incomplete" ? "incomplete" : "complete";
-  const currentStep = Math.min(5, Math.max(1, Number(value.currentStep) || (status === "complete" ? 5 : 1)));
+  const legacyStepMap = { 1: 1, 2: 2, 3: 4, 4: 5, 5: 6 };
+  const isPreviousFlow = status === "incomplete" && (Number(value.flowVersion) || 0) < SETUP_FLOW_VERSION;
+  const rawCurrentStep = Number(value.currentStep) || (status === "complete" ? 6 : 1);
+  const currentStep = Math.min(6, Math.max(1, isPreviousFlow ? legacyStepMap[rawCurrentStep] || 1 : rawCurrentStep));
   const completedSteps = [...new Set((Array.isArray(value.completedSteps) ? value.completedSteps : [])
-    .map(Number).filter((step) => step >= 1 && step <= 5))];
-  return { status, currentStep, completedSteps: status === "complete" ? [1, 2, 3, 4, 5] : completedSteps };
+    .map(Number)
+    .map((step) => isPreviousFlow ? legacyStepMap[step] || step : step)
+    .filter((step) => step >= 1 && step <= 6))];
+  return { status, flowVersion: SETUP_FLOW_VERSION, currentStep, completedSteps: status === "complete" ? [1, 2, 3, 4, 5, 6] : completedSteps };
 }
 
 function setupIsIncomplete() {
@@ -1387,7 +1400,7 @@ function setupIsIncomplete() {
 }
 
 function setupTabForStep(step = state.setup?.currentStep || 1) {
-  return SETUP_STEP_TABS[Math.min(5, Math.max(1, Number(step) || 1))] || "concurso";
+  return SETUP_STEP_TABS[Math.min(6, Math.max(1, Number(step) || 1))] || "concurso";
 }
 
 function renderSetupProgress() {
@@ -1406,16 +1419,16 @@ function renderSetupProgress() {
 
 function setSetupStep(step, { save = true } = {}) {
   if (!setupIsIncomplete()) return;
-  const nextStep = Math.min(5, Math.max(1, Number(step) || 1));
+  const nextStep = Math.min(6, Math.max(1, Number(step) || 1));
   const completed = new Set(state.setup.completedSteps || []);
   for (let value = 1; value < nextStep; value += 1) completed.add(value);
-  state.setup = { status: "incomplete", currentStep: nextStep, completedSteps: [...completed].sort((a, b) => a - b) };
+  state.setup = { status: "incomplete", flowVersion: SETUP_FLOW_VERSION, currentStep: nextStep, completedSteps: [...completed].sort((a, b) => a - b) };
   renderSetupProgress();
   if (save) scheduleAutoSave();
 }
 
 function finishSetup() {
-  state.setup = { status: "complete", currentStep: 5, completedSteps: [1, 2, 3, 4, 5] };
+  state.setup = { status: "complete", flowVersion: SETUP_FLOW_VERSION, currentStep: 6, completedSteps: [1, 2, 3, 4, 5, 6] };
   planningSettingsContextTab = "";
   renderSetupProgress();
   scheduleAutoSave();
@@ -1443,7 +1456,7 @@ function openPlanningSettings(tabName) {
 
 function markPlanningSettingsDirty(event) {
   if (!document.body.classList.contains("planning-settings-mode")) return;
-  if (!event.target.closest("#tab-concurso, #tab-conteudo, #tab-pesos")) return;
+  if (!event.target.closest("#tab-concurso, #tab-conteudo, #tab-diagnostico, #tab-pesos")) return;
   document.body.classList.add("planning-settings-dirty");
 }
 
@@ -1457,7 +1470,7 @@ function markPlanningSettingsActionDirty(event) {
     "[data-promote-topic]", "[data-confirm-split]", "[data-save-topic-edit]",
     "[data-undo-content]",
   ].join(","));
-  if (mutatingAction?.closest("#tab-concurso, #tab-conteudo, #tab-pesos")) {
+  if (mutatingAction?.closest("#tab-concurso, #tab-conteudo, #tab-diagnostico, #tab-pesos")) {
     document.body.classList.add("planning-settings-dirty");
   }
 }
@@ -1467,12 +1480,13 @@ function renderPlanningReview() {
   const subjects = Array.isArray(state.planningBase?.materias) ? state.planningBase.materias : [];
   const selectedRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
   const topics = subjects.reduce((sum, subject) => sum + (subject.assuntos?.length || 0), 0) || selectedRows.length;
+  const diagnosed = subjects.filter((subject) => (initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel || "unknown") !== "unknown").length;
   const config = getContestConfig();
   const board = currentExamBoardState();
   els.planningReviewSummary.innerHTML = `
     <section class="planning-review-lead"><span class="section-kicker">${escapeHtml(config.cargo || "Planejamento de estudos")}</span><h3>${escapeHtml(config.concurso || "Novo concurso")}</h3><p>${board.examBoardName ? `Banca ${escapeHtml(board.examBoardName)} · ` : ""}${formatHours(config.horasSemana)} por ciclo · referência de ${formatHours(config.duracaoBloco)}</p></section>
-    <div class="planning-review-metrics"><div><strong>${subjects.length}</strong><span>matérias</span></div><div><strong>${topics}</strong><span>temas selecionados</span></div><div><strong>${formatHours(config.horasSemana)}</strong><span>carga do ciclo</span></div></div>
-    <div class="planning-review-subjects">${subjects.map((subject) => `<article><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} temas · prioridade ${escapeHtml(priorityInfo(priorityScore(subject)).label.toLowerCase())}</span></article>`).join("")}</div>
+    <div class="planning-review-metrics"><div><strong>${subjects.length}</strong><span>matérias</span></div><div><strong>${topics}</strong><span>temas selecionados</span></div><div><strong>${diagnosed}/${subjects.length}</strong><span>diagnósticos informados</span></div><div><strong>${formatHours(config.horasSemana)}</strong><span>carga do ciclo</span></div></div>
+    <div class="planning-review-subjects">${subjects.map((subject) => `<article><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} temas · prioridade ${escapeHtml(priorityInfo(priorityScore(subject)).label.toLowerCase())} · ${escapeHtml(window.InitialDiagnosisEngine?.levelInfo(initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel).label || "Não sei avaliar")}</span></article>`).join("")}</div>
     <p class="planning-review-note">O primeiro ciclo será criado com a lógica atual. Você poderá ajustar esses dados depois em Configurações, sem alterar ciclos concluídos.</p>`;
 }
 
@@ -1541,6 +1555,7 @@ function renderActiveTabContent(tabName) {
   if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
   if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);
+  if (tabName === "diagnostico") safeRender("Diagnóstico inicial", renderInitialDiagnosis);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
   if (tabName === "revisar-planejamento") safeRender("Revisão do planejamento", renderPlanningReview);
   if (tabName === "configuracoes" && els.settingsBackupStatus) {
@@ -3311,9 +3326,14 @@ function confirmRows(options = {}) {
   ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
   renderPlanningBase();
   updateContentFlowSteps();
-  if (setupIsIncomplete()) setSetupStep(3);
-  else if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
-  switchTab("pesos");
+  if (setupIsIncomplete()) {
+    ensureInitialDiagnosisForSubjects({ saveUnknown: true });
+    setSetupStep(3);
+    switchTab("diagnostico");
+  } else {
+    if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
+    switchTab("pesos");
+  }
 }
 
 function renderPlanningBase() {
@@ -3528,6 +3548,102 @@ function priorityInfo(score) {
   if (percent < 60) return { label: "M\u00e9dia", className: "medium", percent };
   if (percent < 80) return { label: "Alta", className: "high", percent };
   return { label: "Muito alta", className: "very-high", percent };
+}
+
+function initialDiagnosisSubjectId(materia = "") {
+  return window.InitialDiagnosisEngine?.subjectIdForName(materia) || `subject-${normalizeForMatch(materia).replace(/\s+/g, "-")}`;
+}
+
+function initialDiagnosisRecordFor(materia = "") {
+  const subjectId = initialDiagnosisSubjectId(materia);
+  return (state.initialDiagnosis || []).find((record) =>
+    record.subjectId === subjectId || normalizeForMatch(record.subjectName || "") === normalizeForMatch(materia)
+  ) || null;
+}
+
+function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true } = {}) {
+  if (!materia || !window.InitialDiagnosisEngine) return;
+  const normalizedLevel = window.InitialDiagnosisEngine.normalizeLevel(level);
+  const subjectId = initialDiagnosisSubjectId(materia);
+  const current = initialDiagnosisRecordFor(materia);
+  const now = new Date().toISOString();
+  const record = {
+    studyPlanId: state.currentPlanId || state.activeStudyPlanId || "",
+    subjectId,
+    subjectName: materia,
+    initialKnowledgeLevel: normalizedLevel,
+    createdAt: current?.createdAt || now,
+    updatedAt: now,
+  };
+  state.initialDiagnosis = (state.initialDiagnosis || []).filter((item) => item !== current && item.subjectId !== subjectId);
+  state.initialDiagnosis.push(record);
+  if (save) scheduleAutoSave();
+}
+
+function ensureInitialDiagnosisForSubjects({ saveUnknown = false } = {}) {
+  const subjects = state.planningBase?.materias || [];
+  if (!saveUnknown) return;
+  subjects.forEach((subject) => {
+    if (!initialDiagnosisRecordFor(subject.materia)) setInitialDiagnosisLevel(subject.materia, "unknown", { save: false });
+  });
+  scheduleAutoSave();
+}
+
+function initialDiagnosisEvidence(materia = "") {
+  const entries = adaptivePerformanceForSubject(materia);
+  const unique = new Map();
+  entries.forEach((entry) => {
+    const key = [normalizeForMatch(entry.assunto), entryDateValue(entry), entry.questoes, entry.acertos, entry.tempoEstudado, entry.status].join("|");
+    if (!unique.has(key)) unique.set(key, entry);
+  });
+  const records = [...unique.values()];
+  const relatedReviews = (state.reviews || []).filter((review) => topicMatches(review, materia));
+  return {
+    questions: records.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0),
+    sessions: records.filter((entry) => entryDateValue(entry) || Number(entry.tempoEstudado) > 0 || Number(entry.questoes) > 0).length,
+    reviews: relatedReviews.filter((review) => normalizeReviewStatus(review.status) === "Concluída").length,
+    hours: records.reduce((sum, entry) => sum + (Number(entry.tempoEstudado) || 0), 0),
+    reinforcements: relatedReviews.filter((review) => isAdaptiveReview(review) || review.intensidade === "prioritaria").length,
+  };
+}
+
+function initialDiagnosisInfluence(materia = "") {
+  const record = initialDiagnosisRecordFor(materia);
+  const level = record?.initialKnowledgeLevel || "unknown";
+  const influence = window.InitialDiagnosisEngine?.influenceFor(level, initialDiagnosisEvidence(materia)) || {
+    level: "unknown", label: "Não sei avaliar", confidence: 0, remainingWeight: 0, adjustment: 0, active: false, historyIsPrimary: false,
+  };
+  return { ...influence, record };
+}
+
+function initialDiagnosisReason(materia = "") {
+  const influence = initialDiagnosisInfluence(materia);
+  if (!influence.active || influence.historyIsPrimary) return "";
+  if (["none", "weak"].includes(influence.level)) return "você indicou pouca familiaridade inicial";
+  if (influence.level === "good") return "você indicou bom domínio inicial";
+  return "";
+}
+
+function renderInitialDiagnosis() {
+  if (!els.initialDiagnosisList || !window.InitialDiagnosisEngine) return;
+  const subjects = state.planningBase?.materias || [];
+  if (!subjects.length) {
+    els.initialDiagnosisList.innerHTML = `<p class="empty-state compact">Confirme o conteúdo programático para avaliar as matérias.</p>`;
+    return;
+  }
+  const levels = Object.values(window.InitialDiagnosisEngine.LEVELS);
+  els.initialDiagnosisList.innerHTML = subjects.map((subject) => {
+    const influence = initialDiagnosisInfluence(subject.materia);
+    const historyNotice = influence.historyIsPrimary
+      ? `<small>Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.</small>`
+      : "";
+    return `<article class="initial-diagnosis-row" data-diagnosis-subject="${escapeHtml(subject.materia)}">
+      <div class="initial-diagnosis-subject"><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} tema${subject.assuntos?.length === 1 ? "" : "s"}</span>${historyNotice}</div>
+      <div class="initial-diagnosis-options" role="radiogroup" aria-label="Conhecimento inicial em ${escapeHtml(subject.materia)}">
+        ${levels.map((level) => `<label class="initial-diagnosis-option"><input type="radio" name="diagnosis-${escapeHtml(initialDiagnosisSubjectId(subject.materia))}" value="${level.id}" ${influence.level === level.id ? "checked" : ""}><span>${escapeHtml(level.label)}</span></label>`).join("")}
+      </div>
+    </article>`;
+  }).join("");
 }
 
 function entryDateValue(entry = {}) {
@@ -3851,12 +3967,15 @@ function schedulingPriorityForTarget(target = {}) {
   const base = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
   const adaptive = adaptivePriorityForTarget({ ...target, ...subject, prioridade: base, prioridadeBase: base });
   const incidence = historicalIncidenceForTarget({ materia: target.materia || subject.materia, assunto: target.assunto || "", subject });
+  const diagnosis = target.initialDiagnosis || initialDiagnosisInfluence(target.materia || subject.materia);
   return {
     base,
-    adjusted: Math.min(1 + INCIDENCE_MAX_ADJUSTMENT, adaptive.adjusted + incidence.adjustment),
+    adjusted: Math.max(0.1, Math.min(1 + INCIDENCE_MAX_ADJUSTMENT, adaptive.adjusted + incidence.adjustment + diagnosis.adjustment)),
     adaptive,
     incidence,
     incidenceAdjustment: incidence.adjustment || 0,
+    diagnosis,
+    diagnosisAdjustment: diagnosis.adjustment || 0,
   };
 }
 
@@ -4184,8 +4303,9 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
   if (!materias.length || totalBlocks <= 0) return [];
   const scored = materias.map((materia) => {
     const basePriority = priorityScore(materia);
+    const initialDiagnosis = initialDiagnosisInfluence(materia.materia);
     const scheduling = options.adaptive
-      ? schedulingPriorityForTarget({ ...materia, subject: materia, prioridade: basePriority, prioridadeBase: basePriority })
+      ? schedulingPriorityForTarget({ ...materia, subject: materia, prioridade: basePriority, prioridadeBase: basePriority, initialDiagnosis })
       : { adjusted: basePriority, adaptive: null, incidence: { applied: false }, incidenceAdjustment: 0 };
     const adaptive = scheduling.adaptive;
     return {
@@ -4196,6 +4316,8 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
       adaptiveReason: adaptive?.reason || "",
       incidenciaHistorica: scheduling.incidence,
       incidenceAdjustment: scheduling.incidenceAdjustment || 0,
+      initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
+      initialDiagnosis,
     };
   });
   const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0) || scored.length || 1;
@@ -4260,6 +4382,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       assunto: topic.assunto,
       prioridade: chosen.prioridade,
       prioridadeBase: chosen.prioridadeBase,
+      initialDiagnosis: chosen.initialDiagnosis,
     });
     const topicAdaptive = topicScheduling.adaptive;
     queue.push({
@@ -4272,6 +4395,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
       incidenciaHistorica: topicScheduling.incidence?.applied ? topicScheduling.incidence : chosen.incidenciaHistorica,
       incidenceAdjustment: Math.max(chosen.incidenceAdjustment || 0, topicScheduling.incidenceAdjustment || 0),
+      initialDiagnosisAdjustment: topicScheduling.diagnosisAdjustment || chosen.initialDiagnosisAdjustment || 0,
       rotationReason: chosen.exposures === 0 ? "a matéria ainda não apareceu neste ciclo" : cycleAbsenceForSubject(chosen.materia) > 1 ? "a matéria voltou após ciclos sem aparecer" : "",
     });
     chosen.remaining = Math.max(0, chosen.remaining - 1);
@@ -4298,6 +4422,7 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         assunto: topic.assunto,
         prioridade: subject.prioridade,
         prioridadeBase: subject.prioridadeBase,
+        initialDiagnosis: subject.initialDiagnosis,
       });
       const adaptive = scheduling.adaptive;
       return {
@@ -4308,6 +4433,7 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         adaptiveReason: adaptive.reason,
         incidenciaHistorica: scheduling.incidence,
         incidenceAdjustment: scheduling.incidenceAdjustment || 0,
+        initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
       };
     })
     .sort((a, b) =>
@@ -4342,7 +4468,9 @@ function distributeAcrossSlots(queue, slots) {
 function activityForQueueItem(item = {}) {
   const review = reviewAttentionFor(item.materia, item.assunto);
   if (review.overdue.length) return "Revisão";
-  return "Teoria e questões";
+  const currentActivity = "Teoria e questões";
+  const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
+  return window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
 }
 
 function fittedDurationMinutes(estimate, remainingMinutes) {
@@ -4460,6 +4588,7 @@ function blockRow(number, duration, item, type, estimate = {}) {
     adaptiveReason: item.adaptiveReason || "",
     incidenciaHistorica: item.incidenciaHistorica?.applied ? item.incidenciaHistorica : null,
     incidenceAdjustment: Number(item.incidenceAdjustment) || 0,
+    initialDiagnosisAdjustment: Number(item.initialDiagnosisAdjustment) || 0,
     rotationReason: item.rotationReason || "",
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
@@ -5528,6 +5657,8 @@ function explainStudySuggestion(block, context = {}) {
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
+  const diagnosisReason = initialDiagnosisReason(block.materia);
+  if (diagnosisReason && initialDiagnosisInfluence(block.materia).adjustment > 0) factors.push(diagnosisReason);
   if (Number(subjectPlanningData(block.materia).dominio) >= 4) factors.push("dificuldade pessoal alta");
   const rotationReasons = context.rotation?.reasons || [context.rotation?.reason || block.rotationReason].filter(Boolean);
   rotationReasons.forEach((reason) => {
@@ -10126,6 +10257,7 @@ function captureAppState() {
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
     weeklyGoals: state.weeklyGoals,
+    initialDiagnosis: state.initialDiagnosis,
     reviews: state.reviews,
     errors: state.errors,
     notebook: state.notebook,
@@ -10188,6 +10320,16 @@ function applyAppSnapshot(saved = {}) {
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
+  state.initialDiagnosis = Array.isArray(saved.initialDiagnosis)
+    ? saved.initialDiagnosis.map((record) => ({
+      studyPlanId: record.studyPlanId || state.currentPlanId || state.activeStudyPlanId || "",
+      subjectId: record.subjectId || initialDiagnosisSubjectId(record.subjectName || ""),
+      subjectName: record.subjectName || "",
+      initialKnowledgeLevel: window.InitialDiagnosisEngine?.normalizeLevel(record.initialKnowledgeLevel) || "unknown",
+      createdAt: record.createdAt || record.updatedAt || saved.savedAt || new Date().toISOString(),
+      updatedAt: record.updatedAt || record.createdAt || saved.savedAt || new Date().toISOString(),
+    }))
+    : [];
   repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
   repairedDuplicateCycleBlocks = pruneDuplicatePendingCycleBlocks();
@@ -10674,10 +10816,11 @@ function blankAppSnapshot(name = "") {
     cycleHistory: [],
     cycleResults: [],
     weeklyGoals: [],
+    initialDiagnosis: [],
     reviews: [],
     errors: [],
     activeFocusSession: null,
-    setup: { status: "incomplete", currentStep: 1, completedSteps: [] },
+    setup: { status: "incomplete", flowVersion: SETUP_FLOW_VERSION, currentStep: 1, completedSteps: [] },
     showPendingOnly: false,
   };
 }
@@ -12412,9 +12555,33 @@ els.examBoardOther?.addEventListener("input", () => {
   scheduleAutoSave();
 });
 els.backToContentFromPriorityButton?.addEventListener("click", () => {
+  if (setupIsIncomplete()) setSetupStep(3);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "conteudo";
+  switchTab(setupIsIncomplete() ? "diagnostico" : "conteudo");
+});
+els.initialDiagnosisList?.addEventListener("change", (event) => {
+  const input = event.target.closest('input[type="radio"]');
+  const row = input?.closest("[data-diagnosis-subject]");
+  if (!input || !row) return;
+  setInitialDiagnosisLevel(row.dataset.diagnosisSubject, input.value);
+  renderInitialDiagnosis();
+});
+els.applyDiagnosisBulkButton?.addEventListener("click", () => {
+  const level = els.diagnosisBulkLevel?.value || "unknown";
+  (state.planningBase?.materias || []).forEach((subject) => setInitialDiagnosisLevel(subject.materia, level, { save: false }));
+  renderInitialDiagnosis();
+  scheduleAutoSave();
+});
+els.backToContentFromDiagnosisButton?.addEventListener("click", () => {
   if (setupIsIncomplete()) setSetupStep(2);
   else if (planningSettingsContextTab) planningSettingsContextTab = "conteudo";
   switchTab("conteudo");
+});
+els.continueToPriorityFromDiagnosisButton?.addEventListener("click", () => {
+  ensureInitialDiagnosisForSubjects({ saveUnknown: true });
+  if (setupIsIncomplete()) setSetupStep(4);
+  else if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
+  switchTab("pesos");
 });
 els.saveCycleAdjustmentsButton?.addEventListener("click", () => saveAppStateNow("Ajustes salvos"));
 els.overrideCycleToggle?.addEventListener("change", updateOverrideVisibility);
@@ -12444,7 +12611,7 @@ els.importBackupInput?.addEventListener("change", async () => {
 els.generateScheduleButton.addEventListener("click", () => {
   if (setupIsIncomplete()) {
     syncPlanningSliders();
-    setSetupStep(4);
+    setSetupStep(5);
     renderPlanningReview();
     switchTab("revisar-planejamento");
     return;
@@ -12452,11 +12619,11 @@ els.generateScheduleButton.addEventListener("click", () => {
   void generateSchedule();
 });
 els.backToPriorityFromReviewButton?.addEventListener("click", () => {
-  setSetupStep(3);
+  setSetupStep(4);
   switchTab("pesos");
 });
 els.generateFirstCycleButton?.addEventListener("click", () => {
-  setSetupStep(5);
+  setSetupStep(6);
   void generateSchedule({ completeSetup: true });
 });
 document.addEventListener("click", async (event) => {

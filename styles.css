@@ -11300,7 +11300,7 @@ textarea:focus {
 
 .planning-setup-steps {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0;
   margin: 22px 0 0;
   padding: 0;
@@ -11425,7 +11425,7 @@ textarea:focus {
 .planning-review-lead { padding-bottom: 20px; border-bottom: 1px solid var(--divider); }
 .planning-review-lead h3 { margin: 5px 0; color: var(--text); font-size: 26px; font-weight: 650; }
 .planning-review-lead p, .planning-review-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
-.planning-review-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.planning-review-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .planning-review-metrics > div { display: grid; gap: 3px; padding: 14px; border-radius: 10px; background: var(--soft-neutral, var(--soft)); }
 .planning-review-metrics strong { color: var(--text); font-size: 22px; }
 .planning-review-metrics span { color: var(--muted); font-size: 11px; }
@@ -11435,12 +11435,158 @@ textarea:focus {
 .planning-review-subjects span { color: var(--muted); font-size: 11px; }
 .planning-review-actions { max-width: 980px; display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; }
 
+.diagnosis-heading {
+  margin-bottom: 16px;
+}
+
+.initial-diagnosis-intro {
+  max-width: 1040px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-soft) 52%, var(--card));
+  color: var(--muted);
+}
+
+.initial-diagnosis-intro svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--primary);
+}
+
+.initial-diagnosis-intro p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.initial-diagnosis-bulk {
+  max-width: 1040px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 18px 0 10px;
+}
+
+.initial-diagnosis-bulk label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.initial-diagnosis-bulk select {
+  min-width: 190px;
+  min-height: 38px;
+}
+
+.initial-diagnosis-list {
+  max-width: 1040px;
+  display: grid;
+  border-top: 1px solid var(--divider);
+}
+
+.initial-diagnosis-row {
+  display: grid;
+  grid-template-columns: minmax(210px, .72fr) minmax(520px, 1.45fr);
+  align-items: center;
+  gap: 24px;
+  padding: 16px 2px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.initial-diagnosis-subject {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.initial-diagnosis-subject strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.initial-diagnosis-subject span,
+.initial-diagnosis-subject small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.initial-diagnosis-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.initial-diagnosis-option {
+  min-width: 0;
+  cursor: pointer;
+}
+
+.initial-diagnosis-option input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.initial-diagnosis-option span {
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card) 78%, var(--bg-main));
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1.2;
+  text-align: center;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.initial-diagnosis-option:hover span {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  color: var(--text);
+}
+
+.initial-diagnosis-option input:checked + span {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+.initial-diagnosis-option input:focus-visible + span {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.initial-diagnosis-actions {
+  max-width: 1040px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
+}
+
 @media (max-width: 900px) {
   .planning-setup-header, .planning-settings-context { width: 100%; }
   .planning-settings-context { align-items: flex-start; flex-direction: column; }
   .planning-settings-context-actions { justify-content: flex-start; }
   .settings-page-compact { grid-template-columns: 1fr; }
   .settings-backup-status { grid-column: 1; }
+  .initial-diagnosis-row { grid-template-columns: 1fr; gap: 11px; }
 }
 
 @media (max-width: 620px) {
@@ -11456,6 +11602,12 @@ textarea:focus {
   .planning-review-metrics, .planning-review-subjects { grid-template-columns: 1fr; }
   .planning-review-actions { flex-direction: column-reverse; }
   .planning-review-actions .ghost-button, .planning-review-actions .primary-button { width: 100%; }
+  .initial-diagnosis-bulk { align-items: stretch; flex-direction: column; }
+  .initial-diagnosis-bulk select, .initial-diagnosis-bulk .ghost-button { width: 100%; }
+  .initial-diagnosis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .initial-diagnosis-option:first-child { grid-column: 1 / -1; }
+  .initial-diagnosis-actions { flex-direction: column-reverse; }
+  .initial-diagnosis-actions .ghost-button, .initial-diagnosis-actions .primary-button { width: 100%; }
 }
 
 /* Sidebar spacing and utilities: use the quieter navigation to create more breathing room. */

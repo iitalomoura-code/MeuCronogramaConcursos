@@ -14,8 +14,8 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260817-weekly-closing"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260817-weekly-closing"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260817-initial-diagnosis"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260817-initial-diagnosis"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(styles.includes("overflow-x: hidden;\n  overflow-y: auto;"), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('id="signOutButton"'), "Tema, configurações e sair devem permanecer no rodapé da sidebar.");
 assert.ok(index.includes("js/incidence.js?v=20260805-incidence-fgv"), "A base de incidÃªncia deve ser carregada antes do app.");
