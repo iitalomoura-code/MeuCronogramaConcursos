@@ -183,6 +183,8 @@ let saveStatusState = { state: "saved", destination: "cache", message: "" };
 let planningSettingsContextTab = "";
 let newPlanCloudReadyPromise = null;
 let newPlanReturnToPlans = false;
+let loadedExamPhase = "";
+let examPhaseUpdatedAt = "";
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -243,6 +245,7 @@ const els = {
   newPlanBoard: document.querySelector("#newPlanBoard"),
   newPlanRole: document.querySelector("#newPlanRole"),
   newPlanExamDate: document.querySelector("#newPlanExamDate"),
+  newPlanExamPhase: document.querySelector("#newPlanExamPhase"),
   newPlanStartDate: document.querySelector("#newPlanStartDate"),
   newPlanWeeklyHours: document.querySelector("#newPlanWeeklyHours"),
   newPlanBlockDuration: document.querySelector("#newPlanBlockDuration"),
@@ -258,6 +261,8 @@ const els = {
   examBoardOther: document.querySelector("#examBoardOther"),
   examBoardOtherField: document.querySelector("#examBoardOtherField"),
   examBoardIncidenceStatus: document.querySelector("#examBoardIncidenceStatus"),
+  examPhase: document.querySelector("#examPhase"),
+  examPhaseStatus: document.querySelector("#examPhaseStatus"),
   jobRole: document.querySelector("#jobRole"),
   examDate: document.querySelector("#examDate"),
   planStartDate: document.querySelector("#planStartDate"),
@@ -2565,6 +2570,7 @@ function clearImportedContent() {
 
 function markUnconfirmed() {
   state.confirmed = false;
+  updateExamPhaseStatus();
   state.planningBase = null;
   state.distribution = [];
   state.generatedBlocks = [];
@@ -3056,14 +3062,112 @@ function updateExamBoardControls() {
   return board;
 }
 
+function currentExamPhaseState() {
+  const engine = window.ExamPhaseEngine;
+  const configuredPhase = engine?.normalizePhase(els.examPhase?.value) || "";
+  const effectivePhase = configuredPhase || engine?.PRE_NOTICE || "PRE_NOTICE";
+  const configuredProfile = engine?.phaseProfile({ phase: effectivePhase, examDate: els.examDate?.value });
+  const profile = configuredPhase && configuredProfile ? { ...configuredProfile, configured: true } : {
+    phase: effectivePhase,
+    urgency: { available: false, value: 0, weeksRemaining: null },
+    incidenceMultiplier: 1,
+    performanceMultiplier: 1,
+    diagnosisMultiplier: 1,
+    reviewMultiplier: 1,
+    uncoveredAdjustment: 0,
+    configured: false,
+  };
+  return { configured: Boolean(configuredPhase), configuredPhase, effectivePhase, profile };
+}
+
+function updateExamPhaseStatus() {
+  if (!els.examPhaseStatus) return;
+  const engine = window.ExamPhaseEngine;
+  const phase = currentExamPhaseState();
+  const examDate = els.examDate?.value || "";
+  const shouldSuggestPost = !phase.configured && Boolean(examDate && state.confirmed);
+  els.examPhaseStatus.classList.toggle("is-post", phase.configuredPhase === engine?.POST_NOTICE);
+  if (shouldSuggestPost) {
+    els.examPhaseStatus.innerHTML = "<strong>Pós-edital sugerido</strong><span>O conteúdo já foi confirmado e há uma data de prova. Ative a fase quando quiser recalcular apenas o planejamento futuro.</span>";
+    return;
+  }
+  if (!phase.configured) {
+    els.examPhaseStatus.innerHTML = "<strong>Defina a fase do concurso</strong><span>Planejamentos antigos continuam usando a lógica ampla, sem alteração automática.</span>";
+    return;
+  }
+  if (phase.configuredPhase === engine?.POST_NOTICE) {
+    const detail = phase.profile.urgency.available
+      ? `${phase.profile.urgency.weeksRemaining} ${phase.profile.urgency.weeksRemaining === 1 ? "semana" : "semanas"} para a prova. O ciclo atual permanece intacto.`
+      : "Informe a data da prova para ativar a urgência progressiva. Nenhuma urgência será presumida.";
+    els.examPhaseStatus.innerHTML = `<strong>Pós-edital ativo</strong><span>${detail}</span>`;
+    return;
+  }
+  els.examPhaseStatus.innerHTML = "<strong>Pré-edital ativo</strong><span>O planejamento favorece cobertura ampla, equilíbrio entre matérias e construção de base.</span>";
+}
+
+function examPhaseImpactMessage(nextPhase) {
+  const engine = window.ExamPhaseEngine;
+  const isPost = nextPhase === engine?.POST_NOTICE;
+  const currentBlocks = state.generatedBlocks.length;
+  const completedCycles = completedCycleCount();
+  const timing = isPost && els.examDate?.value
+    ? engine.displayLabel({ phase: nextPhase, examDate: els.examDate.value })
+    : isPost ? "Pós-edital sem data definida" : "Pré-edital";
+  return `${timing}\n\nO ciclo atual (${currentBlocks} blocos) não será reorganizado. ${completedCycles} ${completedCycles === 1 ? "ciclo encerrado será preservado" : "ciclos encerrados serão preservados"}. A mudança afetará somente os próximos ciclos, metas semanais futuras, reforços e recomendações da tela Continuar.`;
+}
+
+async function handleExamPhaseChange() {
+  if (!els.examPhase) return;
+  const engine = window.ExamPhaseEngine;
+  const requested = engine?.normalizePhase(els.examPhase.value) || "";
+  const previous = engine?.normalizePhase(loadedExamPhase) || "";
+  if (requested === previous) return;
+  els.examPhase.value = previous;
+  if (!requested) {
+    loadedExamPhase = "";
+    examPhaseUpdatedAt = new Date().toISOString();
+    updateExamPhaseStatus();
+    scheduleAutoSave();
+    return;
+  }
+  if (previous) {
+    const choice = await openDialog({
+      title: requested === engine.POST_NOTICE ? "Ativar Pós-edital?" : "Voltar ao Pré-edital?",
+      message: examPhaseImpactMessage(requested),
+      actions: [
+        { id: "cancel", label: "Cancelar", value: "cancel" },
+        { id: "impact", label: "Ver impacto", value: "impact" },
+        { id: "activate", label: requested === engine.POST_NOTICE ? "Ativar Pós-edital" : "Ativar Pré-edital", variant: "primary", value: "activate" },
+      ],
+    });
+    if (choice === "impact") {
+      const analysis = deadlineAnalysis({ ...scheduleConfig(), examPhase: requested });
+      const impact = `${examPhaseImpactMessage(requested)}\n\nCobertura pendente: ${analysis.pendingSubjects} temas. Capacidade estimada até a prova: ${analysis.totalBlocks} blocos. O planejamento semanal atual também será mantido até o próximo fechamento.`;
+      const confirmed = await dialogConfirm(impact, { title: "Impacto nos próximos ciclos", confirmLabel: requested === engine.POST_NOTICE ? "Ativar Pós-edital" : "Ativar Pré-edital" });
+      if (!confirmed) return;
+    } else if (choice !== "activate") return;
+  }
+  els.examPhase.value = requested;
+  loadedExamPhase = requested;
+  examPhaseUpdatedAt = new Date().toISOString();
+  updateExamPhaseStatus();
+  updateContestSummary();
+  renderContinuePanel();
+  scheduleAutoSave();
+}
+
 function getContestConfig() {
   const board = currentExamBoardState();
+  const phase = currentExamPhaseState();
   return {
     concurso: els.contestName.value.trim(),
     banca: board.examBoardName,
     examBoardId: board.examBoardId,
     examBoardName: board.examBoardName,
     useHistoricalIncidence: board.useHistoricalIncidence,
+    examPhase: phase.configuredPhase,
+    effectiveExamPhase: phase.effectivePhase,
+    phaseUpdatedAt: examPhaseUpdatedAt,
     cargo: els.jobRole.value.trim(),
     dataProva: els.examDate.value,
     dataInicial: els.planStartDate.value,
@@ -3105,6 +3209,7 @@ function updateContestSummary() {
   setOutputValue(els.registeredBlockDuration, formatDuration(config.duracaoBloco));
   renderCycleLabel();
   updateGenerationSummary();
+  updateExamPhaseStatus();
 }
 
 function setOutputValue(element, value) {
@@ -3321,6 +3426,7 @@ function confirmRows(options = {}) {
 
   refreshPlanningBaseFromRows({ preservePriorities: true });
   state.confirmed = true;
+  updateExamPhaseStatus();
   els.confirmationStatus.textContent = "\u2713 Conte\u00fado confirmado";
   els.confirmationStatus.classList.add("confirmed");
   ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
@@ -3860,11 +3966,11 @@ function adaptivePriorityAdjustment(target = {}) {
     reviewAttention,
     adaptiveReview,
     basis: entries === topicEntries ? "topic" : "subject",
+    hasContact: (assunto ? topicEntries : subjectEntries).some((entry) => normalizeStatus(entry.status) !== "Não iniciado" || Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0 || Boolean(entry.concluidoEm || entry.completedAt)),
   };
 }
 
-function adaptivePriorityReason(target = {}) {
-  const data = adaptivePriorityAdjustment(target);
+function adaptivePriorityReason(target = {}, data = adaptivePriorityAdjustment(target)) {
   if (data.adaptiveReview?.record) {
     return data.adaptiveReview.record.statusInfo?.group === "upcoming"
       ? data.adaptiveReview.record.disponibilidade || "Revisão adaptativa planejada para este tema."
@@ -3886,9 +3992,10 @@ function adaptivePriorityForTarget(target = {}) {
     base,
     adjusted: Math.min(1, base + adjustment.adjustment),
     adjustment: adjustment.adjustment,
-    reason: adaptivePriorityReason(target),
+    reason: adaptivePriorityReason(target, adjustment),
     reasons: adjustment.reasons,
     reviewAttention: adjustment.reviewAttention,
+    hasContact: adjustment.hasContact,
   };
 }
 
@@ -3968,14 +4075,23 @@ function schedulingPriorityForTarget(target = {}) {
   const adaptive = adaptivePriorityForTarget({ ...target, ...subject, prioridade: base, prioridadeBase: base });
   const incidence = historicalIncidenceForTarget({ materia: target.materia || subject.materia, assunto: target.assunto || "", subject });
   const diagnosis = target.initialDiagnosis || initialDiagnosisInfluence(target.materia || subject.materia);
+  const phase = currentExamPhaseState();
+  const hasContact = Boolean(adaptive.hasContact);
+  const adaptiveAdjustment = (adaptive.adjustment || 0) * phase.profile.performanceMultiplier;
+  const incidenceAdjustment = Math.min(INCIDENCE_MAX_ADJUSTMENT, (incidence.adjustment || 0) * phase.profile.incidenceMultiplier);
+  const diagnosisAdjustment = (diagnosis.adjustment || 0) * phase.profile.diagnosisMultiplier;
+  const coverageAdjustment = hasContact ? 0 : phase.profile.uncoveredAdjustment;
   return {
     base,
-    adjusted: Math.max(0.1, Math.min(1 + INCIDENCE_MAX_ADJUSTMENT, adaptive.adjusted + incidence.adjustment + diagnosis.adjustment)),
+    adjusted: Math.max(0.1, Math.min(1 + INCIDENCE_MAX_ADJUSTMENT, base + adaptiveAdjustment + incidenceAdjustment + diagnosisAdjustment + coverageAdjustment)),
     adaptive,
+    adaptiveAdjustment,
     incidence,
-    incidenceAdjustment: incidence.adjustment || 0,
+    incidenceAdjustment,
     diagnosis,
-    diagnosisAdjustment: diagnosis.adjustment || 0,
+    diagnosisAdjustment,
+    coverageAdjustment,
+    phase: phase.profile,
   };
 }
 
@@ -4312,7 +4428,7 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
       ...materia,
       prioridadeBase: basePriority,
       prioridade: scheduling.adjusted,
-      adaptiveAdjustment: adaptive?.adjustment || 0,
+      adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive?.adjustment ?? 0,
       adaptiveReason: adaptive?.reason || "",
       incidenciaHistorica: scheduling.incidence,
       incidenceAdjustment: scheduling.incidenceAdjustment || 0,
@@ -4391,7 +4507,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       assunto: topic.assunto,
       prioridade: Math.max(chosen.prioridade, topicScheduling.adjusted),
       prioridadeBase: chosen.prioridadeBase,
-      adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicAdaptive.adjustment || 0),
+      adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicScheduling.adaptiveAdjustment ?? topicAdaptive.adjustment ?? 0),
       adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
       incidenciaHistorica: topicScheduling.incidence?.applied ? topicScheduling.incidence : chosen.incidenciaHistorica,
       incidenceAdjustment: Math.max(chosen.incidenceAdjustment || 0, topicScheduling.incidenceAdjustment || 0),
@@ -4429,7 +4545,7 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         ...topic,
         originalIndex: index,
         adaptiveScore: scheduling.adjusted,
-        adaptiveAdjustment: adaptive.adjustment,
+        adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive.adjustment,
         adaptiveReason: adaptive.reason,
         incidenciaHistorica: scheduling.incidence,
         incidenceAdjustment: scheduling.incidenceAdjustment || 0,
@@ -4470,7 +4586,19 @@ function activityForQueueItem(item = {}) {
   if (review.overdue.length) return "Revisão";
   const currentActivity = "Teoria e questões";
   const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
-  return window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
+  const diagnosedActivity = window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
+  const entries = adaptivePerformanceForTopic(item.materia, item.assunto);
+  const answered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
+  const recentAccuracy = accuracyFromEntries(answered);
+  const phase = currentExamPhaseState();
+  return window.ExamPhaseEngine?.suggestActivity({
+    phase: phase.effectivePhase,
+    examDate: els.examDate?.value,
+    currentActivity: diagnosedActivity,
+    hasContact: entries.some((entry) => normalizeStatus(entry.status) !== "Não iniciado" || Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0 || Boolean(entry.concluidoEm || entry.completedAt)),
+    lowPerformance: recentAccuracy !== null && recentAccuracy < 0.75,
+    reviewAvailable: review.overdue.length > 0 || review.today.length > 0,
+  }) || diagnosedActivity;
 }
 
 function fittedDurationMinutes(estimate, remainingMinutes) {
@@ -5045,13 +5173,15 @@ function weeklyReinforcementCandidates() {
     const lowResultCount = answered.slice(-4).filter((entry) => Number(entry.questoes) >= 5 && Number(entry.percentual) < 0.75).length;
     const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
     const subject = subjectPlanningData(block.materia);
+    const scheduling = schedulingPriorityForTarget({ ...block, subject, prioridadeBase: block.prioridadeBase ?? block.prioridade });
+    const phase = currentExamPhaseState();
     return {
       key: weeklyBlockKey(block),
       index,
       materia: block.materia,
       assunto: block.assunto,
       minutes: Math.min(45, Math.max(30, Math.round((Number(block.duracao) || 0.5) * 60))),
-      priority: Number(block.prioridadeBase ?? block.prioridade ?? priorityScore(subject)) || 0,
+      priority: scheduling.adjusted,
       recentAccuracy,
       recentQuestions,
       lowResultCount,
@@ -5061,7 +5191,8 @@ function weeklyReinforcementCandidates() {
         ? Math.max(0, Math.floor((Date.now() - subjectHistory.reduce((latest, entry) => Math.max(latest, entryDateValue(entry)), 0)) / (1000 * 60 * 60 * 24)))
         : null,
       incidenceApplied: Boolean(incidence?.applied),
-      incidence: Number(incidence?.normalized) || 0,
+      incidence: Math.min(1, (Number(incidence?.normalized) || 0) * phase.profile.incidenceMultiplier),
+      examPhase: phase.effectivePhase,
     };
   });
 }
@@ -5074,12 +5205,34 @@ function weeklyExamContext() {
   const contact = topics.filter((topic) => topic.hasContact).length;
   const total = topics.length;
   const weeksRemaining = exam ? Math.max(0, Math.ceil(daysBetween(new Date(), exam) / 7)) : null;
+  const phase = currentExamPhaseState();
+  const now = Date.now();
+  const recentContacts = weeklyStudyEvents()
+    .filter((event) => event.completedAt && now - new Date(event.completedAt).getTime() <= 28 * 86400000)
+    .sort((a, b) => new Date(a.completedAt) - new Date(b.completedAt));
+  const distinctRecentContacts = new Set(recentContacts.map((event) => event.topicKey)).size;
+  const observedDays = recentContacts.length > 1
+    ? Math.max(1, Math.ceil((new Date(recentContacts.at(-1).completedAt) - new Date(recentContacts[0].completedAt)) / 86400000))
+    : 0;
+  const coverageRisk = window.ExamPhaseEngine?.coverageRisk({
+    phase: phase.effectivePhase,
+    examDate: config.dataProva,
+    totalTopics: total,
+    contactedTopics: contact,
+    recentContactCount: distinctRecentContacts,
+    observedDays,
+    weeklyHours: config.horasSemana,
+  }) || { available: false, status: "insufficient-data" };
   return {
     examDate: config.dataProva || "",
     weeksRemaining,
     coveragePercent: total ? Math.round((contact / total) * 100) : 0,
     contactedTopics: contact,
     totalTopics: total,
+    examPhase: phase.configuredPhase,
+    effectiveExamPhase: phase.effectivePhase,
+    urgency: phase.profile.urgency,
+    coverageRisk,
   };
 }
 
@@ -5362,18 +5515,21 @@ function continueSuggestionScore(entry) {
   const rotation = recommendationRotationFor(entry);
   const weeklyReinforcement = weeklyReinforcementForBlock(block);
   const weeklyAdjustment = weeklyAdjustmentForBlock(block);
+  const phase = currentExamPhaseState();
+  const hasContact = Boolean(adaptive.hasContact);
   let score = 0;
-  if (review.overdue.length) score += 130;
-  else if (review.today.length) score += 100;
+  if (review.overdue.length) score += 130 * phase.profile.reviewMultiplier;
+  else if (review.today.length) score += 100 * phase.profile.reviewMultiplier;
   if (status === "Em andamento") score += 105;
   score -= Math.min(32, (Number(block.reprogramacoes) || 0) * 10);
-  score += (adaptive.adjustment || 0) * 70;
-  score += (incidence.adjustment || 0) * 60;
+  score += (adaptive.adjustment || 0) * 70 * phase.profile.performanceMultiplier;
+  score += (incidence.adjustment || 0) * 60 * phase.profile.incidenceMultiplier;
+  if (!hasContact) score += phase.profile.uncoveredAdjustment * 100;
   score += (Number(block.prioridade) || 0) * 24;
   score += rotation.score;
   if (weeklyReinforcement) score += 72;
   if (weeklyAdjustment) score += Math.min(95, Math.max(20, Number(weeklyAdjustment.weight) || 0));
-  return { score, adaptive, review, rotation, incidence, weeklyReinforcement, weeklyAdjustment };
+  return { score, adaptive, review, rotation, incidence, weeklyReinforcement, weeklyAdjustment, phase: phase.profile, hasContact };
 }
 
 function rankedContinueEntries() {
@@ -5648,6 +5804,7 @@ function explainStudySuggestion(block, context = {}) {
   const adaptive = context.adaptive || adaptivePriorityForTarget(block);
   const review = context.review || reviewAttentionFor(block.materia, block.assunto);
   const incidence = context.incidence || block.incidenciaHistorica || historicalIncidenceForTarget(block);
+  const phase = context.phase || currentExamPhaseState().profile;
   const factors = [];
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
   if (context.weeklyReinforcement?.reasons?.length) {
@@ -5658,7 +5815,7 @@ function explainStudySuggestion(block, context = {}) {
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
   const diagnosisReason = initialDiagnosisReason(block.materia);
-  if (diagnosisReason && initialDiagnosisInfluence(block.materia).adjustment > 0) factors.push(diagnosisReason);
+  if (diagnosisReason && initialDiagnosisInfluence(block.materia).adjustment * phase.diagnosisMultiplier >= 0.025) factors.push(diagnosisReason);
   if (Number(subjectPlanningData(block.materia).dominio) >= 4) factors.push("dificuldade pessoal alta");
   const rotationReasons = context.rotation?.reasons || [context.rotation?.reason || block.rotationReason].filter(Boolean);
   rotationReasons.forEach((reason) => {
@@ -5674,6 +5831,9 @@ function explainStudySuggestion(block, context = {}) {
   }
   if (incidence?.applied && incidence.normalized >= 0.5) {
     factors.push(incidence.kind === "fgv" ? "incid\u00eancia hist\u00f3rica relevante na FGV" : "incid\u00eancia hist\u00f3rica relevante na mat\u00e9ria");
+  }
+  if (context.hasContact === false && phase.configured !== false) {
+    factors.push(phase.phase === window.ExamPhaseEngine?.PRE_NOTICE ? "amplia a cobertura entre as matérias" : "conteúdo relevante ainda sem contato");
   }
   if (!factors.length && priority.percent >= 60) factors.push("tema prioritário para a prova");
   if (!factors.length) return { text: "Este é o próximo bloco pendente do ciclo atual.", factors: [] };
@@ -6596,13 +6756,25 @@ function renderContinuePanel() {
     .filter((entry) => entry.index !== suggested?.index)
     .filter((entry, index, list) => list.findIndex((candidate) => generatedBlockDeduplicationKey(candidate.block) === generatedBlockDeduplicationKey(entry.block)) === index)
     .slice(0, 3);
+  const phaseState = currentExamPhaseState();
+  const phaseLabel = window.ExamPhaseEngine?.displayLabel({
+    phase: phaseState.configuredPhase,
+    examDate: config.dataProva,
+    configured: phaseState.configured,
+  }) || "Fase não definida";
+  const phaseCoverageRisk = weeklyExamContext().coverageRisk;
+  const phaseCoverageText = phaseState.configuredPhase === window.ExamPhaseEngine?.POST_NOTICE && phaseCoverageRisk?.available
+    ? phaseCoverageRisk.atRisk
+      ? `Ritmo atual pede atenção: cerca de ${Math.ceil(phaseCoverageRisk.weeksNeeded)} semanas para a primeira cobertura.`
+      : `Ritmo atual compatível com a primeira cobertura antes da prova.`
+    : "";
 
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
     ${weeklyClosure ? weeklyClosureMarkup(weeklyClosure) : weeklyDetailsMarkup(weeklyGoal, weeklyProgress)}
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
-        <div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
+        <div><span class="continue-phase-chip">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
       ${suggested ? `
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
@@ -10191,6 +10363,8 @@ function formState() {
     examBoardId: board.examBoardId,
     examBoardName: board.examBoardName,
     useHistoricalIncidence: board.useHistoricalIncidence,
+    examPhase: window.ExamPhaseEngine?.normalizePhase(els.examPhase?.value) || "",
+    phaseUpdatedAt: examPhaseUpdatedAt || "",
     jobRole: els.jobRole.value,
     examDate: els.examDate.value,
     planStartDate: els.planStartDate.value,
@@ -10211,6 +10385,9 @@ function applyFormState(data = {}) {
   els.examBoard.value = board.examBoardId;
   if (els.examBoardOther) els.examBoardOther.value = board.examBoardId === "other" ? board.examBoardName : "";
   updateExamBoardControls();
+  loadedExamPhase = window.ExamPhaseEngine?.normalizePhase(data.examPhase) || "";
+  examPhaseUpdatedAt = String(data.phaseUpdatedAt || "");
+  if (els.examPhase) els.examPhase.value = loadedExamPhase;
   els.jobRole.value = data.jobRole ?? "";
   els.examDate.value = data.examDate ?? "";
   els.planStartDate.value = data.planStartDate ?? "";
@@ -10231,6 +10408,7 @@ function applyFormState(data = {}) {
     const input = document.querySelector(`[data-day="${key}"]`);
     if (input) input.value = data.dailyHours?.[key] ?? "";
   });
+  updateExamPhaseStatus();
 }
 
 function captureAppState() {
@@ -10797,6 +10975,8 @@ function blankAppSnapshot(name = "") {
       examBoardId: "",
       examBoardName: "",
       useHistoricalIncidence: false,
+      examPhase: "PRE_NOTICE",
+      phaseUpdatedAt: new Date().toISOString(),
       weeklyHours: "24",
       blockDuration: "1.5",
       referenceWeek: dateToWeekInput(new Date()),
@@ -10869,6 +11049,7 @@ function openNewPlanModal({ returnToPlans = false } = {}) {
   if (els.newPlanBoard) els.newPlanBoard.value = "";
   if (els.newPlanRole) els.newPlanRole.value = "";
   if (els.newPlanExamDate) els.newPlanExamDate.value = "";
+  if (els.newPlanExamPhase) els.newPlanExamPhase.value = "PRE_NOTICE";
   if (els.newPlanStartDate) els.newPlanStartDate.value = "";
   if (els.newPlanWeeklyHours) els.newPlanWeeklyHours.value = "24";
   if (els.newPlanBlockDuration) els.newPlanBlockDuration.value = "1.5";
@@ -10924,6 +11105,8 @@ async function createNewPlan() {
     useHistoricalIncidence: newPlanBoard.useHistoricalIncidence,
     jobRole: els.newPlanRole?.value.trim() || "",
     examDate: els.newPlanExamDate?.value || "",
+    examPhase: window.ExamPhaseEngine?.normalizePhase(els.newPlanExamPhase?.value) || "PRE_NOTICE",
+    phaseUpdatedAt: new Date().toISOString(),
     planStartDate: els.newPlanStartDate?.value || "",
     weeklyHours: String(hours),
     blockDuration: els.newPlanBlockDuration?.value || "1.5",
@@ -12626,6 +12809,7 @@ els.generateFirstCycleButton?.addEventListener("click", () => {
   setSetupStep(6);
   void generateSchedule({ completeSetup: true });
 });
+els.examPhase?.addEventListener("change", () => { void handleExamPhaseChange(); });
 document.addEventListener("click", async (event) => {
   markPlanningSettingsActionDirty(event);
   const setupExit = event.target.closest("[data-setup-exit]");

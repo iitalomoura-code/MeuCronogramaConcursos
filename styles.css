@@ -7098,6 +7098,50 @@ body.auth-verified .auth-loading-screen {
   text-align: center;
 }
 
+.exam-phase-status {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.exam-phase-status strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.exam-phase-status.is-post strong { color: var(--primary-soft-text); }
+
+.continue-phase-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 26px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.continue-phase-risk {
+  display: block;
+  max-width: 620px;
+  margin: -3px 0 13px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .login-brand-area .brand-slogan {
   max-width: 300px;
   margin: 0;

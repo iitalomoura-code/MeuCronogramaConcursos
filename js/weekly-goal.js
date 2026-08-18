@@ -196,7 +196,11 @@
         const due = asDate(item.dueDate);
         return !due || due <= bounds.end;
       });
-    const maxReviewHours = targetHours ? targetHours * 0.3 : 0;
+    const configuredPhase = String(examContext?.examPhase || "");
+    const isPostNotice = configuredPhase === "POST_NOTICE";
+    const urgency = isPostNotice && examContext?.urgency?.available ? clamp(examContext.urgency.value) : 0;
+    const reviewShare = isPostNotice ? 0.3 + (urgency * 0.1) : configuredPhase === "PRE_NOTICE" ? 0.25 : 0.3;
+    const maxReviewHours = targetHours ? targetHours * reviewShare : 0;
     const plannedReviews = availableReviews.slice(0, Math.max(0, Math.floor(maxReviewHours / 0.5)) || (availableReviews.length && targetHours >= 1 ? 1 : 0));
     const reviewHours = Math.min(maxReviewHours, plannedReviews.length * 0.5);
     const adjustmentWeight = (item) => (adjustments || []).reduce((sum, adjustment) => {
