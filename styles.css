@@ -11835,7 +11835,13 @@ textarea:focus {
 
 #tab-evolucao .evolution-metric:first-child { padding-left: 18px; }
 #tab-evolucao .evolution-metric:last-child { border-right: 1px solid var(--border); }
-#tab-evolucao .evolution-sections { display: grid; gap: 30px; margin: 0; border: 0; }
+#tab-evolucao .evolution-sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: 30px; margin: 0; border: 0; }
+#tab-evolucao .evolution-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+}
 #tab-evolucao .evolution-primary-grid,
 #tab-evolucao .evolution-support-grid,
 #tab-evolucao .evolution-action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
@@ -11856,6 +11862,12 @@ textarea:focus {
 #tab-evolucao .evolution-pace-card,
 #tab-evolucao .evolution-attention-card,
 #tab-evolucao .evolution-recommendation-card { grid-column: auto; }
+#tab-evolucao .evolution-dashboard-grid .evolution-predictive-card { grid-column: span 2; }
+#tab-evolucao .evolution-dashboard-grid .evolution-progress-card { grid-column: 3; }
+#tab-evolucao .evolution-dashboard-grid .evolution-performance-card { grid-column: 1; }
+#tab-evolucao .evolution-dashboard-grid .evolution-attention-card { grid-column: 2; }
+#tab-evolucao .evolution-dashboard-grid .evolution-recommendation-card { grid-column: 3; }
+#tab-evolucao .evolution-dashboard-grid .evolution-pace-card { grid-column: 1 / -1; }
 #tab-evolucao .evolution-subjects-card,
 #tab-evolucao .evolution-edital-map-card,
 #tab-evolucao .evolution-cycles-card,
@@ -11891,7 +11903,14 @@ textarea:focus {
   #tab-evolucao .evolution-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #tab-evolucao .evolution-primary-grid,
   #tab-evolucao .evolution-support-grid,
-  #tab-evolucao .evolution-action-grid { grid-template-columns: 1fr; gap: 18px; }
+  #tab-evolucao .evolution-action-grid,
+  #tab-evolucao .evolution-dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
+  #tab-evolucao .evolution-dashboard-grid .evolution-predictive-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-progress-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-performance-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-attention-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-recommendation-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-pace-card { grid-column: 1; }
 }
 
 @media (max-width: 640px) {

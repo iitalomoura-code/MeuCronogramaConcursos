@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260818-evolution-layout" />
+    <link rel="stylesheet" href="./styles.css?v=20260818-evolution-balance" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -660,18 +660,14 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <div class="evolution-overview-grid" id="evolutionGrid"></div>
           <div class="evolution-empty" id="evolutionEmpty" hidden></div>
           <div class="evolution-sections" id="evolutionSections">
-            <div class="evolution-primary-grid" aria-label="Evolução e projeções">
+            <div class="evolution-dashboard-grid" aria-label="Visão consolidada da evolução">
               <section class="evolution-card evolution-predictive-card" id="evolutionPredictiveCard" aria-labelledby="evolutionPredictiveTitle">
                 <div class="evolution-section-heading"><div><span class="section-kicker">Evolução e projeções</span><h3 id="evolutionPredictiveTitle">Cobertura e projeção</h3><p>Estimativas baseadas nos registros recentes, sem transformar o estudo em uma agenda rígida.</p></div></div>
                 <div id="evolutionPredictive"></div>
               </section>
               <section class="evolution-card evolution-performance-card"><div class="evolution-section-heading"><div><span class="section-kicker">Desempenho</span><h3>Acertos ao longo dos ciclos</h3></div></div><div id="evolutionPerformance"></div><div id="evolutionSubjectChart" class="evolution-chart" role="img" aria-label="Gr&aacute;fico de desempenho por ciclo"></div><p id="evolutionChartDescription" class="evolution-chart-description"></p></section>
-            </div>
-            <div class="evolution-support-grid">
               <section class="evolution-card evolution-progress-card"><div class="evolution-section-heading"><div><span class="section-kicker">Progresso do conte&uacute;do</span><h3>Conte&uacute;do selecionado</h3></div></div><div id="evolutionProgress"></div></section>
               <section class="evolution-card evolution-pace-card"><div class="evolution-section-heading"><div><span class="section-kicker">Ritmo at&eacute; a prova</span><h3>Estimativa de capacidade</h3></div></div><div id="evolutionPace"></div></section>
-            </div>
-            <div class="evolution-action-grid" aria-label="Onde merece atenção">
               <section class="evolution-card evolution-attention-card"><div class="evolution-section-heading"><div><span class="section-kicker">Onde merece aten&ccedil;&atilde;o</span><h3>Pontos de aten&ccedil;&atilde;o</h3></div></div><div id="attentionSubjects" class="attention-list"></div></section>
               <section class="evolution-card evolution-recommendation-card"><div class="evolution-section-heading"><div><span class="section-kicker">Onde merece aten&ccedil;&atilde;o</span><h3>Pr&oacute;ximo ajuste sugerido</h3></div></div><div id="evolutionRecommendation"></div></section>
             </div>
