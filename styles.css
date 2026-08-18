@@ -7395,6 +7395,31 @@ body.auth-verified .auth-loading-screen {
 .evolution-pace-suggestions strong { color: var(--text); font-size: 13px; }
 .evolution-pace-suggestions ul { display: grid; gap: 6px; margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45; }
 
+/* Evolução preditiva: projeções ficam separadas dos registros realizados. */
+.evolution-predictive-card { grid-column: 1 / -1; }
+.predictive-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.predictive-summary-grid article { min-width: 0; padding: 4px 0; }
+.predictive-summary-grid span, .predictive-summary-grid small { display: block; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.predictive-summary-grid strong { display: block; margin: 5px 0; color: var(--text); font-size: 21px; font-weight: 650; }
+.predictive-coverage-visual { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--divider); }
+.predictive-coverage-label { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
+.predictive-coverage-track { position: relative; height: 7px; margin: 9px 0 7px; overflow: hidden; border-radius: 999px; background: var(--soft); }
+.predictive-coverage-track i, .predictive-coverage-track b { position: absolute; top: 0; bottom: 0; display: block; }
+.predictive-coverage-track i { left: 0; z-index: 1; border-radius: inherit; background: var(--primary); }
+.predictive-coverage-track b { z-index: 0; min-width: 2px; opacity: .7; background: repeating-linear-gradient(90deg, var(--primary) 0 5px, transparent 5px 9px); }
+.predictive-coverage-visual > small { color: var(--muted); font-size: 12px; }
+.predictive-attention-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 18px; }
+.predictive-attention-list article { padding: 12px 0 0; border-top: 1px solid var(--divider); }
+.predictive-attention-list strong { display: block; color: var(--text); font-size: 13px; }
+.predictive-attention-list span { display: inline-block; margin-top: 5px; color: var(--primary-soft-text); font-size: 12px; font-weight: 600; }
+.predictive-attention-list p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+@media (max-width: 760px) {
+  .predictive-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
+  .predictive-summary-grid strong { font-size: 18px; }
+  .predictive-coverage-label { display: grid; gap: 4px; }
+}
+
 .evolution-performance-summary { align-items: stretch; }
 .evolution-chart { margin-top: 18px; padding: 12px; border: 1px solid var(--divider); border-radius: 12px; background: var(--bg-main); }
 .evolution-chart-scroll { overflow-x: auto; }

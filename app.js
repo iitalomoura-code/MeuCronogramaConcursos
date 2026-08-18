@@ -178,6 +178,7 @@ let pendingTabRenderFrame = 0;
 let pendingTabRenderTimer = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
+let predictiveEvolutionSnapshot = null;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
@@ -362,6 +363,7 @@ const els = {
   notebookEditorHeader: document.querySelector("#notebookEditorHeader"),
   notebookStatus: document.querySelector("#notebookStatus"),
   evolutionGrid: document.querySelector("#evolutionGrid"),
+  evolutionPredictive: document.querySelector("#evolutionPredictive"),
   evolutionEmpty: document.querySelector("#evolutionEmpty"),
   evolutionSections: document.querySelector("#evolutionSections"),
   evolutionPeriod: document.querySelector("#evolutionPeriod"),
@@ -5819,6 +5821,7 @@ function explainStudySuggestion(block, context = {}) {
   const review = context.review || reviewAttentionFor(block.materia, block.assunto);
   const incidence = context.incidence || block.incidenciaHistorica || historicalIncidenceForTarget(block);
   const phase = context.phase || currentExamPhaseState().profile;
+  const predictiveRisk = predictiveRiskForSubject(block.materia);
   const factors = [];
   const priority = priorityInfo(block.prioridadeBase ?? block.prioridade);
   if (context.weeklyReinforcement?.reasons?.length) {
@@ -5846,6 +5849,8 @@ function explainStudySuggestion(block, context = {}) {
   if (incidence?.applied && incidence.normalized >= 0.5) {
     factors.push(incidence.kind === "fgv" ? "incid\u00eancia hist\u00f3rica relevante na FGV" : "incid\u00eancia hist\u00f3rica relevante na mat\u00e9ria");
   }
+  if (predictiveRisk?.level === "Prioridade") factors.push("matéria com risco de preparação no ritmo recente");
+  else if (predictiveRisk?.level === "Atenção") factors.push("matéria que merece atenção nas próximas semanas");
   if (context.hasContact === false && phase.configured !== false) {
     factors.push(phase.phase === window.ExamPhaseEngine?.PRE_NOTICE ? "amplia a cobertura entre as matérias" : "conteúdo relevante ainda sem contato");
   }
@@ -7967,6 +7972,81 @@ function sortEvolutionSubjects(subjects, sort = evolutionView.sort) {
   });
 }
 
+function buildPredictiveEvolution(progress, subjects) {
+  const engine = window.PredictiveEvolutionEngine;
+  if (!engine) return null;
+  const config = scheduleConfig();
+  const referenceMinutes = estimatedPlanningBlockMinutes(config);
+  const topics = progress.selected.map((topic) => {
+    const key = topicKey(topic.materia, topic.assunto);
+    const contacted = progress.completed.some((item) => topicKey(item.materia, item.assunto) === key)
+      || progress.inProgress.some((item) => topicKey(item.materia, item.assunto) === key);
+    return {
+      key,
+      contacted,
+      estimatedHours: Math.max(.5, (Number(topic.blocosSugeridos) || 1) * referenceMinutes / 60),
+    };
+  });
+  const entries = evolutionEntries().map((entry) => ({
+    date: entry.date,
+    hours: Number(entry.horas) || 0,
+    questions: Number(entry.questoes) || 0,
+    correct: Number(entry.acertos) || 0,
+    contactKey: topicKey(entry.materia, entry.assunto),
+  }));
+  const predictiveSubjects = subjects.map((subject) => ({
+    name: subject.materia,
+    coverage: subject.progress,
+    performance: subject.performance.percentual,
+    questions: subject.performance.questoes,
+    performanceTrend: subject.performance.trend.label,
+    priority: (Number(subject.priority.percent) || 0) / 100,
+    openReviews: subject.openReviews,
+    reprograms: subject.reprogramacoes,
+    remainingHours: Math.max(0, Number(subject.pending) || 0) * referenceMinutes / 60,
+  }));
+  return engine.build({ topics, entries, subjects: predictiveSubjects, examDate: config.dataProva, weeklyHours: config.horasSemana });
+}
+
+function predictiveRiskForSubject(materia = "") {
+  return predictiveEvolutionSnapshot?.subjects?.find((subject) => normalizeForMatch(subject.name) === normalizeForMatch(materia))?.risk || null;
+}
+
+function renderPredictiveEvolution(snapshot) {
+  if (!els.evolutionPredictive) return;
+  if (!snapshot || !snapshot.coverage.totalTopics) {
+    els.evolutionPredictive.innerHTML = `<p class="evolution-empty-inline">Confirme o conteúdo programático para acompanhar tendências e projeções.</p>`;
+    return;
+  }
+  const coveragePercent = Math.round((snapshot.coverage.percent || 0) * 100);
+  const projectedPercent = snapshot.exam.projectedCoverage === null ? null : Math.round(snapshot.exam.projectedCoverage * 100);
+  const rhythm = snapshot.rhythm.weeklyHours ? formatHours(snapshot.rhythm.weeklyHours) : "Sem dados";
+  const estimate = snapshot.coverage.estimateText || "Ainda coletando dados";
+  const examLabel = snapshot.exam.weeksToExam === null
+    ? "Sem data de prova"
+    : `${snapshot.exam.weeksToExam} ${snapshot.exam.weeksToExam === 1 ? "semana" : "semanas"} restantes`;
+  const attention = snapshot.subjects.filter((subject) => subject.risk.level !== "Sob controle").slice(0, 3);
+  const projectionText = projectedPercent === null
+    ? snapshot.confidence.message
+    : `${snapshot.exam.situation} · cobertura estimada de ${projectedPercent}% até a prova.`;
+  const actualWidth = Math.max(2, coveragePercent);
+  const projectedWidth = projectedPercent === null ? coveragePercent : Math.max(coveragePercent, projectedPercent);
+  els.evolutionPredictive.innerHTML = `
+    <div class="predictive-summary-grid">
+      <article><span>Cobertura do edital</span><strong>${coveragePercent}%</strong><small>Primeira cobertura: ${escapeHtml(estimate)}</small></article>
+      <article><span>Ritmo recente</span><strong>${escapeHtml(rhythm)}</strong><small>${escapeHtml(snapshot.rhythm.trend.direction ? `${snapshot.rhythm.trend.direction} ${snapshot.rhythm.trend.label.toLowerCase()}` : "Registros recentes")}</small></article>
+      <article><span>Até a prova</span><strong>${escapeHtml(examLabel)}</strong><small>${escapeHtml(projectionText)}</small></article>
+      <article><span>Matérias que exigem atenção</span><strong>${attention.length}</strong><small>${attention.length ? escapeHtml(attention.map((item) => item.name).join(" · ")) : "Sem sinal relevante agora"}</small></article>
+    </div>
+    <div class="predictive-coverage-visual" aria-label="Cobertura real e projeção">
+      <div class="predictive-coverage-label"><span>Cobertura real</span><span>Projeção${projectedPercent === null ? " indisponível" : `: ${projectedPercent}%`}</span></div>
+      <div class="predictive-coverage-track"><i style="width:${actualWidth}%"></i>${projectedPercent !== null ? `<b style="width:${Math.max(0, projectedWidth - coveragePercent)}%; left:${coveragePercent}%"></b>` : ""}</div>
+      <small>Linha contínua: contato já realizado · linha tracejada: estimativa.</small>
+    </div>
+    ${attention.length ? `<div class="predictive-attention-list">${attention.map((item) => `<article><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.risk.level)}</span><p>${escapeHtml(item.risk.reasons.join(" · ") || "Acompanhe os próximos registros desta matéria.")}</p></article>`).join("")}</div>` : ""}
+  `;
+}
+
 function evolutionMetric(label, value, note = "") {
   return `<article class="evolution-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</article>`;
 }
@@ -8249,6 +8329,7 @@ function renderEvolution() {
   const performance = performanceMetrics(entries);
   const projection = deadlineProjection(progress);
   const subjects = evolutionSubjectData(entries, progress, projection);
+  predictiveEvolutionSnapshot = buildPredictiveEvolution(progress, subjects);
   const cycleRecords = evolutionCycleRecords();
   const hasContent = progress.selected.length > 0 || (state.generatedBlocks || []).length > 0 || (state.cycleResults || []).length > 0;
   const cycleCounts = progress.selected.length ? `${progress.completed.length} de ${progress.selected.length} temas` : "Sem conteúdo confirmado";
@@ -8274,6 +8355,7 @@ function renderEvolution() {
   }
   if (els.evolutionSections) els.evolutionSections.hidden = !hasContent;
   if (!hasContent) return;
+  renderPredictiveEvolution(predictiveEvolutionSnapshot);
   renderEvolutionProgress(progress);
   renderEvolutionPace(projection, subjects);
   renderEvolutionPerformance(performance);
@@ -8283,7 +8365,7 @@ function renderEvolution() {
   renderEvolutionCycles(cycleRecords, entries);
   renderEvolutionRecommendation(subjects, projection);
   renderEvolutionCompletedArchive();
-  evolutionContext = { progress, entries, performance, projection, subjects, cycleRecords };
+  evolutionContext = { progress, entries, performance, projection, subjects, cycleRecords, predictive: predictiveEvolutionSnapshot };
   if (window.lucide) window.lucide.createIcons();
 }
 

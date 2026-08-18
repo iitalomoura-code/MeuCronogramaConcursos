@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260817-exam-phase" />
+    <link rel="stylesheet" href="./styles.css?v=20260818-predictive-evolution" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -660,6 +660,10 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <div class="evolution-overview-grid" id="evolutionGrid"></div>
           <div class="evolution-empty" id="evolutionEmpty" hidden></div>
           <div class="evolution-sections" id="evolutionSections">
+            <section class="evolution-card evolution-predictive-card" id="evolutionPredictiveCard" aria-labelledby="evolutionPredictiveTitle">
+              <div class="evolution-section-heading"><div><span class="section-kicker">Tendências e projeções</span><h3 id="evolutionPredictiveTitle">Leitura do ritmo de estudo</h3><p>Estimativas baseadas nos registros recentes, sem transformar o estudo em uma agenda rígida.</p></div></div>
+              <div id="evolutionPredictive"></div>
+            </section>
             <section class="evolution-card evolution-progress-card"><div class="evolution-section-heading"><div><span class="section-kicker">Progresso do conte&uacute;do</span><h3>Conte&uacute;do selecionado</h3></div></div><div id="evolutionProgress"></div></section>
             <section class="evolution-card evolution-pace-card"><div class="evolution-section-heading"><div><span class="section-kicker">Ritmo at&eacute; a prova</span><h3>Estimativa de capacidade</h3></div></div><div id="evolutionPace"></div></section>
             <section class="evolution-card evolution-performance-card"><div class="evolution-section-heading"><div><span class="section-kicker">Desempenho</span><h3>Acertos ao longo dos ciclos</h3></div></div><div id="evolutionPerformance"></div><div id="evolutionSubjectChart" class="evolution-chart" role="img" aria-label="Gr&aacute;fico de desempenho por ciclo"></div><p id="evolutionChartDescription" class="evolution-chart-description"></p></section>
@@ -816,8 +820,9 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./js/weekly-goal.js?v=20260817-exam-phase"></script>
     <script src="./js/initial-diagnosis.js?v=20260817-initial-diagnosis"></script>
     <script src="./js/exam-phase.js?v=20260817-exam-phase"></script>
+    <script src="./js/predictive-evolution.js?v=20260818-predictive-evolution"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260818-cycle-performance"></script>
+    <script src="./app.js?v=20260818-predictive-evolution"></script>
   </body>
 </html>
 
