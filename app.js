@@ -6174,6 +6174,53 @@ async function closeFocusedStudy(options = {}) {
   if (!options.silent) renderContinuePanel();
 }
 
+function settleFocusedSessionForCycleClosure() {
+  const session = focusedStudySession || normalizeActiveFocusSession(state.activeFocusSession);
+  if (!session) return false;
+  const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
+  const block = state.generatedBlocks[index];
+  const draft = block ? (focusedStudyDrafts.get(index) || session.draft || normalizeFocusDraft({}, block)) : null;
+  const elapsedHours = focusedTimerSeconds() / 3600;
+
+  if (session.status === "running") {
+    session.accumulatedSeconds = Math.max(0, Math.round(focusedTimerSeconds()));
+    session.status = "paused";
+    session.startedAt = null;
+  }
+
+  if (block && draft) {
+    const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
+    const hasDraftActivity = elapsedHours > 0 || typedHours > 0 || Number(draft.questoes) > 0 || String(draft.observacoes || "").trim() || normalizeStatus(draft.status) !== "Não iniciado";
+    if (hasDraftActivity) {
+      const draftStatus = normalizeStatus(draft.status);
+      saveStudyResult({
+        blockIndex: index,
+        source: "focused-cycle-closure",
+        sessionId: draft.sessionId || session.id || createStudySessionId(),
+        status: draftStatus === "Não iniciado" ? "Em andamento" : draftStatus,
+        activityType: draft.tipoAtividade,
+        difficulty: draft.dificuldade,
+        studiedHours: typedHours || elapsedHours,
+        questions: String(draft.questoes || "").trim() ? Number(draft.questoes) : 0,
+        correctAnswers: String(draft.acertos || "").trim() ? Number(draft.acertos) : 0,
+        notes: draft.observacoes,
+        reviewPoints: draft.pontosRevisar,
+        reviewCycles: draft.reviewCycles || [],
+        persist: false,
+      });
+    }
+  }
+
+  state.activeFocusSession = null;
+  focusedStudySession = null;
+  if (index >= 0) focusedStudyDrafts.delete(index);
+  focusedStudyIndex = -1;
+  stopFocusedTimerInterval();
+  clearFocusedSessionPersistenceTimers();
+  removeFocusedStudyOverlay();
+  return true;
+}
+
 function removeFocusedStudyOverlay() {
   document.querySelector(".focused-study-modal")?.remove();
 }
@@ -7055,6 +7102,7 @@ function saveStudyResult({
   notes,
   reviewPoints = false,
   reviewCycles = [],
+  syncReviews = true,
   persist = true,
 } = {}) {
   const index = Number(blockIndex);
@@ -7096,7 +7144,7 @@ function saveStudyResult({
     reopenCompletedBlock(block, nextStatus, { previousStatus, syncReviews: false });
   }
   if (nextStatus === "Reprogramar" && previousStatus !== "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
-  if (options.syncReviews !== false) syncBlockReviewRecords(block);
+  if (syncReviews) syncBlockReviewRecords(block);
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
   updateBlockAccuracy(block);
   updateNavigationState();
@@ -7294,7 +7342,7 @@ function renderCycleClosureSummary() {
     els.cycleClosurePanel.innerHTML = `<div class="empty-panel">Gere metas antes de finalizar o ciclo.</div>`;
     return;
   }
-  if (!hasRecordedCycleActivity()) {
+  if (!hasRecordedCycleActivity() && !state.activeFocusSession) {
     showToast("Registre algum andamento, reprogramação, tempo ou desempenho antes de finalizar este ciclo.");
     return;
   }
@@ -7347,6 +7395,7 @@ function renderCycleClosureSummary() {
 
 async function confirmCycleClosure() {
   if (cycleClosureInProgress || !state.generatedBlocks.length) return;
+  const focusSessionSettled = settleFocusedSessionForCycleClosure();
   if (!hasRecordedCycleActivity()) {
     await dialogAlert("Registre ao menos um andamento, reprogramação, tempo ou desempenho antes de finalizar este ciclo.");
     return;
@@ -7356,12 +7405,17 @@ async function confirmCycleClosure() {
   if (confirmButton) confirmButton.disabled = true;
   try {
     const result = cycleSummary();
-    state.cycleResults.push(result);
-    state.cycleResults = state.cycleResults.slice(-60);
     if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
     await completeCurrentWeekAndGenerateNext();
+    state.cycleResults.push(result);
+    state.cycleResults = state.cycleResults.slice(-60);
     renderEvolution();
-    saveAppStateNow("Ciclo finalizado");
+    await saveAppStateNow("Ciclo finalizado");
+    if (focusSessionSettled) showToast("Sessão em andamento foi pausada antes do fechamento do ciclo.");
+  } catch (error) {
+    console.error("Falha ao finalizar o ciclo:", error);
+    if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = false;
+    await dialogAlert("Não foi possível finalizar o ciclo agora. Seus dados continuam preservados.");
   } finally {
     cycleClosureInProgress = false;
   }
