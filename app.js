@@ -4974,6 +4974,7 @@ function renderGeneratedSchedule() {
               </div>
               <div class="goal-card-actions">
                 <button class="text-action" type="button" data-toggle-unit="${index}">${isDetailOpen ? "Ocultar detalhes" : "Ver detalhes"}</button>
+                ${isCompleted ? `<button class="ghost-button compact-button" type="button" data-reopen-block="${index}"><i data-lucide="rotate-ccw"></i><span>Reabrir meta</span></button>` : ""}
                 <button class="ghost-button compact-button" type="button" data-toggle-performance="${index}">
                   <i data-lucide="${isPerformanceOpen ? "chevron-right" : "activity"}"></i><span>Atualizar desempenho</span>
                 </button>
@@ -7071,10 +7072,10 @@ function saveStudyResult({
     if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
     if (isMetaComplete(block)) syncCompletedHistoryForBlock(block);
   } else {
-    block.concluidoEm = "";
+    reopenCompletedBlock(block, nextStatus, { previousStatus, syncReviews: false });
   }
   if (nextStatus === "Reprogramar" && previousStatus !== "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
-  syncBlockReviewRecords(block);
+  if (options.syncReviews !== false) syncBlockReviewRecords(block);
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
   updateBlockAccuracy(block);
   updateNavigationState();
@@ -8346,6 +8347,38 @@ function syncCompletedHistoryForBlock(block) {
     state.completedHistory.push(entry);
   }
   syncReviewSource(entry, true);
+}
+
+function completionHistoryMatchesCurrentBlock(entry = {}, block = {}) {
+  if (topicKey(entry.materia, entry.assunto) !== topicKey(block.materia, block.assunto)) return false;
+  const entrySession = String(entry.sessaoId || "");
+  const blockSession = String(block.sessaoId || block.lastSavedSessionId || "");
+  if (entrySession && blockSession && entrySession === blockSession) return true;
+  const entryCycle = String(entry.ciclo || "");
+  const blockCycle = String(block.ciclo || currentCycleLabel());
+  if (entryCycle && blockCycle && entryCycle !== blockCycle) return false;
+  if (entry.metaId && block.metaId && entry.metaId !== block.metaId) return false;
+  return true;
+}
+
+function reopenCompletedBlock(block, nextStatus = "Não iniciado", options = {}) {
+  if (!block) return { removedHistory: 0 };
+  const normalizedNextStatus = normalizeStatus(nextStatus);
+  const previousStatus = normalizeStatus(options.previousStatus || block.status);
+  block.status = normalizedNextStatus === "Concluído" ? "Não iniciado" : normalizedNextStatus;
+  block.concluidoEm = "";
+
+  let removedHistory = 0;
+  if (previousStatus === "Concluído" || options.force) {
+    state.completedHistory = (state.completedHistory || []).filter((entry) => {
+      if (!completionHistoryMatchesCurrentBlock(entry, block)) return true;
+      removedHistory += 1;
+      return false;
+    });
+  }
+
+  syncBlockReviewRecords(block);
+  return { removedHistory };
 }
 
 function dateToWeekInput(date) {
@@ -12352,6 +12385,26 @@ els.scheduleWrap.addEventListener("click", (event) => {
     return;
   }
 
+  const reopenButton = event.target.closest("[data-reopen-block]");
+  if (reopenButton) {
+    const index = Number(reopenButton.dataset.reopenBlock);
+    const block = state.generatedBlocks[index];
+    if (!block) return;
+    reopenCompletedBlock(block, "Não iniciado", { previousStatus: "Concluído", force: true });
+    performanceEditIndex = -1;
+    unitDetailIndex = -1;
+    updateNavigationState();
+    renderWeeklyResult();
+    renderCompleted();
+    renderReviews();
+    renderEvolution();
+    renderContinuePanel();
+    updateDeadlineDisplays();
+    renderGeneratedSchedule();
+    void saveAppStateNow("Meta reaberta");
+    return;
+  }
+
   if (event.target.closest("[data-close-performance]")) {
     closePerformancePanelAnimated();
     return;
@@ -12457,7 +12510,7 @@ els.scheduleWrap.addEventListener("change", (event) => {
       block.concluidoEm = new Date().toLocaleDateString("pt-BR");
     }
     if (block.status !== "Conclu\u00eddo") {
-      block.concluidoEm = "";
+      reopenCompletedBlock(block, block.status, { previousStatus, syncReviews: false });
     }
     syncBlockReviewRecords(block);
     renderWeeklyResult();
