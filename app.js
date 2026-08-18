@@ -129,6 +129,7 @@ const CLOUD_VERSION_CHECK_INTERVAL = 20000;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
 let performanceSaveSessionId = "";
+let performanceDraft = null;
 let cycleClosureInProgress = false;
 let reviewSearchTimer = 0;
 let unitDetailIndex = -1;
@@ -4381,8 +4382,9 @@ function showToast(message, { force = false } = {}) {
 function closePerformancePanelAnimated(afterClose = null) {
   const modal = document.querySelector(".performance-modal");
   const finish = () => {
+    modal?.remove();
     performanceEditIndex = -1;
-    renderGeneratedSchedule();
+    performanceDraft = null;
     if (typeof afterClose === "function") afterClose();
   };
   if (!modal || prefersReducedMotion()) {
@@ -4391,6 +4393,17 @@ function closePerformancePanelAnimated(afterClose = null) {
   }
   modal.classList.add("is-closing");
   window.setTimeout(finish, 190);
+}
+
+function renderPerformancePanelOnly(index) {
+  document.querySelector(".performance-modal")?.remove();
+  const block = state.generatedBlocks[index];
+  if (!block) return;
+  performanceEditIndex = index;
+  performanceDraft = structuredClone(block);
+  performanceSaveSessionId = createStudySessionId();
+  els.scheduleWrap.insertAdjacentHTML("beforeend", performancePanel(performanceDraft, index));
+  renderLucideIcons(els.scheduleWrap.querySelector(".performance-modal"));
 }
 
 function updateOverrideVisibility() {
@@ -4938,7 +4951,7 @@ function renderGeneratedSchedule() {
         const isDetailOpen = index === unitDetailIndex;
         const isCompleted = normalizeStatus(block.status) === "Conclu\u00eddo";
         return `
-          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}">
+          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}" data-block-index="${index}">
             <div class="goal-card-index">
               <span>Bloco</span>
               <strong>${block.bloco}</strong>
@@ -4986,10 +4999,10 @@ function renderGeneratedSchedule() {
         }).join("")}
       </div>
     ` : `<div class="empty-panel">Nenhuma meta pendente no ciclo atual.</div>`}
-    ${visiblePerformancePanel ? performancePanel(state.generatedBlocks[performanceEditIndex], performanceEditIndex) : ""}
+    ${visiblePerformancePanel ? performancePanel(performanceDraft || state.generatedBlocks[performanceEditIndex], performanceEditIndex) : ""}
   `;
   organizeCycleBlocksByStatus();
-  if (window.lucide) window.lucide.createIcons();
+  renderLucideIcons(els.scheduleWrap);
 }
 
 function organizeCycleBlocksByStatus() {
@@ -7030,6 +7043,7 @@ function saveStudyResult({
   status,
   activityType,
   difficulty,
+  duration,
   studiedHours,
   questions,
   correctAnswers,
@@ -7052,7 +7066,8 @@ function saveStudyResult({
 
   const previousStatus = normalizeStatus(block.status);
   const nextStatus = normalizeStatus(status || block.status);
-  const fallbackHours = Number(block.tempoEstudado) || Number(block.duracao) || 0;
+  const nextDuration = parseDurationInput(duration, block.duracao);
+  const fallbackHours = Number(block.tempoEstudado) || Number(nextDuration) || Number(block.duracao) || 0;
   const parsedHours = typeof studiedHours === "number" ? studiedHours : parseDurationInput(studiedHours, fallbackHours);
   const nextHours = Number.isFinite(parsedHours) && parsedHours > 0 ? Number(parsedHours.toFixed(2)) : fallbackHours;
   block.status = nextStatus;
@@ -7060,6 +7075,7 @@ function saveStudyResult({
   block.lastSavedSessionId = effectiveSessionId;
   block.tipoAtividade = activityType || block.tipoAtividade || "Teoria";
   block.dificuldade = difficulty || block.dificuldade || "Média";
+  block.duracao = Number.isFinite(nextDuration) && nextDuration > 0 ? Number(nextDuration.toFixed(2)) : block.duracao;
   block.questoes = totalQuestions;
   block.acertos = correct;
   block.tempoEstudado = nextHours;
@@ -10834,7 +10850,7 @@ function shouldUseGlobalAutoSave(target) {
   if (!(target instanceof Element)) return false;
   // O modo foco e o Quill possuem persistência própria. Deixá-los passar por
   // este listener criava um segundo salvamento completo para a mesma edição.
-  if (target.closest(".focused-study-modal, .ql-editor")) return false;
+  if (target.closest(".focused-study-modal, .performance-modal, .ql-editor")) return false;
   return Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
 }
 
@@ -12394,14 +12410,9 @@ els.scheduleWrap.addEventListener("click", (event) => {
     performanceEditIndex = -1;
     unitDetailIndex = -1;
     updateNavigationState();
-    renderWeeklyResult();
-    renderCompleted();
-    renderReviews();
-    renderEvolution();
-    renderContinuePanel();
     updateDeadlineDisplays();
     renderGeneratedSchedule();
-    void saveAppStateNow("Meta reaberta");
+    scheduleAutoSave();
     return;
   }
 
@@ -12413,19 +12424,22 @@ els.scheduleWrap.addEventListener("click", (event) => {
   if (event.target.closest("[data-save-performance]")) {
     const index = performanceEditIndex;
     const block = state.generatedBlocks[index];
+    const draft = performanceDraft || block;
     const outcome = block ? saveStudyResult({
       blockIndex: index,
       source: "schedule",
       sessionId: performanceSaveSessionId,
-      status: block.status,
-      activityType: block.tipoAtividade,
-      difficulty: block.dificuldade,
-      studiedHours: block.tempoEstudado,
-      questions: block.questoes,
-      correctAnswers: block.acertos,
-      notes: block.observacoes,
-      reviewPoints: block.pontosRevisar,
-      reviewCycles: reviewCyclesFromBlock(block),
+      status: draft.status,
+      activityType: draft.tipoAtividade,
+      difficulty: draft.dificuldade,
+      duration: draft.duracao,
+      studiedHours: draft.tempoEstudado,
+      questions: draft.questoes,
+      correctAnswers: draft.acertos,
+      notes: draft.observacoes,
+      reviewPoints: draft.pontosRevisar,
+      reviewCycles: reviewCyclesFromBlock(draft),
+      persist: false,
     }) : { ok: false, message: "Não foi possível localizar este bloco." };
     if (!outcome.ok) {
       if (!outcome.duplicate) showToast(outcome.message || "Não foi possível salvar o desempenho.");
@@ -12434,6 +12448,8 @@ els.scheduleWrap.addEventListener("click", (event) => {
     const adaptiveOutcome = outcome.adaptiveOutcome;
     performanceSaveSessionId = "";
     closePerformancePanelAnimated(() => {
+      renderGeneratedSchedule();
+      scheduleAutoSave();
       if (adaptiveOutcome?.record?.status === "Concluída") {
         showToast("Bom resultado: a revisão adaptativa deste tema foi concluída.");
       } else if (adaptiveOutcome?.record) {
@@ -12449,14 +12465,11 @@ els.scheduleWrap.addEventListener("click", (event) => {
   if (manualAdaptiveButton) {
     const index = Number(manualAdaptiveButton.dataset.createAdaptiveReview);
     const block = state.generatedBlocks[index];
-    const outcome = block ? syncAdaptiveReviewForBlock(block, { manual: true }) : null;
+    const outcome = block ? syncAdaptiveReviewForBlock(performanceDraft || block, { manual: true }) : null;
     if (outcome?.record) {
-      renderReviews();
-      renderContinuePanel();
-      renderEvolution();
-      performanceEditIndex = index;
-      renderGeneratedSchedule();
-      saveAppStateNow("Revisão adaptativa criada");
+      manualAdaptiveButton.disabled = true;
+      manualAdaptiveButton.textContent = "Revisão criada";
+      scheduleAutoSave();
       showToast(outcome.record.disponibilidade || "Revisão adaptativa criada.");
     }
     return;
@@ -12465,19 +12478,27 @@ els.scheduleWrap.addEventListener("click", (event) => {
   const performanceButton = event.target.closest("[data-toggle-performance]");
   if (performanceButton) {
     const index = Number(performanceButton.dataset.togglePerformance);
-    performanceEditIndex = performanceEditIndex === index ? -1 : index;
-    if (performanceEditIndex === index) performanceSaveSessionId = createStudySessionId();
     unitDetailIndex = -1;
-    renderGeneratedSchedule();
+    if (performanceEditIndex === index) closePerformancePanelAnimated();
+    else renderPerformancePanelOnly(index);
     return;
   }
 
   const unitButton = event.target.closest("[data-toggle-unit]");
   if (unitButton) {
     const index = Number(unitButton.dataset.toggleUnit);
-    unitDetailIndex = unitDetailIndex === index ? -1 : index;
-    performanceEditIndex = -1;
-    renderGeneratedSchedule();
+    const block = state.generatedBlocks[index];
+    const card = unitButton.closest(".cycle-goal-card");
+    if (!block || !card) return;
+    els.scheduleWrap.querySelectorAll(".goal-detail-panel").forEach((panel) => panel.remove());
+    els.scheduleWrap.querySelectorAll("[data-toggle-unit]").forEach((button) => { button.textContent = "Ver detalhes"; });
+    if (unitDetailIndex === index) {
+      unitDetailIndex = -1;
+    } else {
+      unitDetailIndex = index;
+      card.querySelector(".goal-card-main")?.insertAdjacentHTML("beforeend", unitDetailCard(block));
+      unitButton.textContent = "Ocultar detalhes";
+    }
     return;
   }
 
@@ -12487,97 +12508,65 @@ els.scheduleWrap.addEventListener("click", (event) => {
 els.scheduleWrap.addEventListener("change", (event) => {
   if (event.target.matches("[data-duration-index]")) {
     const index = Number(event.target.dataset.durationIndex);
-    const block = state.generatedBlocks[index];
+    const inPerformancePanel = Boolean(event.target.closest(".performance-modal"));
+    const block = inPerformancePanel && performanceEditIndex === index ? performanceDraft : state.generatedBlocks[index];
     if (!block) return;
     block.duracao = Number(parseDurationInput(event.target.value, block.duracao).toFixed(2));
-    if (!block.timerRunning) resetBlockTimer(block);
     event.target.value = formatDuration(block.duracao);
-    renderWeeklyResult();
-    renderCompleted();
-    renderEvolution();
-    renderContinuePanel();
+    if (inPerformancePanel) return;
+    if (!block.timerRunning) resetBlockTimer(block);
     renderGeneratedSchedule();
-    saveAppStateNow("Dura\u00e7\u00e3o atualizada");
+    scheduleAutoSave();
     return;
   }
   if (event.target.matches("[data-status-index]")) {
     const index = Number(event.target.dataset.statusIndex);
-    const block = state.generatedBlocks[index];
-    const previousStatus = normalizeStatus(block.status);
-    block.status = normalizeStatus(event.target.value);
-    event.target.closest("tr")?.classList.toggle("is-completed", block.status === "Conclu\u00eddo");
-    if (block.status === "Conclu\u00eddo" && !block.concluidoEm) {
-      block.concluidoEm = new Date().toLocaleDateString("pt-BR");
-    }
-    if (block.status !== "Conclu\u00eddo") {
-      reopenCompletedBlock(block, block.status, { previousStatus, syncReviews: false });
-    }
-    syncBlockReviewRecords(block);
-    renderWeeklyResult();
-    renderCompleted();
-    renderReviews();
-    renderEvolution();
-    renderContinuePanel();
-    updateDeadlineDisplays();
-    performanceEditIndex = index;
-    performanceSaveSessionId = createStudySessionId();
-    renderGeneratedSchedule();
-    if (previousStatus !== "Conclu\u00eddo" && block.status === "Conclu\u00eddo") {
-      showToast("Bloco conclu\u00eddo. Pr\u00f3ximo passo dispon\u00edvel.");
-    }
+    if (performanceEditIndex !== index || !performanceDraft) return;
+    performanceDraft.status = normalizeStatus(event.target.value);
+    return;
   }
   if (event.target.matches("[data-review-index]")) {
     const index = Number(event.target.dataset.reviewIndex);
-    const block = state.generatedBlocks[index];
-    const cycles = Array.from(document.querySelectorAll(`[data-review-index="${index}"]:checked`)).map((input) => input.value);
-    setBlockReviewCycles(block, cycles);
-    syncBlockReviewRecords(block);
-    renderCompleted();
-    renderReviews();
-    renderEvolution();
-    renderContinuePanel();
-    performanceEditIndex = index;
-    performanceSaveSessionId = createStudySessionId();
-    renderGeneratedSchedule();
+    if (performanceEditIndex !== index || !performanceDraft) return;
+    const panel = event.target.closest(".performance-modal");
+    const cycles = Array.from(panel?.querySelectorAll(`[data-review-index="${index}"]:checked`) || []).map((input) => input.value);
+    setBlockReviewCycles(performanceDraft, cycles);
+    return;
   }
   if (event.target.matches("[data-score-index]")) {
     const index = Number(event.target.dataset.scoreIndex);
     const field = event.target.dataset.scoreField;
-    const block = state.generatedBlocks[index];
-    block[field] = ["dificuldade", "observacoes"].includes(field) ? event.target.value : Number(event.target.value) || 0;
-    updateBlockAccuracy(block);
+    if (performanceEditIndex !== index || !performanceDraft) return;
+    performanceDraft[field] = ["dificuldade", "observacoes"].includes(field) ? event.target.value : Number(event.target.value) || 0;
+    updateBlockAccuracy(performanceDraft);
     const output = document.querySelector(`[data-accuracy-index="${index}"]`);
-    if (output) output.textContent = formatPercent(block.percentual || 0);
-    renderWeeklyResult();
-    renderCompleted();
-    renderReviews();
-    renderEvolution();
+    if (output) output.textContent = formatPercent(performanceDraft.percentual || 0);
   }
 });
 els.scheduleWrap.addEventListener("input", (event) => {
   if (!event.target.matches("[data-score-index]")) return;
   const index = Number(event.target.dataset.scoreIndex);
   const field = event.target.dataset.scoreField;
-  const block = state.generatedBlocks[index];
+  if (performanceEditIndex !== index || !performanceDraft) return;
   if (field === "observacoes") {
-    block.observacoes = event.target.value;
+    performanceDraft.observacoes = event.target.value;
     return;
   }
-  block[field] = Number(event.target.value) || 0;
-  updateBlockAccuracy(block);
-  if (field === "acertos" && Number(event.target.value) > Number(block.questoes)) {
-    event.target.value = block.acertos;
+  if (field === "dificuldade") {
+    performanceDraft.dificuldade = event.target.value;
+    return;
+  }
+  performanceDraft[field] = Number(event.target.value) || 0;
+  updateBlockAccuracy(performanceDraft);
+  if (field === "acertos" && Number(event.target.value) > Number(performanceDraft.questoes)) {
+    event.target.value = performanceDraft.acertos;
   }
   const output = document.querySelector(`[data-accuracy-index="${index}"]`);
-  if (output) output.textContent = formatPercent(block.percentual || 0);
-  if (field === "questoes" && Number(block.acertos) > Number(block.questoes)) {
+  if (output) output.textContent = formatPercent(performanceDraft.percentual || 0);
+  if (field === "questoes" && Number(performanceDraft.acertos) > Number(performanceDraft.questoes)) {
     const correctInput = document.querySelector(`[data-score-index="${index}"][data-score-field="acertos"]`);
-    if (correctInput) correctInput.value = block.acertos;
+    if (correctInput) correctInput.value = performanceDraft.acertos;
   }
-  renderWeeklyResult();
-  renderCompleted();
-  renderReviews();
-  renderEvolution();
 });
 els.cycleClosurePanel?.addEventListener("click", (event) => {
   if (event.target.closest("[data-cancel-cycle-close]")) {
@@ -12833,7 +12822,7 @@ els.pendingOnlyToggle?.addEventListener("click", () => {
     unitDetailIndex = -1;
   }
   renderGeneratedSchedule();
-  saveAppStateNow(showPendingOnly ? "Mostrando metas pendentes" : "Mostrando todas as metas");
+  scheduleAutoSave();
 });
 els.exportBackupButton?.addEventListener("click", exportBackup);
 els.importBackupInput?.addEventListener("change", async () => {

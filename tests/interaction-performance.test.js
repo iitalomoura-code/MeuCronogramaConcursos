@@ -28,7 +28,7 @@ assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A
 assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
 assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");
 assert.ok(app.includes('if (getActiveTabName() !== "cronograma") return;'), "Cronômetros dos cards não devem varrer blocos enquanto a tela do ciclo está oculta.");
-assert.ok(app.includes('if (target.closest(".focused-study-modal, .ql-editor")) return false;'), "Editores com persistência própria não devem disparar autosave global duplicado.");
+assert.ok(app.includes('if (target.closest(".focused-study-modal, .performance-modal, .ql-editor")) return false;'), "Editores com persistência própria não devem disparar autosave global duplicado.");
 assert.ok(app.includes('if (tabName === "conteudo") safeRender("Conteúdo Programático", () => renderRows({ preserveState: true }))'), "A árvore extensa do edital deve ser montada somente quando sua tela for aberta.");
 assert.ok(!app.includes("state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows\n    ? saved.pendingContentMigrationBackup\n    : null;\n  renderRows();"), "A restauração não deve montar todos os temas antes da primeira tela.");
 
