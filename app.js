@@ -98,6 +98,7 @@ const state = {
   cycleHistory: [],
   cycleResults: [],
   weeklyGoals: [],
+  studyAlerts: [],
   initialDiagnosis: [],
   reviews: [],
   errors: [],
@@ -179,6 +180,7 @@ let pendingTabRenderTimer = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
+let studyAlertsRefreshTimer = 0;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
@@ -4835,6 +4837,7 @@ async function generateSchedule({ completeSetup = false } = {}) {
   setTabEnabled("cronograma", true);
   renderAppViews();
   lockCycle();
+  queueStudyAlertsRefresh();
   switchTab("cronograma");
   if (analysis.status === "insufficient") {
     els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo com prazo insuficiente`;
@@ -5893,6 +5896,129 @@ function continueAvailableReviews() {
     .slice(0, 3);
 }
 
+function alertDaysWithoutContact(materia, entries = evolutionEntries()) {
+  const latest = entries
+    .filter((entry) => normalizeForMatch(entry.materia) === normalizeForMatch(materia))
+    .map((entry) => entry.date instanceof Date ? entry.date : new Date(entry.date))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => b - a)[0];
+  return latest ? Math.max(0, Math.floor((Date.now() - latest.getTime()) / 86400000)) : null;
+}
+
+function alertStudyConcentration(entries = evolutionEntries()) {
+  const recent = [...entries]
+    .filter((entry) => entry.materia && entry.date)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 12);
+  if (recent.length < 6) return { sessions: recent.length, share: 0, subjectName: "" };
+  const counts = new Map();
+  recent.forEach((entry) => counts.set(entry.materia, (counts.get(entry.materia) || 0) + 1));
+  const [subjectName, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || ["", 0];
+  return { sessions: recent.length, share: count / recent.length, subjectName };
+}
+
+function alertPriorityReviewCount() {
+  return reviewScheduleRows("all")
+    .filter((review) => !["Concluída", "Cancelada"].includes(review.status))
+    .filter((review) => reviewSortRank(review) <= 3)
+    .length;
+}
+
+function refreshStudyAlerts() {
+  const engine = window.StudyAlertsEngine;
+  if (!engine || !state.confirmed) return false;
+  const progress = evolutionProgressMetrics();
+  const entries = evolutionEntries();
+  const projection = deadlineProjection(progress);
+  const subjects = evolutionSubjectData(entries, progress, projection);
+  const predictive = buildPredictiveEvolution(progress, subjects);
+  const inputSubjects = subjects.map((subject) => ({
+    name: subject.materia,
+    coverage: subject.progress,
+    performance: subject.performance.percentual,
+    questions: subject.performance.questoes,
+    performanceTrend: subject.performance.trend.label,
+    priority: subject.priority.percent,
+    openReviews: subject.openReviews,
+    reprograms: subject.reprogramacoes,
+    daysWithoutContact: alertDaysWithoutContact(subject.materia, entries),
+  }));
+  const next = engine.build({
+    subjects: inputSubjects,
+    priorityReviews: alertPriorityReviewCount(),
+    concentration: alertStudyConcentration(entries),
+    exam: {
+      weeksToExam: predictive?.exam?.weeksToExam,
+      projectedCoverage: predictive?.exam?.projectedCoverage,
+      confident: Boolean(predictive?.confidence?.available),
+      coverageRisk: predictive?.exam?.situation === "Risco de cobertura",
+    },
+    existing: state.studyAlerts,
+  });
+  const changed = JSON.stringify(state.studyAlerts) !== JSON.stringify(next);
+  state.studyAlerts = next;
+  return changed;
+}
+
+function queueStudyAlertsRefresh() {
+  clearTimeout(studyAlertsRefreshTimer);
+  studyAlertsRefreshTimer = window.setTimeout(() => {
+    if (!refreshStudyAlerts()) return;
+    if (getActiveTabName() === "continuar") renderContinuePanel();
+    if (getActiveTabName() === "evolucao") renderEvolutionAttention();
+    scheduleAutoSave();
+  }, 180);
+}
+
+function visibleStudyAlerts(limit = 3) {
+  return (state.studyAlerts || [])
+    .filter((alert) => !alert.dismissedAt && !alert.resolvedAt)
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .slice(0, limit);
+}
+
+function studyAlertTitle(alert = {}) {
+  const subject = alert.subjectName || "";
+  if (alert.type === "COVERAGE_RISK") return "O ritmo atual indica risco de cobertura.";
+  if (alert.type === "REVISION_BACKLOG" && !subject) return `${Number(alert.metrics?.reviews) || 0} revisões relevantes estão disponíveis.`;
+  if (alert.type === "LONG_TIME_NO_CONTACT") return `${subject} está há ${Number(alert.metrics?.daysWithoutContact) || 0} dias sem contato.`;
+  if (alert.type === "STUDY_CONCENTRATION") return `O tempo recente está concentrado em ${subject}.`;
+  return `${subject} merece atenção nas próximas semanas.`;
+}
+
+function studyAlertReasons(alert = {}) {
+  const metrics = alert.metrics || {};
+  const labels = {
+    LOW_PERFORMANCE: `desempenho recente de ${formatPercent(metrics.performance || 0)}`,
+    PERFORMANCE_DROP: "queda consistente nas sessões recentes",
+    LONG_TIME_NO_CONTACT: `${Number(metrics.daysWithoutContact) || 0} dias sem contato`,
+    REVISION_BACKLOG: `${Number(metrics.reviews) || 0} revisões pendentes`,
+    REINFORCEMENT_REQUIRED: `${Number(metrics.reprograms) || 0} reprogramações registradas`,
+    CONTENT_NOT_STARTED: "tema prioritário ainda sem primeiro contato",
+    COVERAGE_RISK: metrics.projectedCoverage === null || typeof metrics.projectedCoverage === "undefined" ? "ritmo atual abaixo da cobertura planejada" : `projeção de ${formatPercent(metrics.projectedCoverage)} de cobertura`,
+    STUDY_CONCENTRATION: `${Math.round((Number(metrics.share) || 0) * 100)}% das sessões recentes na mesma matéria`,
+  };
+  return (alert.reasonCodes || []).map((code) => labels[code]).filter(Boolean).slice(0, 3);
+}
+
+function studyAlertAction(alert = {}) {
+  if (alert.type === "REVISION_BACKLOG") return { target: "revisoes", label: "Ver revisões" };
+  return { target: "evolucao", label: "Ver análise" };
+}
+
+function studyAlertsMarkup({ weekly = false } = {}) {
+  const alerts = visibleStudyAlerts(weekly ? 2 : 3);
+  if (!alerts.length) return "";
+  const extra = Math.max(0, (state.studyAlerts || []).filter((alert) => !alert.dismissedAt && !alert.resolvedAt).length - alerts.length);
+  return `<section class="study-alerts ${weekly ? "weekly-study-alerts" : "continue-study-alerts"}" aria-label="Pontos para acompanhar">
+    <div class="study-alerts-heading"><div><span class="section-kicker">Pontos para acompanhar</span><h3>${alerts.length === 1 ? "Um ponto merece atenção" : `${alerts.length} pontos merecem atenção`}</h3></div></div>
+    <div class="study-alert-list">${alerts.map((alert) => {
+      const action = studyAlertAction(alert);
+      return `<article class="study-alert-item is-${escapeHtml(alert.severity || "attention")}"><div><strong>${escapeHtml(studyAlertTitle(alert))}</strong><p>${escapeHtml(studyAlertReasons(alert).join(" · "))}</p></div><div class="study-alert-actions"><button class="text-action" type="button" data-study-alert-action="${escapeHtml(action.target)}" data-study-alert-id="${escapeHtml(alert.id)}">${escapeHtml(action.label)}</button><button class="icon-button" type="button" data-dismiss-study-alert="${escapeHtml(alert.id)}" aria-label="Dispensar alerta" title="Dispensar"><i data-lucide="x"></i></button></div></article>`;
+    }).join("")}</div>${extra ? `<button class="text-action" type="button" data-study-alert-action="evolucao">+${extra} pontos para acompanhar</button>` : ""}
+  </section>`;
+}
+
 function focusBlockKey(block, index) {
   return String(block?.id || `${block?.ciclo || "ciclo"}::${topicKey(block?.materia, block?.assunto)}::${index}`);
 }
@@ -6726,6 +6852,7 @@ function weeklyClosureMarkup(goal) {
       </div>
       <div class="weekly-closing-section"><h4>Continua na próxima semana</h4><p>${pendingCount ? `${pendingCount} ${pendingCount === 1 ? "atividade será redistribuída" : "atividades serão redistribuídas"}.` : "Nenhuma pendência relevante precisa ser redistribuída."}</p><div class="weekly-pending-meta"><span>${pending.ongoing?.length || 0} em andamento</span><span>${pending.reprogrammed?.length || 0} reprogramadas</span><span>${pending.relevantReviews?.length || 0} revisões</span><span>${pending.reinforcements?.length || 0} reforços</span></div></div>
       ${closure.adjustments?.length ? `<div class="weekly-closing-section"><h4>Ajustes para a próxima semana</h4><ul>${closure.adjustments.slice(0, 5).map((item) => `<li>${escapeHtml(item.reason)}</li>`).join("")}</ul></div>` : ""}
+      ${studyAlertsMarkup({ weekly: true })}
       ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${Number(exam.weeksRemaining) === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% de cobertura atual.</p>` : ""}
       ${preview ? `<div class="weekly-next-preview"><div><span class="section-kicker">Próxima semana</span><h4>${formatHours(previewStats.hours)} previstas</h4></div><dl><div><dt>Blocos</dt><dd>${previewStats.blocks}</dd></div><div><dt>Revisões</dt><dd>${previewStats.reviews}</dd></div><div><dt>Reforços</dt><dd>${previewStats.reinforcements}</dd></div><div><dt>Matérias</dt><dd>${previewStats.subjects}</dd></div></dl><div class="weekly-preview-actions"><button class="ghost-button" type="button" data-cancel-week-preview>Voltar</button><button class="primary-button" type="button" data-confirm-next-week="${escapeHtml(goal.id)}">Confirmar semana</button></div></div>` : `<button class="primary-button weekly-prepare-button" type="button" data-prepare-next-week="${escapeHtml(goal.id)}"><i data-lucide="calendar-plus"></i><span>Preparar próxima semana</span></button>`}
     </section>`;
@@ -6855,6 +6982,7 @@ function renderContinuePanel() {
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
+    ${studyAlertsMarkup()}
     <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
@@ -7148,6 +7276,7 @@ function saveStudyResult({
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
   updateBlockAccuracy(block);
   updateNavigationState();
+  queueStudyAlertsRefresh();
   if (persist) saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
   return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
 }
@@ -8224,12 +8353,13 @@ function renderEvolutionSubjects(subjects) {
   `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria encontrada para os filtros atuais.</div>`;
 }
 
-function renderEvolutionAttention(subjects) {
+function renderEvolutionAttention() {
   if (!els.attentionSubjects) return;
-  const attention = subjects.filter((subject) => subject.attention.level !== "baixa").slice(0, 3);
-  els.attentionSubjects.innerHTML = attention.length ? attention.map((subject) => `
-    <article class="attention-subject attention-${subject.attention.level}"><div><strong>${escapeHtml(subject.materia)}</strong><ul>${subject.attention.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul><p>${escapeHtml(subject.attention.suggestedAction)}</p></div><button class="text-action" type="button" data-evolution-subject-details="${escapeHtml(normalizeForMatch(subject.materia))}">Ver matéria</button></article>
-  `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria reúne sinais suficientes de atenção neste período.</div>`;
+  const alerts = visibleStudyAlerts(3);
+  els.attentionSubjects.innerHTML = alerts.length ? alerts.map((alert) => {
+    const action = studyAlertAction(alert);
+    return `<article class="attention-subject attention-${escapeHtml(alert.severity || "attention")}"><div><strong>${escapeHtml(studyAlertTitle(alert))}</strong><ul>${studyAlertReasons(alert).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul><p>${escapeHtml(action.target === "revisoes" ? "Considere iniciar as revisões mais relevantes antes de novos temas longos." : "Considere este ponto ao organizar os próximos blocos.")}</p></div><button class="text-action" type="button" data-study-alert-action="${escapeHtml(action.target)}" data-study-alert-id="${escapeHtml(alert.id)}">${escapeHtml(action.label)}</button></article>`;
+  }).join("") : `<div class="evolution-empty-inline">Nenhum ponto relevante para acompanhar neste momento.</div>`;
 }
 
 function cycleMetricsForView(record, entries) {
@@ -8415,7 +8545,7 @@ function renderEvolution() {
   renderEvolutionPerformance(performance);
   renderEvolutionChart(entries, cycleRecords);
   renderEvolutionSubjects(subjects);
-  renderEvolutionAttention(subjects);
+  renderEvolutionAttention();
   renderEvolutionCycles(cycleRecords, entries);
   renderEvolutionRecommendation(subjects, projection);
   renderEvolutionCompletedArchive();
@@ -8592,6 +8722,7 @@ async function completeCurrentWeekAndGenerateNext() {
   state.distribution = [];
   advanceReferenceWeek();
   await generateSchedule();
+  queueStudyAlertsRefresh();
   els.scheduleStatus.textContent = `Novo ciclo gerado. ${completedCount} tema${completedCount === 1 ? "" : "s"} conclu\u00eddo${completedCount === 1 ? "" : "s"} arquivado${completedCount === 1 ? "" : "s"}.`;
   renderCompleted();
   saveAppStateNow("Novo ciclo salvo");
@@ -9060,6 +9191,7 @@ async function updateAdaptiveReviewAction(id, action) {
     if (Number.isFinite(value) && value > 0) record.questoesSugeridas = Math.round(value);
   }
   record.atualizadaEm = new Date().toISOString();
+  queueStudyAlertsRefresh();
   renderReviews();
   renderContinuePanel();
   renderEvolution();
@@ -9215,6 +9347,7 @@ async function postponeReview(id) {
   record.dataPrevista = dueDate ? formatDateBR(dueDate) : "";
   record.disponibilidade = dueDate ? `Dispon\u00edvel a partir de ${record.dataPrevista}` : "Dispon\u00edvel no pr\u00f3ximo ciclo poss\u00edvel";
   record.atualizadaEm = new Date().toISOString();
+  queueStudyAlertsRefresh();
   renderReviews();
   renderContinuePanel();
   renderEvolution();
@@ -10620,6 +10753,7 @@ function captureAppState() {
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
     weeklyGoals: state.weeklyGoals,
+    studyAlerts: state.studyAlerts,
     initialDiagnosis: state.initialDiagnosis,
     reviews: state.reviews,
     errors: state.errors,
@@ -10683,6 +10817,7 @@ function applyAppSnapshot(saved = {}) {
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
+  state.studyAlerts = Array.isArray(saved.studyAlerts) ? saved.studyAlerts : [];
   state.initialDiagnosis = Array.isArray(saved.initialDiagnosis)
     ? saved.initialDiagnosis.map((record) => ({
       studyPlanId: record.studyPlanId || state.currentPlanId || state.activeStudyPlanId || "",
@@ -10706,6 +10841,7 @@ function applyAppSnapshot(saved = {}) {
   state.locked = Boolean(saved.locked);
   state.setup = normalizedSetupState(saved.setup, { legacy: !Object.prototype.hasOwnProperty.call(saved, "setup") });
   showPendingOnly = Boolean(saved.showPendingOnly);
+  refreshStudyAlerts();
 
   updateContestSummary();
   if (state.planningBase) {
@@ -11181,6 +11317,7 @@ function blankAppSnapshot(name = "") {
     cycleHistory: [],
     cycleResults: [],
     weeklyGoals: [],
+    studyAlerts: [],
     initialDiagnosis: [],
     reviews: [],
     errors: [],
@@ -11857,6 +11994,31 @@ document.addEventListener("click", (event) => {
       continueSuggestionOffset = (continueSuggestionOffset + 1) % pending.length;
       renderContinuePanel();
     }
+    return;
+  }
+
+  const dismissAlert = event.target.closest("[data-dismiss-study-alert]");
+  if (dismissAlert) {
+    const alert = state.studyAlerts.find((item) => item.id === dismissAlert.dataset.dismissStudyAlert);
+    if (alert) {
+      alert.dismissedAt = new Date().toISOString();
+      alert.updatedAt = alert.dismissedAt;
+      scheduleAutoSave();
+      if (getActiveTabName() === "continuar") renderContinuePanel();
+      if (getActiveTabName() === "evolucao") renderEvolutionAttention();
+    }
+    return;
+  }
+
+  const alertAction = event.target.closest("[data-study-alert-action]");
+  if (alertAction) {
+    const alert = state.studyAlerts.find((item) => item.id === alertAction.dataset.studyAlertId);
+    if (alert && !alert.viewedAt) {
+      alert.viewedAt = new Date().toISOString();
+      alert.updatedAt = alert.viewedAt;
+      scheduleAutoSave();
+    }
+    switchTab(alertAction.dataset.studyAlertAction === "revisoes" ? "revisoes" : "evolucao");
     return;
   }
 

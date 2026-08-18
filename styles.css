@@ -7455,6 +7455,8 @@ body.auth-verified .auth-loading-screen {
 .attention-subject p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.45; }
 .attention-subject.attention-alta { border-left: 3px solid var(--badge-high-text); }
 .attention-subject.attention-media { border-left: 3px solid var(--badge-medium-text); }
+.attention-subject.attention-priority { border-left: 3px solid var(--primary); }
+.attention-subject.attention-attention { border-left: 3px solid var(--primary-soft-text); }
 
 .evolution-cycle-item { border: 1px solid var(--divider); border-radius: 12px; background: var(--bg-main); overflow: hidden; }
 .evolution-cycle-item summary { padding: 14px; color: var(--text); cursor: pointer; list-style: none; }
@@ -7879,6 +7881,53 @@ textarea:focus {
 }
 
 /* Continue: a single calm study recommendation, followed by supporting context. */
+.study-alerts {
+  width: min(100%, 980px);
+  padding: 18px 20px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  background: transparent;
+}
+
+.study-alerts-heading h3 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.study-alert-list {
+  display: grid;
+  gap: 0;
+  margin: 12px 0 6px;
+}
+
+.study-alert-item {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.study-alert-item:first-child { border-top: 0; }
+.study-alert-item strong { display: block; color: var(--text); font-size: 14px; font-weight: 650; }
+.study-alert-item p { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.study-alert-item.is-priority strong { color: var(--primary-soft-text); }
+.study-alert-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.study-alert-actions .icon-button { width: 30px; height: 30px; color: var(--muted); }
+.study-alerts > .text-action { margin-top: 2px; font-size: 13px; }
+.weekly-study-alerts { width: 100%; margin-top: 14px; padding: 14px 0 0; }
+.weekly-study-alerts .study-alerts-heading h3 { font-size: 15px; }
+.weekly-study-alerts .study-alert-item { padding: 10px 0; }
+
+@media (max-width: 700px) {
+  .study-alerts { padding: 16px 0; }
+  .study-alert-item { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .study-alert-actions { width: 100%; justify-content: space-between; }
+}
+
 .continue-layout {
   width: min(100%, 980px);
   gap: 28px;
