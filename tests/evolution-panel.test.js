@@ -31,5 +31,8 @@ assert.ok(app.includes("evolutionView.subject !== \"all\""), "A projeção globa
 assert.ok(app.includes("resumo-evolucao.txt"), "A exportação de resumo deve gerar arquivo de texto.");
 assert.ok(styles.includes(".evolution-overview-grid"), "O painel de evolução deve ter estilos próprios.");
 assert.ok(styles.includes(".evolution-topic-modal"), "Os detalhes devem ter modal acessível próprio.");
+assert.ok(index.includes('class="evolution-primary-grid"'), "Projeção e desempenho devem formar um grupo visual próprio.");
+assert.ok(index.includes('class="evolution-action-grid"'), "Atenção e próximo ajuste devem permanecer próximos visualmente.");
+assert.ok(styles.includes("#tab-evolucao .evolution-primary-grid"), "O layout agrupado do painel deve ter estilos próprios.");
 
 console.log("OK - painel de evolução consolida progresso, desempenho, projeção e exportação.");
