@@ -11966,3 +11966,52 @@ textarea:focus {
   #tab-evolucao .evolution-pace-grid > div + div,
   #tab-evolucao .evolution-performance-summary > div + div { padding-left: 0; padding-top: 12px; border-top: 1px solid var(--divider); border-left: 0; }
 }
+
+/* Continue: study flow in the main column, compact context at the side. */
+.continue-primary-column,
+.continue-context-column {
+  display: grid;
+  align-content: start;
+  gap: 28px;
+  min-width: 0;
+}
+
+.continue-context-column .study-alerts {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--card) 94%, var(--bg-main));
+  box-shadow: none;
+  padding: 18px;
+}
+
+.continue-context-column .study-alert-list { margin-top: 10px; }
+.continue-context-column .study-alert-item { gap: 8px; padding: 11px 0; }
+.continue-context-column .study-alert-item p { font-size: 12px; }
+.continue-context-column .study-alert-actions { gap: 2px; }
+
+@media (min-width: 980px) {
+  .continue-layout {
+    width: min(100%, 1180px);
+    grid-template-columns: minmax(0, 1.55fr) minmax(275px, .72fr);
+    gap: 30px;
+  }
+
+  .continue-layout > .continue-active-session,
+  .continue-layout > .weekly-closing,
+  .continue-layout > .continue-weekly-details { grid-column: 1 / -1; }
+
+  .continue-primary-column { grid-column: 1; }
+  .continue-context-column { grid-column: 2; }
+}
+
+@media (max-width: 979px) {
+  .continue-primary-column,
+  .continue-context-column { gap: 22px; }
+  .continue-context-column .study-alerts { padding: 18px 0 0; border-width: 1px 0 0; border-radius: 0; background: transparent; }
+}
+
+@media (max-width: 700px) {
+  .continue-context-column .study-alert-item { align-items: flex-start; }
+  .continue-context-column .study-alert-actions { width: auto; }
+}

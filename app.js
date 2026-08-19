@@ -181,6 +181,7 @@ let evolutionView = { period: "all", subject: "all", activity: "all", sort: "att
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
 let studyAlertsRefreshTimer = 0;
+let continueAlertsExpanded = false;
 let mobileDrawerOpen = false;
 let mobileDrawerTrigger = null;
 let saveStatusState = { state: "saved", destination: "cache", message: "" };
@@ -5917,11 +5918,27 @@ function alertStudyConcentration(entries = evolutionEntries()) {
   return { sessions: recent.length, share: count / recent.length, subjectName };
 }
 
-function alertPriorityReviewCount() {
-  return reviewScheduleRows("all")
-    .filter((review) => !["Concluída", "Cancelada"].includes(review.status))
-    .filter((review) => reviewSortRank(review) <= 3)
-    .length;
+function alertReviewLoad() {
+  const now = new Date();
+  const weekFromNow = new Date(now);
+  weekFromNow.setDate(weekFromNow.getDate() + 7);
+  const open = reviewScheduleRows("all")
+    .filter((review) => !["Concluída", "Cancelada"].includes(review.status));
+  const overdue = open.filter((review) => review.statusInfo?.group === "overdue");
+  const important = open.filter((review) => isAdaptiveReview(review)
+    && ["prioritaria", "reforcada"].includes(review.intensidade));
+  const upcomingThisWeek = open.filter((review) => review.statusInfo?.group === "upcoming"
+    && review.dueDate instanceof Date && review.dueDate <= weekFromNow);
+  const exceptional = new Map([...overdue, ...important].map((review) => [String(review.id), review]));
+  const bySubject = [...exceptional.values()].reduce((counts, review) => {
+    const key = normalizeForMatch(review.materia);
+    if (key) counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  if (exceptional.size >= 3) return { count: exceptional.size, kind: overdue.length ? "overdue" : "important", bySubject };
+  if (overdue.length >= 2) return { count: overdue.length, kind: "overdue", bySubject };
+  if (upcomingThisWeek.length >= 6) return { count: upcomingThisWeek.length, kind: "weekly-load", bySubject: {} };
+  return { count: 0, kind: "", bySubject };
 }
 
 function refreshStudyAlerts() {
@@ -5932,6 +5949,7 @@ function refreshStudyAlerts() {
   const projection = deadlineProjection(progress);
   const subjects = evolutionSubjectData(entries, progress, projection);
   const predictive = buildPredictiveEvolution(progress, subjects);
+  const reviewLoad = alertReviewLoad();
   const inputSubjects = subjects.map((subject) => ({
     name: subject.materia,
     coverage: subject.progress,
@@ -5939,13 +5957,14 @@ function refreshStudyAlerts() {
     questions: subject.performance.questoes,
     performanceTrend: subject.performance.trend.label,
     priority: subject.priority.percent,
-    openReviews: subject.openReviews,
+    openReviews: Number(reviewLoad.bySubject?.[normalizeForMatch(subject.materia)]) || 0,
     reprograms: subject.reprogramacoes,
     daysWithoutContact: alertDaysWithoutContact(subject.materia, entries),
   }));
   const next = engine.build({
     subjects: inputSubjects,
-    priorityReviews: alertPriorityReviewCount(),
+    priorityReviews: reviewLoad.count,
+    reviewLoad,
     concentration: alertStudyConcentration(entries),
     exam: {
       weeksToExam: predictive?.exam?.weeksToExam,
@@ -5970,11 +5989,14 @@ function queueStudyAlertsRefresh() {
   }, 180);
 }
 
-function visibleStudyAlerts(limit = 3) {
+function activeStudyAlerts() {
   return (state.studyAlerts || [])
     .filter((alert) => !alert.dismissedAt && !alert.resolvedAt)
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .slice(0, limit);
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+function visibleStudyAlerts(limit = 3) {
+  return activeStudyAlerts().slice(0, limit);
 }
 
 function studyAlertTitle(alert = {}) {
@@ -6007,15 +6029,18 @@ function studyAlertAction(alert = {}) {
 }
 
 function studyAlertsMarkup({ weekly = false } = {}) {
-  const alerts = visibleStudyAlerts(weekly ? 2 : 3);
+  const allAlerts = activeStudyAlerts();
+  const limit = weekly ? 2 : (continueAlertsExpanded ? allAlerts.length : 3);
+  const alerts = allAlerts.slice(0, limit);
   if (!alerts.length) return "";
-  const extra = Math.max(0, (state.studyAlerts || []).filter((alert) => !alert.dismissedAt && !alert.resolvedAt).length - alerts.length);
+  const extra = Math.max(0, allAlerts.length - alerts.length);
+  const totalLabel = allAlerts.length === 1 ? "Um ponto merece atenção" : `${allAlerts.length} pontos merecem atenção`;
   return `<section class="study-alerts ${weekly ? "weekly-study-alerts" : "continue-study-alerts"}" aria-label="Pontos para acompanhar">
-    <div class="study-alerts-heading"><div><span class="section-kicker">Pontos para acompanhar</span><h3>${alerts.length === 1 ? "Um ponto merece atenção" : `${alerts.length} pontos merecem atenção`}</h3></div></div>
+    <div class="study-alerts-heading"><div><span class="section-kicker">Pontos para acompanhar</span><h3>${totalLabel}</h3></div></div>
     <div class="study-alert-list">${alerts.map((alert) => {
       const action = studyAlertAction(alert);
       return `<article class="study-alert-item is-${escapeHtml(alert.severity || "attention")}"><div><strong>${escapeHtml(studyAlertTitle(alert))}</strong><p>${escapeHtml(studyAlertReasons(alert).join(" · "))}</p></div><div class="study-alert-actions"><button class="text-action" type="button" data-study-alert-action="${escapeHtml(action.target)}" data-study-alert-id="${escapeHtml(alert.id)}">${escapeHtml(action.label)}</button><button class="icon-button" type="button" data-dismiss-study-alert="${escapeHtml(alert.id)}" aria-label="Dispensar alerta" title="Dispensar"><i data-lucide="x"></i></button></div></article>`;
-    }).join("")}</div>${extra ? `<button class="text-action" type="button" data-study-alert-action="evolucao">+${extra} pontos para acompanhar</button>` : ""}
+    }).join("")}</div>${!weekly && allAlerts.length > 3 ? `<button class="text-action" type="button" data-toggle-study-alerts aria-expanded="${continueAlertsExpanded}">${continueAlertsExpanded ? "Mostrar menos" : `Ver mais ${extra} ${extra === 1 ? "ponto" : "pontos"}`}</button>` : ""}
   </section>`;
 }
 
@@ -6965,6 +6990,7 @@ function renderContinuePanel() {
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
     ${weeklyClosure ? weeklyClosureMarkup(weeklyClosure) : weeklyDetailsMarkup(weeklyGoal, weeklyProgress)}
+    <div class="continue-primary-column">
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
         <div><span class="continue-phase-chip">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
@@ -6982,10 +7008,13 @@ function renderContinuePanel() {
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
-    ${studyAlertsMarkup()}
-    <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
-    <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
+    <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
+    </div>
+    <aside class="continue-context-column">
+      <section class="continue-cycle-summary continue-side-card"><div class="continue-card-header compact"><div><span class="section-kicker">Resumo do ciclo atual</span><h3>${completed} de ${total} blocos concluídos</h3><p>${inProgress} em andamento &middot; ${pendingCount - inProgress} pendentes${reprogrammed ? " &middot; " + reprogrammed + " reprogramados" : ""}</p></div></div><div class="continue-progress"><div class="continue-progress-track"><span style="width: ${progress}%"></span></div><strong>${progress}%</strong></div><p class="continue-time-summary">Tempo realizado: <strong>${formatHours(totalHours)}</strong></p><button class="ghost-button compact-button" type="button" data-open-cycle-goals>Ver ciclo completo</button>${insights.length ? "<div class=\"continue-mini-insights\">" + insights.map((insight) => "<span><strong>" + escapeHtml(insight.title) + "</strong>" + escapeHtml(insight.detail) + "</span>").join("") + "</div><button class=\"text-action continue-analysis-link\" type=\"button\" data-open-evolution>Ver análise completa</button>" : ""}</section>
+      ${studyAlertsMarkup()}
+    </aside>
   `;
   const topicContext = els.continuePanel.querySelector(".continue-recommendation-card .continue-card-header p");
   if (topicContext) topicContext.classList.add("continue-topic-context");
@@ -12007,6 +12036,12 @@ document.addEventListener("click", (event) => {
       if (getActiveTabName() === "continuar") renderContinuePanel();
       if (getActiveTabName() === "evolucao") renderEvolutionAttention();
     }
+    return;
+  }
+
+  if (event.target.closest("[data-toggle-study-alerts]")) {
+    continueAlertsExpanded = !continueAlertsExpanded;
+    if (getActiveTabName() === "continuar") renderContinuePanel();
     return;
   }
 
