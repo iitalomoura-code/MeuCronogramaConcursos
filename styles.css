@@ -12015,3 +12015,43 @@ textarea:focus {
   .continue-context-column .study-alert-item { align-items: flex-start; }
   .continue-context-column .study-alert-actions { width: auto; }
 }
+
+/* No celular, o modo foco usa a tela inteira e mantém a saída sempre acessível. */
+@media (max-width: 700px) {
+  .focused-study-modal {
+    display: block;
+    padding: 0;
+  }
+
+  .focused-study-panel {
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0 18px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .focused-study-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    margin: 0 -18px;
+    padding: max(16px, env(safe-area-inset-top)) 18px 14px;
+    border-bottom: 1px solid var(--divider);
+    background: var(--card);
+  }
+
+  .focused-study-header > div { min-width: 0; }
+
+  .focused-study-header .icon-button {
+    position: sticky;
+    top: max(12px, env(safe-area-inset-top));
+    z-index: 1;
+    min-width: 42px;
+    min-height: 42px;
+    border-color: var(--divider);
+    background: var(--card);
+  }
+}
