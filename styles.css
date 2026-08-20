@@ -12046,12 +12046,14 @@ textarea:focus {
   .focused-study-header > div { min-width: 0; }
 
   .focused-study-header .icon-button {
-    position: sticky;
-    top: max(12px, env(safe-area-inset-top));
-    z-index: 1;
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    z-index: 72;
     min-width: 42px;
     min-height: 42px;
     border-color: var(--divider);
     background: var(--card);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
   }
 }
