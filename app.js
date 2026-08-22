@@ -6297,7 +6297,7 @@ function suspendFocusedStudy({ silent = false } = {}) {
   // Sessões de revisão temporárias existem somente enquanto o modo focado está aberto.
   // As sessões de estudo normais permanecem no estado e podem ser retomadas pela tela Continuar.
   if (session.standaloneReview) {
-    removeFocusedStudyOverlay();
+    void closeFocusedStudy({ discard: true });
     return;
   }
 
@@ -6309,14 +6309,37 @@ function suspendFocusedStudy({ silent = false } = {}) {
   if (!silent) renderContinuePanel();
 }
 
+function clearOrphanedFocusedSession() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session) return false;
+  const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
+  const block = state.generatedBlocks[index];
+  const temporaryReview = Boolean(session.standaloneReview || block?.reviewSessionOnly);
+  const linkedBlock = Boolean(block) && (!session.blockId || focusBlockKey(block, index) === session.blockId);
+  if (!temporaryReview && linkedBlock) return false;
+
+  if (block?.reviewSessionOnly) state.generatedBlocks.splice(index, 1);
+  if (index >= 0) focusedStudyDrafts.delete(index);
+  state.activeFocusSession = null;
+  focusedStudySession = null;
+  focusedStudyIndex = -1;
+  stopFocusedTimerInterval();
+  clearFocusedSessionPersistenceTimers();
+  removeFocusedStudyOverlay();
+  if (!temporaryReview) scheduleAutoSave();
+  return true;
+}
+
 async function closeFocusedStudy(options = {}) {
   if (focusedStudyIndex < 0 && !state.activeFocusSession) return;
-  const standaloneReview = Boolean(state.generatedBlocks[focusedStudyIndex]?.reviewSessionOnly);
+  const session = focusedStudySession || state.activeFocusSession;
+  const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
+  const standaloneReview = Boolean(session?.standaloneReview || state.generatedBlocks[index]?.reviewSessionOnly);
   if (!options.discard && !standaloneReview) await persistFocusedSession({ immediate: true, label: "Sessão salva" });
   stopFocusedTimerInterval();
-  if (standaloneReview) {
-    state.generatedBlocks.splice(focusedStudyIndex, 1);
-    focusedStudyDrafts.delete(focusedStudyIndex);
+  if (standaloneReview && index >= 0) {
+    state.generatedBlocks.splice(index, 1);
+    focusedStudyDrafts.delete(index);
   }
   state.activeFocusSession = null;
   removeFocusedStudyOverlay();
@@ -6530,6 +6553,7 @@ function reviewFocusBlock(review = {}) {
 
 async function openReviewFocusedStudy(review) {
   if (!review?.id) return;
+  clearOrphanedFocusedSession();
   const existing = focusedStudySession || normalizeActiveFocusSession(state.activeFocusSession);
   if (existing) {
     showToast("Há uma sessão em andamento. Retome ou descarte a sessão atual antes de iniciar outra.");
@@ -6542,6 +6566,7 @@ async function openReviewFocusedStudy(review) {
 
 async function openFocusedStudy(index, context = { context: "estudo" }) {
   if (!state.generatedBlocks[index]) return;
+  clearOrphanedFocusedSession();
   const existing = normalizeActiveFocusSession(state.activeFocusSession);
   if (existing && resolveFocusedBlockIndex(existing) === index) {
     focusedStudySession = existing;
@@ -11976,7 +12001,7 @@ document.addEventListener("click", (event) => {
   }
 
   const reviewButton = event.target.closest("[data-start-review]");
-  if (reviewButton) {
+  if (reviewButton && !reviewButton.closest("#reviewsBody")) {
     const review = reviewScheduleRows("all").find((item) => item.id === reviewButton.dataset.startReview);
     if (review) {
       switchTab("continuar");
