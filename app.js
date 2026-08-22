@@ -6419,6 +6419,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   return `
     <div class="focused-study-modal" role="dialog" aria-modal="true" aria-labelledby="focusedStudyTitle">
       <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Continuar estudo depois"></button>
+      <button class="focused-study-mobile-close icon-button" type="button" data-close-focused aria-label="Fechar modo focado"><i data-lucide="x"></i></button>
       <section class="focused-study-panel">
         <header class="focused-study-header">
           <div>

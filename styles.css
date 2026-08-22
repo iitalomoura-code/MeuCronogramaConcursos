@@ -9618,6 +9618,8 @@ textarea:focus {
   transform: none;
 }
 
+.focused-study-mobile-close { display: none; }
+
 .focused-study-subject {
   margin-top: 8px;
   color: var(--primary-soft-text);
@@ -12046,14 +12048,22 @@ textarea:focus {
   .focused-study-header > div { min-width: 0; }
 
   .focused-study-header .icon-button {
+    display: none;
+  }
+
+  .focused-study-mobile-close {
     position: fixed;
     top: max(16px, env(safe-area-inset-top));
     right: max(16px, env(safe-area-inset-right));
     z-index: 72;
+    display: inline-grid;
+    place-items: center;
     min-width: 42px;
     min-height: 42px;
     border-color: var(--divider);
     background: var(--card);
+    color: var(--text);
+    pointer-events: auto;
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
   }
 }
