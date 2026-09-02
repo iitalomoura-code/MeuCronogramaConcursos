@@ -28,6 +28,8 @@ assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A
 assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
 assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");
 assert.ok(app.includes("function invalidateDerivedStudyCaches"), "Cálculos derivados devem ter invalidação explícita.");
+assert.ok(app.includes("function continueDerivedSnapshot"), "A tela Continuar deve concentrar leituras reutilizáveis em um snapshot derivado.");
+assert.ok(app.includes("window.ContinueRecommendation.rank"), "A ordenação da recomendação deve ficar fora do renderizador da tela.");
 assert.ok(app.includes("let masteryDiagnosisCache = new Map()"), "Diagnósticos repetidos devem reutilizar um cache por estado.");
 assert.ok(app.includes("let adaptiveHistoryCache = null"), "O histórico adaptativo não deve ser remontado para cada tema.");
 assert.ok(app.includes("let reviewAttentionCache = new Map()"), "Atenção de revisões deve reutilizar a leitura no mesmo estado.");

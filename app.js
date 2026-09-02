@@ -186,6 +186,7 @@ let adaptiveHistoryCache = null;
 let reviewAttentionCache = new Map();
 let reviewAttentionCacheSource = null;
 let masteryDiagnosisCache = new Map();
+let continueDerivedStateRevision = 0;
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
 let mobileDrawerOpen = false;
@@ -203,6 +204,8 @@ function invalidateDerivedStudyCaches() {
   reviewAttentionCacheSource = null;
   masteryDiagnosisCache.clear();
   predictiveEvolutionSnapshot = null;
+  continueDerivedStateRevision += 1;
+  window.StudyDerivedState?.invalidate?.();
 }
 
 const els = {
@@ -5578,62 +5581,74 @@ function weeklyAdjustmentForBlock(block = {}) {
 }
 
 function continueSuggestionScore(entry) {
-  const block = entry.block || {};
-  const adaptive = adaptivePriorityForTarget(block);
-  const review = reviewAttentionFor(block.materia, block.assunto);
-  const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
-  const status = normalizeStatus(block.status);
-  const rotation = recommendationRotationFor(entry);
-  const weeklyReinforcement = weeklyReinforcementForBlock(block);
-  const weeklyAdjustment = weeklyAdjustmentForBlock(block);
+  const snapshot = continueDerivedSnapshot();
+  const cached = snapshot.entries.find((item) => item.index === entry?.index);
+  return cached?.suggestion || cached?.derived || {};
+}
+
+function continueDerivedSnapshot() {
+  const entries = pendingCycleEntries();
   const phase = currentExamPhaseState();
-  const hasContact = Boolean(adaptive.hasContact);
-  let score = 0;
-  if (review.overdue.length) score += 130 * phase.profile.reviewMultiplier;
-  else if (review.today.length) score += 100 * phase.profile.reviewMultiplier;
-  if (status === "Em andamento") score += 105;
-  score -= Math.min(32, (Number(block.reprogramacoes) || 0) * 10);
-  score += (adaptive.adjustment || 0) * 70 * phase.profile.performanceMultiplier;
-  score += (incidence.adjustment || 0) * 60 * phase.profile.incidenceMultiplier;
-  if (!hasContact) score += phase.profile.uncoveredAdjustment * 100;
-  score += (Number(block.prioridade) || 0) * 24;
-  score += rotation.score;
-  if (weeklyReinforcement) score += 72;
-  if (weeklyAdjustment) score += Math.min(95, Math.max(20, Number(weeklyAdjustment.weight) || 0));
-  return { score, adaptive, review, rotation, incidence, weeklyReinforcement, weeklyAdjustment, phase: phase.profile, hasContact };
+  const signature = [
+    state.generatedBlocks.map((block, index) => [block.id || index, block.status, block.prioridade, block.duracao, block.questoes, block.acertos, block.reprogramacoes, block.tempoEstudado].join(":")),
+    state.reviews.map((review, index) => [review.id || index, review.status, review.dataPrevista, review.disponivelEm, review.atualizadaEm].join(":")),
+    state.planningBase?.materias?.map((subject) => [subject.materia, subject.peso, subject.dominio].join(":")),
+    phase.configuredPhase,
+    els.examDate?.value || "",
+  ].join("|");
+  const deriveEntry = (entry, phaseState) => {
+    const block = entry.block || {};
+    const adaptive = adaptivePriorityForTarget(block);
+    const review = reviewAttentionFor(block.materia, block.assunto);
+    const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
+    const rotation = recommendationRotationFor(entry);
+    const weeklyReinforcement = weeklyReinforcementForBlock(block);
+    const weeklyAdjustment = weeklyAdjustmentForBlock(block);
+    return {
+      adaptive,
+      review,
+      rotation,
+      incidence,
+      weeklyReinforcement,
+      weeklyAdjustment,
+      phase: phaseState.profile,
+      hasContact: Boolean(adaptive.hasContact),
+    };
+  };
+  if (!window.StudyDerivedState?.continueSnapshot) {
+    return { entries: entries.map((entry) => ({ ...entry, derived: deriveEntry(entry, phase) })), phase };
+  }
+  return window.StudyDerivedState.continueSnapshot({
+    revision: continueDerivedStateRevision,
+    signature,
+    entries,
+    phase,
+    deriveEntry,
+  });
 }
 
 function rankedContinueEntries() {
-  const entries = pendingCycleEntries()
-    .map((entry) => ({ ...entry, suggestion: continueSuggestionScore(entry) }))
-    .sort((a, b) => b.suggestion.score - a.suggestion.score ||
-      Number(normalizeStatus(b.block.status) === "Em andamento") - Number(normalizeStatus(a.block.status) === "Em andamento") ||
-      Number(b.suggestion.review.hasAttention) - Number(a.suggestion.review.hasAttention) ||
-      a.index - b.index);
-  const filtered = entries.filter((entry) => blockMatchesContinueFilters(entry.block));
+  const snapshot = continueDerivedSnapshot();
   const hasActiveFilter = Boolean(Number(continueRecommendationFilters?.minutes) || continueRecommendationFilters?.activity);
-  return hasActiveFilter ? filtered : entries;
+  if (!window.ContinueRecommendation?.rank) {
+    return snapshot.entries.map((entry) => ({ ...entry, suggestion: entry.derived }));
+  }
+  return window.ContinueRecommendation.rank(snapshot, {
+    normalizeStatus,
+    matchesFilters: blockMatchesContinueFilters,
+    hasActiveFilter,
+  });
 }
 
 function buildContinueRecommendation(rankedEntries = null, includeAlternatives = false) {
   const ranked = rankedEntries || rankedContinueEntries();
-  if (!ranked.length) {
-    return { recommendation: null, alternatives: [], reasons: [], suggestedMinutes: 0, activityType: "" };
-  }
   if (continueSuggestionOffset >= ranked.length) continueSuggestionOffset = 0;
-  const recommendation = ranked[continueSuggestionOffset % ranked.length];
-  const alternatives = includeAlternatives ? continueAlternativeEntries(recommendation, ranked).slice(0, 3) : [];
-  const explanation = explainStudySuggestion(recommendation.block, recommendation.suggestion);
-  return {
-    recommendation,
-    alternatives,
-    reasons: explanation.factors,
-    suggestedMinutes: Math.round((Number(recommendation.block.duracao) || 0) * 60),
-    activityType: recommendation.suggestion.weeklyReinforcement
-      ? "Questões · Reforço recomendado"
-      : recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
-    weeklyReinforcement: recommendation.suggestion.weeklyReinforcement || null,
-  };
+  if (!window.ContinueRecommendation?.build) return { recommendation: null, alternatives: [], reasons: [], suggestedMinutes: 0, activityType: "" };
+  return window.ContinueRecommendation.build(ranked, {
+    offset: continueSuggestionOffset,
+    includeAlternatives,
+    helpers: continueRecommendationHelpers(),
+  });
 }
 
 function splitPerformanceGroups(entries = []) {
@@ -5894,6 +5909,15 @@ function renderContinuePanelLegacy() {
 }
 
 function explainStudySuggestion(block, context = {}) {
+  const prepared = context.adaptive ? context : {
+    adaptive: adaptivePriorityForTarget(block),
+    review: reviewAttentionFor(block?.materia, block?.assunto),
+    incidence: block?.incidenciaHistorica || historicalIncidenceForTarget(block || {}),
+    phase: currentExamPhaseState().profile,
+  };
+  if (window.ContinueRecommendation?.explain) {
+    return window.ContinueRecommendation.explain(block, prepared, continueRecommendationHelpers());
+  }
   if (!block) return { text: "", factors: [] };
   const adaptive = context.adaptive || adaptivePriorityForTarget(block);
   const review = context.review || reviewAttentionFor(block.materia, block.assunto);
@@ -5941,20 +5965,22 @@ function explainStudySuggestion(block, context = {}) {
   return { text: factors.slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
 }
 
+function continueRecommendationHelpers() {
+  return {
+    normalizeStatus,
+    priorityInfo,
+    initialDiagnosisReason,
+    initialDiagnosisInfluence,
+    subjectPlanningData,
+    predictiveRiskForSubject,
+    isPreNotice: (phase) => phase.phase === window.ExamPhaseEngine?.PRE_NOTICE,
+  };
+}
+
 function continueAlternativeEntries(suggested, rankedEntries = null) {
-  const remaining = (rankedEntries || rankedContinueEntries()).filter((entry) => entry.index !== suggested?.index);
-  const diversified = [];
-  const subjects = new Set();
-  remaining.forEach((entry) => {
-    if (diversified.length >= 5 || subjects.has(entry.block.materia)) return;
-    diversified.push(entry);
-    subjects.add(entry.block.materia);
-  });
-  remaining.forEach((entry) => {
-    if (diversified.length >= 5 || diversified.some((item) => item.index === entry.index)) return;
-    diversified.push(entry);
-  });
-  return diversified;
+  const ranked = rankedEntries || rankedContinueEntries();
+  if (window.ContinueRecommendation?.alternatives) return window.ContinueRecommendation.alternatives(suggested, ranked);
+  return [];
 }
 
 function continueAlternativeReason(entry = {}) {

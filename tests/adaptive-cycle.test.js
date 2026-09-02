@@ -2,6 +2,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const StudyDerivedState = require("../js/study-derived-state.js");
+const ContinueRecommendation = require("../js/continue-recommendation.js");
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 
@@ -32,7 +34,7 @@ const context = {
   requestAnimationFrame: noop,
   localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
   document: { querySelectorAll: () => [], querySelector: () => null, addEventListener: noop, documentElement: { dataset: {}, style: { setProperty: noop } }, body: {} },
-  window: { setTimeout: noop, clearTimeout: noop, setInterval: noop, clearInterval: noop, addEventListener: noop, matchMedia: () => ({ matches: false }), innerWidth: 1200 },
+  window: { setTimeout: noop, clearTimeout: noop, setInterval: noop, clearInterval: noop, addEventListener: noop, matchMedia: () => ({ matches: false }), innerWidth: 1200, StudyDerivedState, ContinueRecommendation },
   Date, Math, JSON, Set, Map, Array, Object, String, Number, Boolean, RegExp, Error, structuredClone,
 };
 vm.createContext(context);
