@@ -37,6 +37,28 @@ const lowEvidence = engine.build({
 });
 assert.ok(!lowEvidence.some((item) => item.type === "SUBJECT_ATTENTION"), "Uma sessão ruim isolada não deve gerar alerta de desempenho.");
 
+const diagnosedAttention = engine.build({
+  now,
+  exam: { weeksToExam: 20, coverageRisk: false, confident: false },
+  priorityReviews: 0,
+  subjects: [{
+    name: "Pontuação",
+    coverage: .8,
+    performance: .9,
+    questions: 50,
+    performanceTrend: "Estável",
+    priority: 70,
+    openReviews: 0,
+    reprograms: 0,
+    daysWithoutContact: 2,
+    diagnosis: { level: "attention", confidence: .8, trend: { label: "falling" }, reasons: ["queda nas sessões recentes"], action: { kind: "light-reinforcement" } },
+  }],
+});
+const diagnosedSubject = diagnosedAttention.find((item) => item.subjectName === "Pontuação");
+assert.ok(diagnosedSubject.reasonCodes.includes("MASTERY_ATTENTION"), "Alertas devem usar o nível fornecido pelo diagnóstico.");
+assert.ok(diagnosedSubject.reasonCodes.includes("PERFORMANCE_DROP"), "Alertas devem ler trend.label corretamente.");
+assert.ok(!diagnosedSubject.reasonCodes.includes("LOW_PERFORMANCE"), "Com diagnóstico disponível, não deve haver uma régua paralela de desempenho.");
+
 const dismissed = first.map((item) => item.type === "SUBJECT_ATTENTION" ? { ...item, dismissedAt: now.toISOString() } : item);
 const unchanged = engine.build({ ...baseline, existing: dismissed, now: new Date("2026-08-19T12:00:00.000Z") });
 assert.ok(unchanged.find((item) => item.type === "SUBJECT_ATTENTION").dismissedAt, "Um alerta dispensado deve permanecer oculto enquanto a situação não mudar.");

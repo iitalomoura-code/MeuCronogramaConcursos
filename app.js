@@ -3942,7 +3942,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
-  if (!engine?.diagnose) return { level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
+  if (!engine?.diagnose) return { available: false, level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
   const diagnosis = engine.diagnose({
     entries: selected.entries,
     basis: selected.basis,
@@ -3954,7 +3954,7 @@ function masteryDiagnosisForTarget(target = {}) {
     lastContact,
     initialInfluence: initial.adjustment || 0,
   });
-  return { ...diagnosis, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
+  return { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
 }
 
 function adaptivePriorityAdjustment(target = {}) {
@@ -6052,6 +6052,7 @@ function studyAlertReasons(alert = {}) {
   const labels = {
     LOW_PERFORMANCE: `desempenho recente de ${formatPercent(metrics.performance || 0)}`,
     MASTERY_DEFICIENCY: (metrics.diagnosisReasons || []).join(" · ") || "desempenho recente pede reforço direcionado",
+    MASTERY_ATTENTION: (metrics.diagnosisReasons || []).join(" · ") || "o diagnóstico recomenda reforço leve",
     PERFORMANCE_DROP: "queda consistente nas sessões recentes",
     LONG_TIME_NO_CONTACT: `${Number(metrics.daysWithoutContact) || 0} dias sem contato`,
     REVISION_BACKLOG: `${Number(metrics.reviews) || 0} revisões pendentes`,
@@ -8957,6 +8958,13 @@ function syncAdaptiveReviewForBlock(block, options = {}) {
     acertos,
     totalQuestoes,
     dificuldade: block.dificuldade || "",
+    diagnosis: (() => {
+      const diagnosis = masteryDiagnosisForTarget({
+        ...block,
+        prioridade: Number(block.prioridadeBase ?? block.prioridade) || 0,
+      });
+      return diagnosis.available === false ? null : diagnosis;
+    })(),
   }, new Date(), Boolean(options.manual));
 
   if (!outcome.record) return outcome;

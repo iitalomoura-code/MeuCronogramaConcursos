@@ -22,6 +22,8 @@
     return date;
   }
 
+  // Fallback for plans that predate MasteryDiagnosis or fail to provide it.
+  // Normal application flow must use classificationFromDiagnosis below.
   function classification(percentual, totalQuestoes) {
     const total = Math.max(0, Number(totalQuestoes) || 0);
     const percent = clamp(Number(percentual) || 0, 0, 1);
@@ -30,6 +32,50 @@
     if (percent >= 0.61) return { automatic: true, percent, total, intensity: "curta" };
     if (percent >= 0.41) return { automatic: true, percent, total, intensity: "prioritaria" };
     return { automatic: true, percent, total, intensity: "reforcada" };
+  }
+
+  function classificationFromDiagnosis(diagnosis) {
+    const level = String(diagnosis?.level || "").toLowerCase();
+    if (!level) return null;
+
+    const confidence = clamp(Number(diagnosis.confidence) || 0, 0, 1);
+    const actionText = diagnosis?.action?.text || "";
+    const base = {
+      diagnosisLevel: level,
+      confidence,
+      reason: actionText,
+    };
+
+    if (level === "strong") {
+      return { ...base, automatic: false, resolveExisting: confidence >= .45, reason: actionText || "Domínio forte: mantenha apenas o contato normal com o tema." };
+    }
+    if (level === "adequate") {
+      return { ...base, automatic: false, reason: actionText || "Desempenho adequado: mantenha o ciclo normal." };
+    }
+    if (level === "attention") {
+      return { ...base, automatic: true, intensity: "curta", reason: actionText || "O tema pede uma revisão leve." };
+    }
+    if (level === "deficiency") {
+      return { ...base, automatic: true, intensity: "prioritaria", reason: actionText || "O tema pede reforço direcionado." };
+    }
+    if (level === "critical") {
+      return { ...base, automatic: true, intensity: "reforcada", reason: actionText || "O tema pede uma revisão aprofundada." };
+    }
+    if (level === "insufficient") {
+      return { ...base, automatic: false, insufficient: true, reason: actionText || "Ainda não há dados suficientes; faça uma sessão diagnóstica." };
+    }
+    return null;
+  }
+
+  function diagnosisSnapshot(diagnosis) {
+    if (!diagnosis?.level) return null;
+    return {
+      level: diagnosis.level,
+      confidence: clamp(Number(diagnosis.confidence) || 0, 0, 1),
+      trend: diagnosis.trend?.label || "",
+      action: diagnosis.action?.kind || "",
+      reasons: Array.isArray(diagnosis.reasons) ? [...diagnosis.reasons] : [],
+    };
   }
 
   function buildPlan(classificationResult, now = new Date()) {
@@ -70,21 +116,22 @@
     if (!context?.materia || !context?.assunto || !context?.id || !context?.sourceKey) {
       return { record: null, created: false, updated: false, concluded: false, invalid: true, reason: "Matéria e assunto válidos são necessários." };
     }
-    const result = classification(session.percentual, session.totalQuestoes);
+    const result = classificationFromDiagnosis(session.diagnosis) || classification(session.percentual, session.totalQuestoes);
     const canCreate = manual || result.automatic;
     const attempt = makeAttempt(session, now);
     const base = existing ? { ...existing, tentativas: Array.isArray(existing.tentativas) ? [...existing.tentativas] : [] } : null;
 
     if (!canCreate) {
-      if (!base) return { record: null, created: false, updated: false, concluded: false, insufficient: result.total < 10, reason: result.reason };
+      if (!base) return { record: null, created: false, updated: false, concluded: false, insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason };
       if (shouldAppendAttempt(base, attempt)) base.tentativas.push(attempt);
-      if (result.total >= 10 && result.percent > 0.8) {
+      if (result.resolveExisting) {
         base.status = "Concluída";
         base.concluidaEm = new Date(now).toISOString();
       }
       base.atualizadaEm = new Date(now).toISOString();
-      base.motivo = { percentual: result.percent, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
-      return { record: base, created: false, updated: true, concluded: base.status === "Concluída", insufficient: result.total < 10, reason: result.reason };
+      base.motivo = { percentual: result.percent ?? attempt.percentual, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
+      base.diagnostico = diagnosisSnapshot(session.diagnosis);
+      return { record: base, created: false, updated: true, concluded: base.status === "Concluída", insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason };
     }
 
     const intensity = result.intensity || "curta";
@@ -111,7 +158,8 @@
     record.dataBase = formatDate(now);
     record.intervalKey = "adaptativa";
     record.intervalLabel = `Revisão adaptativa · ${plan.definition.label}`;
-    record.motivo = { percentual: result.percent, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
+    record.motivo = { percentual: result.percent ?? attempt.percentual, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
+    record.diagnostico = diagnosisSnapshot(session.diagnosis);
     record.questoesSugeridas = Math.max(1, Number(record.questoesSugeridas) || plan.definition.questions);
     record.sugestao = plan.definition.suggestion;
     record.disponibilidade = plan.flexibleLabel;
@@ -122,6 +170,7 @@
 
   global.AdaptiveReviewEngine = {
     classification,
+    classificationFromDiagnosis,
     buildPlan,
     mergeReview,
     priorityImpact(intensity) { return Math.min(0.14, INTENSITIES[intensity]?.impact || 0); },
