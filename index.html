@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260902-weekly-closure" />
+    <link rel="stylesheet" href="./styles.css?v=20260902-evolution-history" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -719,7 +719,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
               <div id="editalMapBody" class="edital-map-list"></div>
             </section>
             <details class="evolution-card evolution-cycles-card"><summary><div><h3>Hist&oacute;rico dos ciclos</h3><p>Fechamentos e variações registradas.</p></div><span>Ver hist&oacute;rico</span></summary><div id="evolutionCycleBody" class="evolution-cycle-list"></div></details>
-            <details class="evolution-completed-archive"><summary>Hist&oacute;rico de conte&uacute;dos conclu&iacute;dos</summary><div class="table-wrap simple"><table><thead><tr><th>Data</th><th>Ciclo</th><th>Mat&eacute;ria</th><th>Tema</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead><tbody id="evolutionCompletedBody"></tbody></table></div></details>
+            <details class="evolution-card evolution-cycles-card evolution-completed-archive"><summary><div><h3>Hist&oacute;rico de conte&uacute;dos conclu&iacute;dos</h3><p>Registros dos temas finalizados ao longo dos ciclos.</p></div><span>Ver hist&oacute;rico</span></summary><div class="table-wrap simple"><table><thead><tr><th>Data</th><th>Ciclo</th><th>Mat&eacute;ria</th><th>Tema</th><th>Dura&ccedil;&atilde;o</th><th>Quest&otilde;es</th><th>% de acerto</th></tr></thead><tbody id="evolutionCompletedBody"></tbody></table></div></details>
           </div>
           <div id="evolutionTopicModal" class="evolution-topic-modal" hidden></div>
         </section>

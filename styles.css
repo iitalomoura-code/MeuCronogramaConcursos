@@ -10773,7 +10773,7 @@ textarea:focus {
 }
 
 .evolution-completed-archive {
-  padding: 20px 0 !important;
+  padding: 22px !important;
 }
 
 .evolution-completed-archive .table-wrap {
@@ -11979,7 +11979,7 @@ textarea:focus {
 #tab-evolucao .evolution-edital-map-card { padding: 22px; }
 #tab-evolucao .evolution-cycles-card > summary { margin: 0; }
 #tab-evolucao .evolution-cycles-card summary p { margin: 4px 0 0; color: var(--muted); font-size: 13px; font-weight: 400; }
-#tab-evolucao .evolution-completed-archive { padding: 18px 0; border-width: 1px 0; border-radius: 0; background: transparent; box-shadow: none; }
+#tab-evolucao .evolution-completed-archive { padding: 22px; }
 
 @media (max-width: 980px) {
   #tab-evolucao .evolution-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
