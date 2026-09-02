@@ -30,7 +30,7 @@ assert.ok(app.includes("Array.isArray(saved.initialDiagnosis)"), "Backups antigo
 assert.ok(app.includes("masteryDiagnosisForTarget"), "A geração deve consultar o motor de domínio que pondera a influência inicial.");
 assert.ok(app.includes("initialDiagnosisReason(block.materia)"), "A tela Continuar deve explicar o diagnóstico somente quando relevante.");
 assert.ok(index.includes('./js/initial-diagnosis.js?v=20260817-initial-diagnosis'), "O módulo local deve ser carregado antes do app.");
-assert.ok(index.includes('./js/mastery-diagnosis.js?v=20260902-mastery-diagnosis'), "O motor de domínio deve ser carregado antes do app.");
+assert.ok(index.includes('./js/mastery-diagnosis.js?v=20260902-error-analysis'), "O motor de domínio deve ser carregado antes do app.");
 assert.ok(!index.includes('data-tab-target="diagnostico"'), "O diagnóstico não deve aparecer como item permanente da navegação.");
 
 console.log("OK - diagnóstico inicial é neutro quando desconhecido, perde peso com evidência e preserva compatibilidade.");

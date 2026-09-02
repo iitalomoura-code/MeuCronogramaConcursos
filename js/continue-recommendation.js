@@ -94,6 +94,9 @@
       else if (reason.includes("dificuldade")) factors.push("dificuldade informada alta");
       else if (reason.includes("reprogram")) factors.push("tema reprogramado anteriormente");
       else if (reason.includes("queda")) factors.push("queda de desempenho recente");
+      else if (reason.includes("erros recorrentes")) factors.push("erros recorrentes nas últimas sessões");
+      else if (reason.includes("persistentes após reforço")) factors.push("o tema continuou gerando erros após o reforço");
+      else if (reason.includes("concentra boa parte")) factors.push("o assunto concentra boa parte dos erros recentes da matéria");
     });
     const mastery = adaptive.mastery;
     if (mastery?.needsDiagnostic) factors.push("ainda faltam questões para avaliar melhor este tema");

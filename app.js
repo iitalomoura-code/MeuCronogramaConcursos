@@ -186,6 +186,10 @@ let adaptiveHistoryCache = null;
 let reviewAttentionCache = new Map();
 let reviewAttentionCacheSource = null;
 let masteryDiagnosisCache = new Map();
+let errorAnalysisRevision = 0;
+let learningDiagnosisModelCache = null;
+let learningDiagnosisModelRevision = -1;
+let learningDiagnosisView = { subject: "all", attentionOnly: false, status: "", expandedSubjects: new Set() };
 let continueDerivedStateRevision = 0;
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
@@ -203,6 +207,10 @@ function invalidateDerivedStudyCaches() {
   reviewAttentionCache.clear();
   reviewAttentionCacheSource = null;
   masteryDiagnosisCache.clear();
+  learningDiagnosisModelCache = null;
+  learningDiagnosisModelRevision = -1;
+  errorAnalysisRevision += 1;
+  window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
   continueDerivedStateRevision += 1;
   window.StudyDerivedState?.invalidate?.();
@@ -382,6 +390,9 @@ const els = {
   notebookText: document.querySelector("#notebookText"),
   notebookEditorHeader: document.querySelector("#notebookEditorHeader"),
   notebookStatus: document.querySelector("#notebookStatus"),
+  learningDiagnosisSubjectFilter: document.querySelector("#learningDiagnosisSubjectFilter"),
+  learningDiagnosisAttentionOnly: document.querySelector("#learningDiagnosisAttentionOnly"),
+  learningDiagnosisBody: document.querySelector("#learningDiagnosisBody"),
   evolutionGrid: document.querySelector("#evolutionGrid"),
   evolutionPredictive: document.querySelector("#evolutionPredictive"),
   evolutionEmpty: document.querySelector("#evolutionEmpty"),
@@ -1583,6 +1594,7 @@ function renderActiveTabContent(tabName) {
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
   if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
+  if (tabName === "aprendizado") safeRender("Diagnóstico de aprendizagem", renderLearningDiagnosis);
   if (tabName === "diagnostico") safeRender("Diagnóstico inicial", renderInitialDiagnosis);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
   if (tabName === "revisar-planejamento") safeRender("Revisão do planejamento", renderPlanningReview);
@@ -3953,6 +3965,38 @@ function learningInterventionInsights() {
   return window.LearningIntervention?.insights?.(records) || [];
 }
 
+function errorAnalysisSnapshot() {
+  const interventions = [
+    ...(state.reviews || []).filter((record) => record.intervencao),
+    ...state.generatedBlocks.filter((block) => block.intervencao),
+  ];
+  return window.ErrorAnalysis?.snapshot?.({
+    errors: state.errors || [],
+    interventions,
+    revision: errorAnalysisRevision,
+  }) || null;
+}
+
+function errorSignalsForTarget(materia = "", assunto = "") {
+  return window.ErrorAnalysis?.signalsFor?.(errorAnalysisSnapshot(), materia, assunto) || { available: false };
+}
+
+function errorAnalysisInsights() {
+  const topics = [...(errorAnalysisSnapshot()?.byTopic?.values?.() || [])];
+  return topics
+    .filter((item) => item.recurrence === "high" || item.postInterventionErrors >= 2 || item.concentration >= .35)
+    .sort((a, b) => Number(b.postInterventionErrors) - Number(a.postInterventionErrors) || Number(b.concentration) - Number(a.concentration) || Number(b.recentSessions) - Number(a.recentSessions))
+    .slice(0, 2)
+    .map((item) => ({
+      materia: item.materia,
+      assunto: item.assunto,
+      recurrence: item.recurrence,
+      postInterventionErrors: item.postInterventionErrors,
+      concentration: item.concentration,
+      trend: item.errorTrend,
+    }));
+}
+
 function adaptivePerformanceForTopic(materia = "", assunto = "") {
   return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia, assunto));
 }
@@ -3994,6 +4038,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
   const initial = initialDiagnosisInfluence(materia);
+  const errorSignals = errorSignalsForTarget(materia, assunto);
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
@@ -4012,8 +4057,9 @@ function masteryDiagnosisForTarget(target = {}) {
     coverage: lastContact ? 1 : 0,
     lastContact,
     initialInfluence: initial.adjustment || 0,
+    errorSignals,
   });
-  const result = { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
+  const result = { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, errorSignals, reviewAttention, hasContact: Boolean(lastContact) };
   masteryDiagnosisCache.set(cacheKey, result);
   return result;
 }
@@ -4084,6 +4130,71 @@ function adaptivePriorityForTarget(target = {}) {
 
 function subjectPlanningData(materia = "") {
   return state.planningBase?.materias?.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia)) || {};
+}
+
+function learningDiagnosisTopics() {
+  const unique = new Map();
+  state.rows
+    .filter((row) => row.estudar !== "Nao" && row.materia && row.assunto)
+    .forEach((row) => {
+      const key = topicKey(row.materia, row.assunto);
+      if (!unique.has(key)) unique.set(key, { materia: row.materia, assunto: row.assunto });
+    });
+  return [...unique.values()];
+}
+
+function learningDiagnosisModel() {
+  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
+  const topics = learningDiagnosisTopics().map((topic) => {
+    const subject = subjectPlanningData(topic.materia);
+    const diagnosis = masteryDiagnosisForTarget({
+      materia: topic.materia,
+      assunto: topic.assunto,
+      prioridade: priorityScore(subject),
+    });
+    return {
+      ...topic,
+      assuntoOriginal: topic.assunto,
+      assunto: themeTitle(topic.assunto),
+      diagnosis,
+      errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto),
+      intervention: learningInterventionFor(topic.materia, topic.assunto),
+      daysWithoutContact: daysSinceLastSubjectContact(topic.materia),
+    };
+  });
+  learningDiagnosisModelCache = window.LearningDiagnosisView?.build?.({ topics }) || { topics: [], subjects: [], counts: {}, priorities: [], errorPatterns: [], responses: [] };
+  learningDiagnosisModelRevision = errorAnalysisRevision;
+  return learningDiagnosisModelCache;
+}
+
+function renderLearningDiagnosis() {
+  if (!els.learningDiagnosisBody) return;
+  const model = learningDiagnosisModel();
+  const subjects = [...new Set(model.topics.map((topic) => topic.materia))].sort((a, b) => a.localeCompare(b));
+  if (!subjects.includes(learningDiagnosisView.subject)) learningDiagnosisView.subject = "all";
+  if (els.learningDiagnosisSubjectFilter) {
+    els.learningDiagnosisSubjectFilter.innerHTML = `<option value="all">Todas as matérias</option>${subjects.map((materia) => `<option value="${escapeHtml(materia)}">${escapeHtml(materia)}</option>`).join("")}`;
+    els.learningDiagnosisSubjectFilter.value = learningDiagnosisView.subject;
+  }
+  if (els.learningDiagnosisAttentionOnly) els.learningDiagnosisAttentionOnly.checked = learningDiagnosisView.attentionOnly;
+  els.learningDiagnosisBody.innerHTML = window.LearningDiagnosisView?.render?.(model, {
+    subject: learningDiagnosisView.subject,
+    attentionOnly: learningDiagnosisView.attentionOnly,
+    status: learningDiagnosisView.status,
+    expandedSubjects: learningDiagnosisView.expandedSubjects,
+    escape: escapeHtml,
+  }) || `<div class="empty-panel">O diagnóstico ficará disponível quando houver temas no conteúdo programático.</div>`;
+  renderLucideIcons(els.learningDiagnosisBody);
+}
+
+function reinforceLearningDiagnosisTopic(materia = "", assunto = "") {
+  const index = state.generatedBlocks.findIndex((block) => isPendingBlock(block) && topicMatches(block, materia, assunto));
+  switchTab("continuar");
+  if (index < 0) {
+    showToast("Este tema será priorizado quando houver um bloco disponível no ciclo.");
+    return;
+  }
+  void openFocusedStudy(index, { context: "reforco" });
 }
 
 function topicPlanningData(materia = "", assunto = "") {
@@ -5462,6 +5573,7 @@ function weeklyClosureSnapshot(goal, progress) {
     pending: weeklyPendingSnapshot(goal, progress),
     contactGaps: weeklyContactGaps(goal),
     interventions: learningInterventionInsights(),
+    errorInsights: errorAnalysisInsights(),
     examContext: goal.examContext || weeklyExamContext(),
   });
 }
@@ -6804,6 +6916,14 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
   block.pontosRevisar = Boolean(draft.pontosRevisar);
   block.atualizadoEm = new Date().toISOString();
   updateBlockAccuracy(block);
+  recordStudyErrors(block, {
+    sessionId: draft.sessionId,
+    source: "revisao",
+    questions,
+    correctAnswers,
+    notes: block.observacoes,
+  });
+  invalidateDerivedStudyCaches();
   return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome: null, standaloneReview: true };
 }
 
@@ -7400,6 +7520,34 @@ function updateBlockAccuracy(block) {
   block.percentual = questions > 0 ? correct / questions : 0;
 }
 
+function recordStudyErrors(block = {}, { sessionId = "", source = "", questions = 0, correctAnswers = 0, notes = "" } = {}) {
+  const total = Math.max(0, Number(questions) || 0);
+  const correct = Math.min(total, Math.max(0, Number(correctAnswers) || 0));
+  const count = Math.max(0, total - correct);
+  if (!count || !block.materia || !block.assunto) return false;
+  state.errors = Array.isArray(state.errors) ? state.errors : [];
+  const stableSessionId = String(sessionId || block.lastSavedSessionId || `${source}:${block.id || block.materia}:${block.assunto}`);
+  const existing = state.errors.find((item) => String(item.sessaoId || item.sessionId || "") === stableSessionId && topicMatches(item, block.materia, block.assunto));
+  const intervention = learningInterventionFor(block.materia, block.assunto);
+  const next = {
+    id: existing?.id || `error-session:${stableSessionId}`,
+    materia: block.materia,
+    assunto: block.assunto,
+    macrotema: macroTopicFor(block.materia, block.assunto),
+    registradaEm: new Date().toISOString(),
+    sessaoId: stableSessionId,
+    origem: source || block.tipoAtividade || "estudo",
+    quantidade: count,
+    dificuldade: block.dificuldade || "",
+    observacao: String(notes || block.observacoes || "").trim(),
+    revisaoId: block.reviewId || "",
+    intervencaoId: intervention?.createdAt || "",
+  };
+  if (existing) Object.assign(existing, next);
+  else state.errors.push(next);
+  return true;
+}
+
 function saveStudyResult({
   blockIndex,
   source = "schedule",
@@ -7448,6 +7596,7 @@ function saveStudyResult({
   block.pontosRevisar = Boolean(reviewPoints);
   block.atualizadoEm = new Date().toISOString();
   setBlockReviewCycles(block, Array.isArray(reviewCycles) ? reviewCycles : reviewCyclesFromBlock(block));
+  recordStudyErrors(block, { sessionId: effectiveSessionId, source, questions: totalQuestions, correctAnswers: correct, notes });
 
   if (nextStatus === "Concluído") {
     if (!block.concluidoEm) block.concluidoEm = new Date().toLocaleDateString("pt-BR");
@@ -9134,12 +9283,16 @@ function syncAdaptiveReviewForBlock(block, options = {}) {
   }, new Date(), Boolean(options.manual));
 
   if (!outcome.record) {
-    if (outcome.interventionState) block.intervencao = outcome.interventionState;
+    if (outcome.interventionState) {
+      block.intervencao = outcome.interventionState;
+      invalidateDerivedStudyCaches();
+    }
     return outcome;
   }
   const index = state.reviews.findIndex((record) => record.id === sourceKey);
   if (index >= 0) state.reviews[index] = normalizeAdaptiveReviewRecord(outcome.record);
   else state.reviews.push(normalizeAdaptiveReviewRecord(outcome.record));
+  invalidateDerivedStudyCaches();
   return outcome;
 }
 
@@ -12093,6 +12246,29 @@ els.mobilePlanTitle?.addEventListener("click", () => {
 });
 els.mobileDrawerBackdrop?.addEventListener("click", () => closeMobileDrawer());
 document.addEventListener("click", (event) => {
+  const reinforceTopic = event.target.closest("[data-reinforce-topic]");
+  if (reinforceTopic) {
+    reinforceLearningDiagnosisTopic(reinforceTopic.dataset.reinforceTopic || "", reinforceTopic.dataset.reinforceSubject || "");
+    return;
+  }
+
+  const diagnosisStatus = event.target.closest("[data-learning-diagnosis-status]");
+  if (diagnosisStatus) {
+    const status = diagnosisStatus.dataset.learningDiagnosisStatus || "";
+    learningDiagnosisView.status = learningDiagnosisView.status === status ? "" : status;
+    renderLearningDiagnosis();
+    return;
+  }
+
+  const diagnosisSubject = event.target.closest("[data-learning-diagnosis-expand]");
+  if (diagnosisSubject) {
+    const materia = diagnosisSubject.dataset.learningDiagnosisExpand || "";
+    if (learningDiagnosisView.expandedSubjects.has(materia)) learningDiagnosisView.expandedSubjects.delete(materia);
+    else learningDiagnosisView.expandedSubjects.add(materia);
+    renderLearningDiagnosis();
+    return;
+  }
+
   if (event.target.closest("[data-close-focused]")) {
     suspendFocusedStudy();
     return;
@@ -12327,6 +12503,16 @@ document.addEventListener("click", (event) => {
     if (setupIsIncomplete()) switchTab("pesos");
     else openPlanningSettings("pesos");
   }
+});
+els.learningDiagnosisSubjectFilter?.addEventListener("change", () => {
+  learningDiagnosisView.subject = els.learningDiagnosisSubjectFilter.value || "all";
+  learningDiagnosisView.status = "";
+  renderLearningDiagnosis();
+});
+els.learningDiagnosisAttentionOnly?.addEventListener("change", () => {
+  learningDiagnosisView.attentionOnly = els.learningDiagnosisAttentionOnly.checked;
+  learningDiagnosisView.status = "";
+  renderLearningDiagnosis();
 });
 document.addEventListener("input", (event) => {
   const field = event.target.closest("[data-focused-field]");

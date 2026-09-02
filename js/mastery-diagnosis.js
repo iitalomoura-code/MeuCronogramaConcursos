@@ -60,6 +60,21 @@
   }
 
   function actionFor(level, data) {
+    const errorSignals = data.errorSignals || {};
+    if (Number(errorSignals.postInterventionErrors) >= 2 && ["deficiency", "critical", "attention"].includes(level)) return {
+      kind: "deep-recovery",
+      label: "Revisão aprofundada",
+      minutes: 45,
+      questions: 15,
+      text: "O reforço anterior não consolidou o assunto. Retome a teoria ou o resumo antes de novas questões.",
+    };
+    if (errorSignals.recurrence === "high" && ["deficiency", "attention"].includes(level)) return {
+      kind: "targeted-reinforcement",
+      label: "Reforço direcionado",
+      minutes: 30,
+      questions: 15,
+      text: "Os erros se repetem em sessões diferentes. Revise o ponto específico antes de uma nova bateria de questões.",
+    };
     if (data.needsDiagnostic) return {
       kind: "diagnostic",
       label: "Sessão diagnóstica",
@@ -103,6 +118,7 @@
     const highDifficulty = entries.slice(-6).filter((entry) => String(entry.dificuldade || "").toLowerCase() === "alta").length;
     const reprograms = entries.filter((entry) => String(entry.status || "").toLowerCase().includes("reprogram")).length;
     const repeatedErrors = Math.max(0, answered.filter((entry) => Number(entry.questoes) > 0 && (Number(entry.acertos) || 0) / Number(entry.questoes) < 0.7).length - 1);
+    const errorSignals = input.errorSignals || {};
     const important = clamp(input.importance);
     const incidence = clamp(input.incidence);
     const urgency = clamp(input.urgency);
@@ -123,7 +139,19 @@
     if (direction.label === "falling") pressure += 0.14;
     if (highDifficulty >= 2) pressure += 0.10;
     if (reprograms >= 2) pressure += 0.09;
-    if (repeatedErrors >= 2) pressure += Math.min(0.12, repeatedErrors * 0.04);
+    // A taxa de acertos já carrega o volume de erro. O registro detalhado entra
+    // apenas como evidência de padrão, persistência e concentração por assunto.
+    if (!errorSignals.available && repeatedErrors >= 2) pressure += Math.min(0.12, repeatedErrors * 0.04);
+    if (errorSignals.available) {
+      let errorPatternPressure = 0;
+      if (errorSignals.recurrence === "high") errorPatternPressure += 0.07;
+      else if (errorSignals.recurrence === "moderate") errorPatternPressure += 0.035;
+      if (Number(errorSignals.postInterventionErrors) >= 2) errorPatternPressure += 0.07;
+      if (Number(errorSignals.concentration) >= 0.35) errorPatternPressure += 0.035;
+      if (errorSignals.trend === "worsening") errorPatternPressure += 0.03;
+      if (errorSignals.trend === "improving") errorPatternPressure -= 0.025;
+      pressure += Math.max(-0.025, Math.min(0.14, errorPatternPressure));
+    }
     if (Number(review.overdue) > 0) pressure += 0.14;
     else if (Number(review.available) > 0) pressure += 0.07;
     if (daysWithoutContact !== null && daysWithoutContact >= 10) pressure += Math.min(0.10, 0.04 + Math.floor((daysWithoutContact - 10) / 7) * 0.02);
@@ -142,7 +170,10 @@
     if (direction.label === "falling") reasons.push("queda nas sessões recentes");
     if (highDifficulty >= 2) reasons.push("dificuldade alta recorrente");
     if (reprograms >= 2) reasons.push(`${reprograms} reprogramações`);
-    if (repeatedErrors >= 2) reasons.push("erros recorrentes");
+    if (!errorSignals.available && repeatedErrors >= 2) reasons.push("erros recorrentes");
+    if (errorSignals.available && errorSignals.recurrence === "high") reasons.push("erros recorrentes em sessões diferentes");
+    if (errorSignals.available && Number(errorSignals.postInterventionErrors) >= 2) reasons.push("erros persistentes após reforço");
+    if (errorSignals.available && Number(errorSignals.concentration) >= 0.35) reasons.push("o tema concentra boa parte dos erros recentes da matéria");
     if (Number(review.overdue) > 0) reasons.push("revisão pendente há mais tempo");
     if (needsDiagnostic) reasons.unshift("ainda há poucas questões registradas");
     if (!reasons.length && level === "strong") reasons.push("desempenho consistente e sem queda recente");
@@ -165,9 +196,10 @@
       daysWithoutContact,
       relevance,
       needsDiagnostic,
-      action: actionFor(level, { needsDiagnostic, relevance }),
+      action: actionFor(level, { needsDiagnostic, relevance, errorSignals }),
       priorityAdjustment,
       reasons: reasons.slice(0, 3),
+      errorSignals,
     };
   }
 

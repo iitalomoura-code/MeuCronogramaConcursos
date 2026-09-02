@@ -12104,3 +12104,129 @@ textarea:focus {
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
   }
 }
+
+/* Diagnóstico de aprendizagem: leitura direta, sem uma segunda camada de cálculos. */
+.learning-diagnosis-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  margin: 4px 0 24px;
+}
+
+.learning-diagnosis-toolbar > label:first-child {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 260px);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.learning-diagnosis-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  gap: 9px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.learning-diagnosis-toggle input { accent-color: var(--primary); }
+.learning-diagnosis-body { display: grid; gap: 30px; }
+
+.learning-diagnosis-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.learning-diagnosis-metric {
+  min-height: 82px;
+  padding: 14px 18px;
+  border: 0;
+  border-right: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  box-shadow: none;
+}
+
+.learning-diagnosis-metric:last-child { border-right: 0; }
+.learning-diagnosis-metric strong { display: block; font-size: 25px; line-height: 1; }
+.learning-diagnosis-metric span { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.learning-diagnosis-metric:hover, .learning-diagnosis-metric.is-active { background: var(--primary-soft); color: var(--primary-soft-text); transform: none; }
+
+.learning-diagnosis-section { min-width: 0; }
+.learning-diagnosis-section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.learning-diagnosis-section-heading .section-kicker { margin-bottom: 5px; }
+.learning-diagnosis-section-heading h3 { margin: 0; font-size: 18px; }
+.learning-diagnosis-section-heading p { max-width: 620px; margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+
+.learning-diagnosis-priority-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.learning-diagnosis-topic { display: grid; gap: 11px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--card) 94%, var(--bg-main)); }
+.learning-diagnosis-topic-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.learning-diagnosis-topic-heading > div > span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
+.learning-diagnosis-topic h4 { margin: 0; font-size: 15px; line-height: 1.35; }
+.learning-diagnosis-status { display: inline-flex; flex: 0 0 auto; align-items: center; padding: 4px 7px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 750; line-height: 1.1; white-space: nowrap; }
+.learning-diagnosis-status.strong { background: color-mix(in srgb, var(--success) 13%, var(--card)); color: var(--success); }
+.learning-diagnosis-status.attention, .learning-diagnosis-status.deficiency { background: var(--primary-soft); color: var(--primary-soft-text); }
+.learning-diagnosis-status.critical { background: color-mix(in srgb, var(--danger) 13%, var(--card)); color: var(--danger); }
+.learning-diagnosis-evidence { min-height: 32px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.learning-diagnosis-response { display: grid; gap: 3px; margin: 0; padding-left: 10px; border-left: 2px solid var(--primary); color: var(--muted); font-size: 12px; }
+.learning-diagnosis-response strong { color: var(--text); font-size: 12px; }
+.learning-diagnosis-action { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--divider); }
+.learning-diagnosis-action > span { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+.learning-diagnosis-action strong { font-size: 13px; }
+.learning-diagnosis-action small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.learning-diagnosis-topic .compact-button { justify-self: start; min-height: 34px; padding: 0 10px; font-size: 12px; }
+
+.learning-diagnosis-subject-list { display: grid; gap: 8px; }
+.learning-diagnosis-subject { padding: 13px 0; border-top: 1px solid var(--divider); }
+.learning-diagnosis-subject:last-child { border-bottom: 1px solid var(--divider); }
+.learning-diagnosis-subject header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.learning-diagnosis-subject header > div { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.learning-diagnosis-subject header > div > strong { font-size: 14px; }
+.learning-diagnosis-subject header small { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.learning-diagnosis-subject-topics { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.learning-diagnosis-subject-topics > span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; background: var(--soft); color: var(--text); font-size: 11px; }
+.learning-diagnosis-subject-topics b { font-weight: 650; }
+.learning-diagnosis-subject .text-action { min-height: 28px; margin-top: 8px; padding: 0; font-size: 12px; }
+
+.learning-diagnosis-secondary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 38px; }
+.learning-diagnosis-patterns { display: grid; gap: 0; border-top: 1px solid var(--divider); }
+.learning-diagnosis-patterns article { display: grid; gap: 4px; padding: 11px 0; border-bottom: 1px solid var(--divider); }
+.learning-diagnosis-patterns strong { font-size: 13px; }
+.learning-diagnosis-patterns span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+.learning-diagnosis-map { padding-top: 2px; }
+.learning-diagnosis-map-head, .learning-diagnosis-map-row { display: grid; grid-template-columns: minmax(190px, 1.6fr) minmax(110px, .75fr) 90px 82px minmax(180px, 1fr); align-items: center; gap: 12px; }
+.learning-diagnosis-map-head { padding: 8px 10px; border-bottom: 1px solid var(--divider); color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.learning-diagnosis-map-row { padding: 12px 10px; border-bottom: 1px solid var(--divider); }
+.learning-diagnosis-map-row > div { display: grid; gap: 3px; min-width: 0; }
+.learning-diagnosis-map-row strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.learning-diagnosis-map-row span:not(.learning-diagnosis-status), .learning-diagnosis-map-row small { color: var(--muted); font-size: 12px; }
+.learning-diagnosis-map-row small { line-height: 1.35; }
+
+@media (max-width: 800px) {
+  .learning-diagnosis-priority-list, .learning-diagnosis-secondary-grid { grid-template-columns: 1fr; gap: 24px; }
+  .learning-diagnosis-map-head { display: none; }
+  .learning-diagnosis-map-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .learning-diagnosis-map-row > div { grid-column: 1 / -1; }
+  .learning-diagnosis-map-row > span:not(.learning-diagnosis-status), .learning-diagnosis-map-row small { grid-column: auto; }
+}
+
+@media (max-width: 560px) {
+  .learning-diagnosis-toolbar { align-items: stretch; flex-direction: column; gap: 10px; }
+  .learning-diagnosis-toolbar > label:first-child { width: 100%; }
+  .learning-diagnosis-toggle { min-height: 34px; }
+  .learning-diagnosis-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learning-diagnosis-metric { min-height: 74px; padding: 12px; border-bottom: 1px solid var(--divider); }
+  .learning-diagnosis-metric:nth-child(2) { border-right: 0; }
+  .learning-diagnosis-metric:nth-child(3), .learning-diagnosis-metric:nth-child(4) { border-bottom: 0; }
+  .learning-diagnosis-topic-heading, .learning-diagnosis-subject header { align-items: flex-start; flex-direction: column; }
+  .learning-diagnosis-subject header small { white-space: normal; }
+  .learning-diagnosis-map-row { padding-inline: 0; }
+}

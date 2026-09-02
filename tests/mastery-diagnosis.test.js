@@ -42,4 +42,12 @@ const critical = engine.diagnose({ entries: [entry(2, 20, { dificuldade: "Alta" 
 assert.equal(critical.level, "critical", "Baixo desempenho consistente em tema relevante deve ser crítico.");
 assert.equal(critical.action.kind, "deep-recovery");
 
+const recurringErrors = engine.diagnose({
+  entries: [entry(15, 20), entry(15, 20), entry(15, 20)],
+  importance: .7,
+  errorSignals: { available: true, recurrence: "high", sessionsWithErrors: 5, postInterventionErrors: 3, concentration: .4, trend: "stable" },
+});
+assert.ok(recurringErrors.reasons.some((reason) => reason.includes("erros persistentes após reforço")), "Erros posteriores ao reforço devem alimentar o diagnóstico central.");
+assert.equal(recurringErrors.action.kind, "deep-recovery", "Persistência após reforço deve orientar uma abordagem aprofundada.");
+
 console.log("OK - motor de domínio pondera amostra, tendência, relevância e desempenho recente.");

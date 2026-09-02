@@ -114,7 +114,7 @@
       .sort((a, b) => Math.abs(b.deltaPoints) - Math.abs(a.deltaPoints));
   }
 
-  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, coverage = null, pending = null, contactGaps = [], interventions = [], examContext = null } = {}) {
+  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, coverage = null, pending = null, contactGaps = [], interventions = [], errorInsights = [], examContext = null } = {}) {
     const comparisons = subjectPerformanceComparisons(performance, previousPerformance);
     const safeCoverage = {
       totalTopics: Number(coverage?.totalTopics) || 0,
@@ -161,6 +161,15 @@
       if (!item?.materia || !item?.detail) return;
       const title = item.result === "resolved" ? "Recuperação confirmada" : item.result === "improved" || item.result === "improving-signal" ? "Tema em melhora" : "Reforço precisa evoluir";
       addHighlight({ type: item.result === "resolved" || item.result === "improved" ? "progress" : "attention", materia: item.materia, title, detail: `${item.assunto || item.materia}: ${item.detail}` });
+    });
+    (errorInsights || []).slice(0, 1).forEach((item) => {
+      if (!item?.materia || !item?.assunto) return;
+      const detail = item.postInterventionErrors >= 2
+        ? `${item.assunto} continuou apresentando erros após o reforço.`
+        : item.trend === "improving"
+          ? `${item.assunto} deixou de concentrar os erros recentes de ${item.materia}.`
+          : `${item.assunto} concentra erros recorrentes em ${item.materia}.`;
+      addHighlight({ type: item.trend === "improving" ? "progress" : "attention", materia: item.materia, title: item.trend === "improving" ? "Erros em redução" : "Foco de erros", detail });
     });
 
     const adjustments = [];
