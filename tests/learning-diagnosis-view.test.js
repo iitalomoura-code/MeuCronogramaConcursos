@@ -28,4 +28,10 @@ const filtered = view.render(model, { subject: "Português", status: "deficiency
 assert.ok(filtered.includes("Pontuação"), "O filtro de deficiência deve manter o tema crítico.");
 assert.ok(!filtered.includes("Interpretação"), "O filtro de deficiência não deve misturar temas fortes.");
 
+const severityOrder = view.build({ topics: [
+  topic("AFO", "Poucos dados", "insufficient"),
+  topic("AFO", "Tema crítico", "critical"),
+] });
+assert.equal(severityOrder.priorities[0].assunto, "Tema crítico", "Um tema crítico não pode ficar atrás de um tema com poucos dados em condições equivalentes.");
+
 console.log("OK - diagnóstico de aprendizagem organiza prioridades, evidências e filtros sem recalcular o motor de domínio.");

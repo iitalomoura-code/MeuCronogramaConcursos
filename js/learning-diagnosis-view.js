@@ -9,6 +9,7 @@
     critical: { label: "Crítico", rank: 2, tone: "critical" },
     insufficient: { label: "Mais dados necessários", rank: 1, tone: "insufficient" },
   };
+  const PRIORITY_RANK = { critical: 0, deficiency: 1, attention: 2, insufficient: 3, adequate: 4, strong: 5 };
 
   function levelInfo(level) {
     return LEVELS[level] || LEVELS.insufficient;
@@ -65,8 +66,12 @@
     const order = (a, b) => {
       const interventionDifference = Number(b.errorSignals?.postInterventionErrors || 0) - Number(a.errorSignals?.postInterventionErrors || 0);
       if (interventionDifference) return interventionDifference;
-      const rankDifference = a.levelInfo.rank - b.levelInfo.rank;
+      const rankDifference = (PRIORITY_RANK[a.level] ?? 9) - (PRIORITY_RANK[b.level] ?? 9);
       if (rankDifference) return rankDifference;
+      const relevanceDifference = Number(b.diagnosis?.relevance || 0) - Number(a.diagnosis?.relevance || 0);
+      if (relevanceDifference) return relevanceDifference;
+      const confidenceDifference = Number(b.diagnosis?.confidence || 0) - Number(a.diagnosis?.confidence || 0);
+      if (confidenceDifference) return confidenceDifference;
       return String(a.materia).localeCompare(String(b.materia)) || String(a.assunto).localeCompare(String(b.assunto));
     };
     const sorted = [...prepared].sort(order);
@@ -108,7 +113,8 @@
     const priorityItems = visible.slice(0, 5);
     const subjectItems = model.subjects.map((item) => ({ ...item, topics: item.topics.filter((topic) => visibleKeys.has(`${topic.materia}::${topic.assunto}`)) })).filter((item) => item.topics.length);
     const badge = (topic) => `<span class="learning-diagnosis-status ${topic.levelInfo.tone}">${escape(topic.levelInfo.label)}</span>`;
-    const topicCard = (topic, compact = false) => `<article class="learning-diagnosis-topic${compact ? " compact" : ""}"><div class="learning-diagnosis-topic-heading"><div><span>${escape(topic.materia)}</span><h4>${escape(topic.assunto)}</h4></div>${badge(topic)}</div><p class="learning-diagnosis-evidence">${topic.evidence.length ? escape(topic.evidence.join(" · ")) : "Ainda não há evidências suficientes para detalhar este tema."}</p>${topic.response ? `<p class="learning-diagnosis-response"><strong>${escape(topic.response.label)}</strong><span>${escape(topic.response.detail)}</span></p>` : ""}<div class="learning-diagnosis-action"><span>Próxima ação</span><strong>${escape(topic.action.label)}</strong><small>${escape(topic.action.detail)}</small></div>${!compact ? `<button class="primary-button compact-button" type="button" data-reinforce-topic="${escape(topic.materia)}" data-reinforce-subject="${escape(topic.assuntoOriginal || topic.assunto)}"><i data-lucide="zap"></i><span>Reforçar agora</span></button>` : ""}</article>`;
+    const actionButton = (topic) => topic.level === "insufficient" ? "Fazer diagnóstico" : "Reforçar agora";
+    const topicCard = (topic, compact = false) => `<article class="learning-diagnosis-topic${compact ? " compact" : ""}"><div class="learning-diagnosis-topic-heading"><div><span>${escape(topic.materia)}</span><h4>${escape(topic.assunto)}</h4></div>${badge(topic)}</div><p class="learning-diagnosis-evidence">${topic.evidence.length ? escape(topic.evidence.join(" · ")) : "Ainda não há evidências suficientes para detalhar este tema."}</p>${topic.response ? `<p class="learning-diagnosis-response"><strong>${escape(topic.response.label)}</strong><span>${escape(topic.response.detail)}</span></p>` : ""}<div class="learning-diagnosis-action"><span>Próxima ação</span><strong>${escape(topic.action.label)}</strong><small>${escape(topic.action.detail)}</small></div>${!compact ? `<button class="primary-button compact-button" type="button" data-reinforce-topic="${escape(topic.materia)}" data-reinforce-subject="${escape(topic.assuntoOriginal || topic.assunto)}"><i data-lucide="zap"></i><span>${actionButton(topic)}</span></button>` : ""}</article>`;
     const mapRows = visible.slice(0, 36).map((topic) => `<article class="learning-diagnosis-map-row"><div><strong>${escape(topic.assunto)}</strong><span>${escape(topic.materia)}</span></div>${badge(topic)}<span>${escape(topic.diagnosis.trend?.label === "falling" ? "Queda" : topic.diagnosis.trend?.label === "improving" ? "Melhora" : "Estável")}</span><span>${Math.round((Number(topic.diagnosis.confidence) || 0) * 100)}%</span><small>${escape(topic.action.label)}</small></article>`).join("");
     return `
       <div class="learning-diagnosis-summary">${[

@@ -19,6 +19,11 @@
     total += data.rotation?.score || 0;
     if (data.weeklyReinforcement) total += 72;
     if (data.weeklyAdjustment) total += Math.min(95, Math.max(20, Number(data.weeklyAdjustment.weight) || 0));
+    const recoveryLevel = data.diagnosticRecovery?.level;
+    if (recoveryLevel === "critical") total += 118;
+    else if (recoveryLevel === "deficiency") total += 82;
+    else if (recoveryLevel === "attention") total += 38;
+    else if (recoveryLevel === "insufficient") total += 16;
     return { ...data, score: total };
   }
 
@@ -78,6 +83,8 @@
     const priority = helpers.priorityInfo?.(block.prioridadeBase ?? block.prioridade) || { percent: 0 };
     const factors = [];
     if (context.weeklyReinforcement?.reasons?.length) context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
+    if (context.diagnosticRecovery?.level === "critical") factors.push("tema crítico na fila de recuperação");
+    else if (context.diagnosticRecovery?.level === "deficiency") factors.push("tema em deficiência na fila de recuperação");
     if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
     if (adaptive.reason) factors.push(adaptive.reason);
     if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");

@@ -12029,6 +12029,22 @@ textarea:focus {
 .continue-context-column .study-alert-item p { font-size: 12px; }
 .continue-context-column .study-alert-actions { gap: 2px; }
 
+.continue-manual-override {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  font-size: 12px;
+}
+
+.continue-manual-override strong { color: var(--text); }
+.continue-manual-override .text-action { margin-left: auto; min-height: 28px; padding: 0; font-size: 12px; }
+
 @media (min-width: 980px) {
   .continue-layout {
     width: min(100%, 1180px);
@@ -12053,6 +12069,8 @@ textarea:focus {
 @media (max-width: 700px) {
   .continue-context-column .study-alert-item { align-items: flex-start; }
   .continue-context-column .study-alert-actions { width: auto; }
+  .continue-manual-override { align-items: flex-start; flex-direction: column; }
+  .continue-manual-override .text-action { margin-left: 0; }
 }
 
 /* No celular, o modo foco usa a tela inteira e mantém a saída sempre acessível. */

@@ -102,6 +102,7 @@ const state = {
   initialDiagnosis: [],
   reviews: [],
   errors: [],
+  interventionHistory: [],
   notebook: {},
   activeFocusSession: null,
   locked: false,
@@ -138,6 +139,7 @@ let recentTopicFeedback = null;
 let showPendingOnly = false;
 let continueSuggestionOffset = 0;
 let continueRecommendationFilters = { minutes: 0, activity: "" };
+let continueManualOverride = null;
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
 let lastProgramParseMeta = {
@@ -3851,6 +3853,7 @@ function adaptiveHistoryEntries() {
   state.cycleResults.forEach((result) => {
     (result.completed || []).forEach((block) => pushBlock({ ...block, savedAt: result.savedAt || result.closedAt || "" }, "cycleResults"));
   });
+  (state.interventionHistory || []).forEach((block) => pushBlock(block, "diagnosticIntervention"));
 
   adaptiveHistoryCache = entries.sort((a, b) => entryDateValue(a) - entryDateValue(b));
   return adaptiveHistoryCache;
@@ -4175,6 +4178,18 @@ function learningDiagnosisModel() {
   return learningDiagnosisModelCache;
 }
 
+function learningRecoveryQueue() {
+  return learningDiagnosisModel().topics
+    .filter((topic) => ["critical", "deficiency", "attention", "insufficient"].includes(topic.diagnosis?.level))
+    .map((topic) => ({
+      materia: topic.materia,
+      assunto: topic.assuntoOriginal || topic.assunto,
+      diagnosis: topic.diagnosis,
+      confidence: Number(topic.diagnosis?.confidence) || 0,
+      action: topic.diagnosis?.action || {},
+    }));
+}
+
 function renderLearningDiagnosis() {
   if (!els.learningDiagnosisBody) return;
   const model = learningDiagnosisModel();
@@ -4196,13 +4211,17 @@ function renderLearningDiagnosis() {
 }
 
 function reinforceLearningDiagnosisTopic(materia = "", assunto = "") {
-  const index = state.generatedBlocks.findIndex((block) => isPendingBlock(block) && topicMatches(block, materia, assunto));
+  const topic = learningRecoveryQueue().find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia) && topicMatches({ materia: item.materia, assunto: item.assunto }, materia, assunto));
+  if (!topic) return;
+  continueManualOverride = {
+    materia: topic.materia,
+    assunto: topic.assunto,
+    diagnosis: topic.diagnosis,
+    action: topic.action,
+    origin: "diagnostico",
+    createdAt: new Date().toISOString(),
+  };
   switchTab("continuar");
-  if (index < 0) {
-    showToast("Este tema será priorizado quando houver um bloco disponível no ciclo.");
-    return;
-  }
-  void openFocusedStudy(index, { context: "reforco" });
 }
 
 function topicPlanningData(materia = "", assunto = "") {
@@ -5749,6 +5768,10 @@ function continueDerivedSnapshot() {
     const rotation = recommendationRotationFor(entry);
     const weeklyReinforcement = weeklyReinforcementForBlock(block);
     const weeklyAdjustment = weeklyAdjustmentForBlock(block);
+    const level = adaptive.mastery?.level || "";
+    const diagnosticRecovery = ["critical", "deficiency", "attention", "insufficient"].includes(level)
+      ? { level, action: adaptive.mastery?.action || {}, confidence: Number(adaptive.mastery?.confidence) || 0 }
+      : null;
     return {
       adaptive,
       review,
@@ -5756,6 +5779,7 @@ function continueDerivedSnapshot() {
       incidence,
       weeklyReinforcement,
       weeklyAdjustment,
+      diagnosticRecovery,
       phase: phaseState.profile,
       hasContact: Boolean(adaptive.hasContact),
     };
@@ -5783,6 +5807,36 @@ function rankedContinueEntries() {
     matchesFilters: blockMatchesContinueFilters,
     hasActiveFilter,
   });
+}
+
+function manualOverrideEntry() {
+  const override = continueManualOverride;
+  if (!override?.materia || !override?.assunto) return null;
+  const action = override.action || {};
+  const minutes = Math.max(30, Math.min(90, Number(action.minutes) || 30));
+  const index = state.generatedBlocks.findIndex((block) => isPendingBlock(block) && topicMatches(block, override.materia, override.assunto));
+  const base = index >= 0 ? state.generatedBlocks[index] : {
+    materia: override.materia,
+    assunto: override.assunto,
+    status: "Não iniciado",
+    prioridade: priorityScore(subjectPlanningData(override.materia)),
+    prioridadeBase: priorityScore(subjectPlanningData(override.materia)),
+    duracao: minutes / 60,
+    tipoAtividade: "Questões",
+    diagnosticInterventionOnly: true,
+  };
+  return {
+    index,
+    block: { ...base, duracao: minutes / 60, tipoAtividade: "Questões", atividadeSugerida: action.label || "Reforço direcionado" },
+    suggestion: { adaptive: { mastery: override.diagnosis, reasons: override.diagnosis?.reasons || [] }, review: { hasAttention: false }, rotation: {}, incidence: {}, hasContact: true },
+    override,
+  };
+}
+
+function clearContinueManualOverride() {
+  continueManualOverride = null;
+  continueSuggestionOffset = 0;
+  renderContinuePanel();
 }
 
 function buildContinueRecommendation(rankedEntries = null, includeAlternatives = false) {
@@ -6864,7 +6918,7 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
     const draft = normalizeFocusDraft({
       context: focusContext,
       reviewId: context.reviewId || "",
-      tipoAtividade: focusContext === "reforco" ? "Questões" : undefined,
+      tipoAtividade: ["reforco", "diagnostico"].includes(focusContext) ? "Questões" : undefined,
     }, block);
     focusedStudySession = {
       id: draft.sessionId,
@@ -6953,6 +7007,14 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
   block.pontosRevisar = Boolean(draft.pontosRevisar);
   block.atualizadoEm = new Date().toISOString();
   updateBlockAccuracy(block);
+  if (block.diagnosticInterventionOnly) {
+    state.interventionHistory = Array.isArray(state.interventionHistory) ? state.interventionHistory : [];
+    const sessionId = String(draft.sessionId || createStudySessionId());
+    if (!state.interventionHistory.some((item) => item.sessaoId === sessionId)) {
+      state.interventionHistory.push({ ...block, sessaoId: sessionId, completedAt: new Date().toISOString(), savedAt: new Date().toISOString() });
+      state.interventionHistory = state.interventionHistory.slice(-120);
+    }
+  }
   recordStudyErrors(block, {
     sessionId: draft.sessionId,
     source: "revisao",
@@ -6961,7 +7023,8 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
     notes: block.observacoes,
   });
   invalidateDerivedStudyCaches();
-  return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome: null, standaloneReview: true };
+  const adaptiveOutcome = block.diagnosticInterventionOnly ? syncAdaptiveReviewForBlock(block) : null;
+  return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome, standaloneReview: true };
 }
 
 async function saveFocusedStudy() {
@@ -7003,6 +7066,7 @@ async function saveFocusedStudy() {
   if (standaloneReview) state.generatedBlocks.splice(index, 1);
   state.activeFocusSession = null;
   focusedStudySession = null;
+  if (context.context === "diagnostico") continueManualOverride = null;
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
   clearFocusedSessionPersistenceTimers();
@@ -7279,7 +7343,8 @@ function renderContinuePanel() {
   const progress = total ? Math.round((completed / total) * 100) : 0;
   renderContinueCycleProgress(completed, total, progress);
   const recommendationResult = buildContinueRecommendation(pending, continueAlternativesOpen);
-  const suggested = recommendationResult.recommendation;
+  const manualEntry = manualOverrideEntry();
+  const suggested = manualEntry || recommendationResult.recommendation;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
   const alternatives = recommendationResult.alternatives;
   const reviews = continueAvailableReviews();
@@ -7311,12 +7376,13 @@ function renderContinuePanel() {
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
           <div><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
-          <div><span>Atividade sugerida</span><strong>${escapeHtml(recommendationResult.activityType)}</strong></div>
+          <div><span>Atividade sugerida</span><strong>${escapeHtml(manualEntry?.override?.action?.label || recommendationResult.activityType)}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
           <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
         </div>
         <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-duration=\"" + suggested.index + "\" data-duration-minutes=\"" + minutes + "\">" + formatMinutesShort(minutes) + "</button>").join("")}</div></div>
         ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
+        ${manualEntry ? `<div class="continue-manual-override"><strong>Reforço selecionado</strong><span>Escolhido no Diagnóstico · ${escapeHtml(manualEntry.override.action?.label || "Intervenção")}${Number(manualEntry.override.action?.questions) ? ` · ${manualEntry.override.action.questions} questões` : ""}</span><button class="text-action" type="button" data-clear-manual-override>Voltar à recomendação automática</button></div>` : ""}
         <div class="continue-actions"><button class="primary-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
@@ -11357,6 +11423,7 @@ function captureAppState() {
     initialDiagnosis: state.initialDiagnosis,
     reviews: state.reviews,
     errors: state.errors,
+    interventionHistory: state.interventionHistory,
     notebook: state.notebook,
     activeFocusSession: state.activeFocusSession,
     locked: state.locked,
@@ -11437,6 +11504,7 @@ function applyAppSnapshot(saved = {}) {
   repairedReviewEntries = ensureReviewsArray();
   repairedCycleLabels = repairStoredCycleLabels();
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
+  state.interventionHistory = Array.isArray(saved.interventionHistory) ? saved.interventionHistory : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
   state.locked = Boolean(saved.locked);
@@ -12681,9 +12749,23 @@ document.addEventListener("click", (event) => {
   const startButton = event.target.closest("[data-start-continue]");
   if (startButton) {
     const index = Number(startButton.dataset.startContinue);
+    if (continueManualOverride) {
+      const entry = manualOverrideEntry();
+      if (!entry) return;
+      const temporary = { ...entry.block, reviewSessionOnly: true, diagnosticInterventionOnly: true, interventionOrigin: "diagnostico" };
+      state.generatedBlocks.push(temporary);
+      const temporaryIndex = state.generatedBlocks.length - 1;
+      openFocusedStudy(temporaryIndex, { context: "diagnostico", standaloneReview: true });
+      return;
+    }
     const block = state.generatedBlocks[index];
     if (!block) return;
-    openFocusedStudy(index, { context: weeklyReinforcementForBlock(block) ? "reforco" : "estudo" });
+    openFocusedStudy(index, { context: continueManualOverride ? "diagnostico" : (weeklyReinforcementForBlock(block) ? "reforco" : "estudo") });
+    return;
+  }
+
+  if (event.target.closest("[data-clear-manual-override]")) {
+    clearContinueManualOverride();
     return;
   }
 
