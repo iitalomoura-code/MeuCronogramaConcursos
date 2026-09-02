@@ -60,6 +60,7 @@
     if (candidate.highDifficulty && (accuracy === null || accuracy < 0.75)) reasons.push("dificuldade pessoal alta");
     if (Number(candidate.daysWithoutContact) >= 14 && Number(candidate.priority) >= 0.6) reasons.push(`${candidate.daysWithoutContact} dias sem contato`);
     if (reasons.length && candidate.incidenceApplied && Number(candidate.incidence) >= 0.5) reasons.push("incidência histórica relevante na banca");
+    (candidate.adaptiveReasons || []).forEach((reason) => reasons.push(reason));
     return [...new Set(reasons)].slice(0, 3);
   }
 
@@ -75,6 +76,7 @@
         if (candidate.highDifficulty && (accuracy === null || accuracy < 0.75)) score += 24;
         if (Number(candidate.daysWithoutContact) >= 14 && Number(candidate.priority) >= 0.6) score += Math.min(24, 10 + Math.floor((candidate.daysWithoutContact - 14) / 4) * 2);
         if (candidate.incidenceApplied && Number(candidate.incidence) >= 0.5 && reasons.length) score += 10;
+        score += Number(candidate.adaptiveScore) || 0;
         return { ...candidate, reasons, score };
       })
       .filter((candidate) => candidate.key && candidate.reasons.length && candidate.score > 0)
@@ -87,7 +89,8 @@
         materia: candidate.materia,
         assunto: candidate.assunto,
         minutes: Math.min(45, Math.max(30, Number(candidate.minutes) || 30)),
-        activityType: "Questões",
+        activityType: candidate.adaptiveType === "diagnostic" ? "Questões diagnósticas" : "Questões",
+        kind: candidate.adaptiveType || "reinforcement",
         reasons: candidate.reasons,
       }));
   }
@@ -203,7 +206,7 @@
   function buildWeeklyGoal({ now = new Date(), plannedHours = 0, cycleLabel = "", blocks = [], reviews = [], reinforcementCandidates = [], examContext = null, adjustments = [], sourceWeekId = "" } = {}) {
     const bounds = weekBounds(now);
     const targetHours = Math.max(0, Number(plannedHours) || 0);
-    const reinforcements = selectReinforcements(reinforcementCandidates, 2);
+    const reinforcements = selectReinforcements(reinforcementCandidates, 3);
     const reinforcementKeys = new Set(reinforcements.map((item) => item.blockKey));
     const availableReviews = uniqueBy(reviews, (item) => item.id)
       .filter((item) => {
@@ -266,6 +269,9 @@
       plannedReviewIds: plannedReviews.map((item) => item.id),
       composition,
       reinforcements: selectedReinforcements,
+      adaptiveMessage: selectedReinforcements.length
+        ? `${selectedReinforcements.length} ${selectedReinforcements.length === 1 ? "ponto recebeu" : "pontos receberam"} reforço orientado pelo diagnóstico, sem substituir a sequência principal do ciclo.`
+        : "",
       adjustments: Array.isArray(adjustments) ? adjustments : [],
       sourceWeekId: sourceWeekId || "",
       examContext: examContext || null,

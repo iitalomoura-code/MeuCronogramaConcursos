@@ -15,7 +15,7 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260902-diagnosis-override"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260902-diagnosis-override"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260902-adaptive-composer"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
 assert.ok(index.includes("js/continue-recommendation.js?v=20260902-diagnosis-override"), "O motor de recomendação deve carregar antes do app.");
 assert.ok(index.includes("js/study-alerts.js?v=20260902-unified-mastery"), "A central de alertas deve ser carregada antes do app.");
@@ -45,11 +45,13 @@ assert.ok(index.includes("js/error-analysis.js?v=20260902-error-notebook"), "A a
 assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");
 assert.ok(index.includes('data-tab-target="aprendizado"') && index.includes('id="tab-aprendizado"'), "O Diagnóstico de aprendizagem deve ficar disponível em Acompanhamento.");
 assert.ok(index.includes("js/learning-diagnosis-view.js?v=20260902-diagnosis-override"), "A visualização de diagnóstico deve carregar antes do app.");
+assert.ok(index.includes("js/study-plan-composer.js?v=20260902-adaptive-composer"), "A composição adaptativa deve carregar antes do app.");
 assert.ok(app.includes("function renderLearningDiagnosis"), "A tela deve reutilizar o diagnóstico central para montar sua leitura.");
 assert.ok(app.includes("function manualOverrideEntry") && app.includes("continueManualOverride"), "A ação do Diagnóstico deve criar um override temporário no Continuar.");
 assert.ok(app.includes("diagnosticInterventionOnly"), "A intervenção escolhida não deve alterar permanentemente os blocos do ciclo.");
 assert.ok(index.includes('data-tab-target="caderno-erros"') && index.includes('id="tab-caderno-erros"'), "O registro bruto deve ter um Caderno de Erros separado do diagnóstico.");
 assert.ok(app.includes("function registerFocusedError"), "O modo foco deve registrar erros sem depender do fechamento da sessão.");
 assert.ok(app.includes("registroAutomatico: true"), "A contagem automática da sessão deve permanecer distinguível dos registros manuais.");
+assert.ok(app.includes("function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } = {})"), "A meta semanal deve compor reforços com a disponibilidade real da semana.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

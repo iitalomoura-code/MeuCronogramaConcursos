@@ -33,6 +33,15 @@ assert.equal(low[0].blockKey, "a");
 assert.equal(low[0].minutes, 45);
 assert.match(low[0].reasons[0], /54%/);
 
+// 4b. A meta semanal consome o diagnóstico central, sem criar outro threshold paralelo.
+const central = engine.selectReinforcements([
+  { key: "critical", materia: "AFO", assunto: "Despesa", minutes: 45, priority: 0.7, adaptiveScore: 120, adaptiveReasons: ["tema crítico segundo o diagnóstico"] },
+  { key: "diagnostic", materia: "Português", assunto: "Pontuação", minutes: 30, priority: 0.6, adaptiveScore: 16, adaptiveType: "diagnostic", adaptiveReasons: ["sessão diagnóstica necessária"] },
+]);
+assert.equal(central[0].blockKey, "critical");
+assert.equal(central[1].activityType, "Questões diagnósticas");
+assert.match(central[0].reasons.join(" "), /tema crítico/);
+
 // 5. Muitas revisões são limitadas pela capacidade semanal.
 const manyReviews = engine.buildWeeklyGoal({
   now: monday,
@@ -186,5 +195,7 @@ assert.match(app, /data-prepare-next-week/);
 assert.match(app, /data-confirm-next-week/);
 assert.match(app, /nextWeekPreparedAt/);
 assert.match(app, /weeklyAdjustmentForBlock/);
+assert.match(app, /function weeklyReinforcementCandidates\(\{ plannedHours = 0, examContext = null \} = \{\}\)/);
+assert.match(app, /weeklyReinforcementCandidates\(\{ plannedHours, examContext \}\)/);
 
 console.log("weekly-goal tests passed");

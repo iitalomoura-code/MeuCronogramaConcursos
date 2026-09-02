@@ -5391,7 +5391,7 @@ function weeklyCompletedReviewEvents() {
     .map((record) => ({ id: record.id, eventId: `${record.id}:${record.concluidaEm}`, completedAt: record.concluidaEm }));
 }
 
-function weeklyReinforcementCandidates() {
+function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } = {}) {
   const history = adaptiveHistoryEntries();
   const subjectCache = new Map();
   const subjectEntries = (materia) => {
@@ -5399,7 +5399,7 @@ function weeklyReinforcementCandidates() {
     if (!subjectCache.has(key)) subjectCache.set(key, history.filter((entry) => topicMatches(entry, materia)));
     return subjectCache.get(key);
   };
-  return pendingCycleEntries().map(({ block, index }) => {
+  const candidates = pendingCycleEntries().map(({ block, index }) => {
     const subjectHistory = subjectEntries(block.materia);
     const topicEntries = subjectHistory.filter((entry) => topicMatches(entry, block.materia, block.assunto));
     const entries = topicEntries.length ? topicEntries : subjectHistory;
@@ -5429,8 +5429,10 @@ function weeklyReinforcementCandidates() {
       incidenceApplied: Boolean(incidence?.applied),
       incidence: Math.min(1, (Number(incidence?.normalized) || 0) * phase.profile.incidenceMultiplier),
       examPhase: phase.effectivePhase,
+      diagnosis: masteryDiagnosisForTarget({ materia: block.materia, assunto: block.assunto, prioridade: scheduling.adjusted }),
     };
   });
+  return window.StudyPlanComposer?.composeAdaptiveCandidates?.({ candidates, plannedHours, examContext: examContext || weeklyExamContext() }) || candidates;
 }
 
 function weeklyExamContext() {
@@ -5636,6 +5638,7 @@ function buildWeeklyGoalForDate(now = new Date(), options = {}) {
   const remainingDays = 8 - (now.getDay() || 7);
   const midweekFactor = eventsThisWeek.length || options.fullWeek ? 1 : Math.max(0.35, remainingDays / 7);
   const plannedHours = Number((Math.max(0, Number(config.horasSemanaCronograma) || 0) * midweekFactor).toFixed(2));
+  const examContext = weeklyExamContext();
   const reviewRows = reviewScheduleRows("all")
     .filter((record) => !["Concluída", "Cancelada"].includes(record.status))
     .map((record) => ({ id: record.id, dueDate: record.dueDate }));
@@ -5653,8 +5656,8 @@ function buildWeeklyGoalForDate(now = new Date(), options = {}) {
       assunto: block.assunto,
     })),
     reviews: reviewRows,
-    reinforcementCandidates: weeklyReinforcementCandidates(),
-    examContext: weeklyExamContext(),
+    reinforcementCandidates: weeklyReinforcementCandidates({ plannedHours, examContext }),
+    examContext,
     adjustments: options.adjustments || [],
     sourceWeekId: options.sourceWeekId || "",
   });
@@ -7284,7 +7287,7 @@ function weeklyDetailsMarkup(goal, progress) {
         <div><span class="section-kicker">Sua semana · ${escapeHtml(weeklyPeriodLabel(goal))}</span><h3>${formatHours(progress.realizedHours)} de ${formatHours(goal.plannedHours)} realizadas</h3><p>${remainingBlocks ? `${remainingBlocks} ${remainingBlocks === 1 ? "bloco permanece disponível" : "blocos permanecem disponíveis"} para esta semana.` : "A composição prevista para a semana foi percorrida."}</p></div>
       </div>
       <div class="weekly-composition-list">${items.length ? items.map(([label, hours]) => `<span><em>${escapeHtml(label)}</em><strong>${formatHours(hours)}</strong></span>`).join("") : `<p class="muted-note">A composição será ajustada aos blocos e revisões disponíveis.</p>`}</div>
-      ${goal.reinforcements?.length ? `<div class="weekly-reinforcement-list"><strong>Reforços recomendados</strong>${goal.reinforcements.map((item) => `<article><div><b>${escapeHtml(item.materia)}</b><span>${escapeHtml(themeTitle(item.assunto))}</span></div><em>${item.minutes} min · Questões</em><small>${escapeHtml(item.reasons.join("; "))}</small></article>`).join("")}</div>` : ""}
+      ${goal.reinforcements?.length ? `<div class="weekly-reinforcement-list"><strong>Reforços recomendados</strong><p class="muted-note">${escapeHtml(goal.adaptiveMessage || "O ciclo preserva a sequência principal e inclui poucos reforços quando fizer sentido.")}</p>${goal.reinforcements.map((item) => `<article><div><b>${escapeHtml(item.materia)}</b><span>${escapeHtml(themeTitle(item.assunto))}</span></div><em>${item.minutes} min · ${escapeHtml(item.activityType || "Questões")}</em><small>${escapeHtml(item.reasons.join("; "))}</small></article>`).join("")}</div>` : ""}
       ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${exam.weeksRemaining === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% do edital com contato. A projeção depende da continuidade do ritmo observado.</p>` : ""}
       ${lastClosed ? `<div class="weekly-previous-summary"><p><strong>Último fechamento (${escapeHtml(weeklyPeriodLabel(lastClosed))}):</strong> ${lastClosed.summary.compliance || 0}% da meta · ${formatHours(lastClosed.summary.realizedHours)} estudadas · ${lastClosed.summary.completedBlocks || 0} blocos · ${lastClosed.summary.completedReviews || 0} revisões.</p>${lastClosed.closure?.highlights?.length ? `<ul>${lastClosed.closure.highlights.slice(0, 3).map((item) => `<li><strong>${escapeHtml(item.title)}:</strong> ${escapeHtml(item.detail)}</li>`).join("")}</ul>` : ""}</div>` : ""}
     </section>`;
