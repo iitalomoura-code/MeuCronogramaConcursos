@@ -3904,79 +3904,88 @@ function adaptivePerformanceForTopic(materia = "", assunto = "") {
   return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia, assunto));
 }
 
+function uniqueDiagnosticEntries(entries = []) {
+  const unique = new Map();
+  entries.forEach((entry) => {
+    const key = [normalizeForMatch(entry.materia), normalizeForMatch(entry.assunto), entryDateValue(entry), Number(entry.questoes) || 0, Number(entry.acertos) || 0, normalizeStatus(entry.status), Number(entry.tempoEstudado) || 0].join("::");
+    if (!unique.has(key)) unique.set(key, entry);
+  });
+  return [...unique.values()].sort((a, b) => entryDateValue(a) - entryDateValue(b));
+}
+
+function macroTopicFor(materia = "", assunto = "") {
+  const target = normalizeForMatch(`${materia} ${assunto}`);
+  const match = THEME_GROUPS.find(([, terms]) => terms.some((term) => target.includes(normalizeForMatch(term))));
+  return match?.[0] || "";
+}
+
+function masteryDiagnosisForTarget(target = {}) {
+  const engine = window.MasteryDiagnosis;
+  const materia = target.materia || "";
+  const assunto = target.assunto || "";
+  const subjectEntries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
+  const topicEntries = assunto ? uniqueDiagnosticEntries(adaptivePerformanceForTopic(materia, assunto)) : [];
+  const macro = assunto ? macroTopicFor(materia, assunto) : "";
+  const macroEntries = macro ? uniqueDiagnosticEntries(subjectEntries.filter((entry) => macroTopicFor(materia, entry.assunto) === macro)) : [];
+  const questionCount = (entries) => entries.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0);
+  const sessionCount = (entries) => entries.filter((entry) => Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0).length;
+  const selected = questionCount(topicEntries) >= 10 || sessionCount(topicEntries) >= 2
+    ? { entries: topicEntries, basis: "topic" }
+    : questionCount(macroEntries) >= 10 || sessionCount(macroEntries) >= 2
+      ? { entries: macroEntries, basis: "macro" }
+      : { entries: subjectEntries, basis: "subject" };
+  const reviewAttention = reviewAttentionFor(materia, assunto);
+  const completedReviews = (state.reviews || []).filter((record) => normalizeReviewStatus(record.status) === "Concluída" && topicMatches(record, materia, assunto)).length;
+  const subject = subjectPlanningData(materia);
+  const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
+  const initial = initialDiagnosisInfluence(materia);
+  const phase = currentExamPhaseState().profile;
+  const lastContact = selected.entries.map(entryDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
+  const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
+  if (!engine?.diagnose) return { level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
+  const diagnosis = engine.diagnose({
+    entries: selected.entries,
+    basis: selected.basis,
+    review: { overdue: reviewAttention.overdue.length, available: reviewAttention.today.length, completed: completedReviews },
+    importance: basePriority,
+    incidence: incidence.applied ? incidence.normalized : 0,
+    urgency: phase?.urgency?.value || 0,
+    coverage: lastContact ? 1 : 0,
+    lastContact,
+    initialInfluence: initial.adjustment || 0,
+  });
+  return { ...diagnosis, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
+}
+
 function adaptivePriorityAdjustment(target = {}) {
   const materia = target.materia || "";
   const assunto = target.assunto || "";
-  const subjectEntries = adaptivePerformanceForSubject(materia);
-  const topicEntries = assunto ? adaptivePerformanceForTopic(materia, assunto) : [];
-  const entries = topicEntries.length >= 2 || topicEntries.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0) >= 10 ? topicEntries : subjectEntries;
-  const recentAnswered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
-  const recentAccuracy = accuracyFromEntries(recentAnswered);
-  const highDifficulty = entries.slice(-6).filter((entry) => entry.dificuldade === "Alta").length;
-  const reprograms = entries.filter((entry) => normalizeStatus(entry.status) === "Reprogramar").length;
-  const reviewAttention = reviewAttentionFor(materia, assunto);
-  const standardReviewAttention = {
-    overdue: reviewAttention.overdue.filter((record) => !isAdaptiveReview(record)),
-    today: reviewAttention.today.filter((record) => !isAdaptiveReview(record)),
-  };
+  const mastery = masteryDiagnosisForTarget(target);
+  const reviewAttention = mastery.reviewAttention || reviewAttentionFor(materia, assunto);
   const adaptiveReview = adaptiveReviewFor(materia, assunto);
-  let adjustment = 0;
-  const reasons = [];
-
-  if (recentAccuracy !== null && recentAnswered.reduce((sum, entry) => sum + Number(entry.questoes), 0) >= 5) {
-    if (recentAccuracy < 0.6) {
-      adjustment += 0.18;
-      reasons.push(`acerto recente de ${Math.round(recentAccuracy * 100)}%`);
-    } else if (recentAccuracy < 0.75) {
-      adjustment += 0.1;
-      reasons.push(`acerto recente de ${Math.round(recentAccuracy * 100)}%`);
-    }
-  }
-
-  if (highDifficulty >= 1) {
-    adjustment += 0.08;
-    reasons.push("dificuldade sentida alta");
-  }
-
-  if (reprograms >= 2) {
-    adjustment += 0.09;
-    reasons.push("duas ou mais reprograma\u00e7\u00f5es");
-  }
-
-  if (standardReviewAttention.overdue.length) {
-    adjustment += 0.12;
-    reasons.unshift("revisão merece atenção");
-  } else if (standardReviewAttention.today.length) {
-    adjustment += 0.07;
-    reasons.unshift("revisão merece atenção");
-  }
-
-  if (adaptiveReview.record) {
-    adjustment += adaptiveReview.impact;
-    reasons.unshift("revisão adaptativa " + String(adaptiveReview.record.intensidade || "").replace("prioritaria", "prioritária"));
-  }
-
-  if (recentPerformanceDrop(entries)) {
-    adjustment += 0.08;
-    reasons.push("queda de desempenho recente");
-  }
+  const adjustment = Number(mastery.priorityAdjustment) || 0;
+  const reasons = mastery.reasons || [];
 
   const cap = assunto ? 0.35 : 0.3;
   return {
     rawAdjustment: adjustment,
     adjustment: Math.min(cap, adjustment),
     cap,
-    factorLimits: { accuracy: 0.18, difficulty: 0.08, reprogramming: 0.09, standardReview: 0.12, adaptiveReview: 0.14, performanceDrop: 0.08 },
+    factorLimits: { mastery: 0.28 },
     reasons: [...new Set(reasons)],
-    accuracy: recentAccuracy,
+    accuracy: mastery.accuracy,
     reviewAttention,
     adaptiveReview,
-    basis: entries === topicEntries ? "topic" : "subject",
-    hasContact: (assunto ? topicEntries : subjectEntries).some((entry) => normalizeStatus(entry.status) !== "Não iniciado" || Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0 || Boolean(entry.concluidoEm || entry.completedAt)),
+    mastery,
+    basis: mastery.basis,
+    hasContact: mastery.hasContact,
   };
 }
 
 function adaptivePriorityReason(target = {}, data = adaptivePriorityAdjustment(target)) {
+  if (data.mastery?.needsDiagnostic) return data.mastery.action?.text || "Faça algumas questões para avaliar melhor este tema.";
+  if (data.mastery?.level === "critical") return "Prioridade reforçada: o desempenho recente pede revisão aprofundada.";
+  if (data.mastery?.level === "deficiency") return "Prioridade reforçada: o desempenho recente pede reforço direcionado.";
   if (data.adaptiveReview?.record) {
     return data.adaptiveReview.record.statusInfo?.group === "upcoming"
       ? data.adaptiveReview.record.disponibilidade || "Revisão adaptativa planejada para este tema."
@@ -3986,7 +3995,7 @@ function adaptivePriorityReason(target = {}, data = adaptivePriorityAdjustment(t
     return "Revis\u00e3o merece aten\u00e7\u00e3o antes de avan\u00e7ar.";
   }
   if (!data.adjustment) return "";
-  const accuracyReason = data.reasons.find((reason) => reason.includes("acerto recente"));
+  const accuracyReason = data.reasons.find((reason) => reason.includes("questões mais recentes"));
   if (accuracyReason) return `Prioridade refor\u00e7ada: ${accuracyReason}.`;
   return "Refor\u00e7o sugerido pelo seu desempenho recente.";
 }
@@ -4001,6 +4010,7 @@ function adaptivePriorityForTarget(target = {}) {
     reason: adaptivePriorityReason(target, adjustment),
     reasons: adjustment.reasons,
     reviewAttention: adjustment.reviewAttention,
+    mastery: adjustment.mastery,
     hasContact: adjustment.hasContact,
   };
 }
@@ -4085,7 +4095,8 @@ function schedulingPriorityForTarget(target = {}) {
   const hasContact = Boolean(adaptive.hasContact);
   const adaptiveAdjustment = (adaptive.adjustment || 0) * phase.profile.performanceMultiplier;
   const incidenceAdjustment = Math.min(INCIDENCE_MAX_ADJUSTMENT, (incidence.adjustment || 0) * phase.profile.incidenceMultiplier);
-  const diagnosisAdjustment = (diagnosis.adjustment || 0) * phase.profile.diagnosisMultiplier;
+  // A autoavaliação inicial já é ponderada pelo motor de domínio conforme surgem dados reais.
+  const diagnosisAdjustment = 0;
   const coverageAdjustment = hasContact ? 0 : phase.profile.uncoveredAdjustment;
   return {
     base,
@@ -5629,6 +5640,29 @@ function buildPerformanceInsights(skipReason = "") {
     });
   }
 
+  // Quando há evidência por tema, ela prevalece sobre uma leitura genérica da matéria.
+  subjectNamesForInsights().forEach((materia) => {
+    const topics = [...new Set(adaptivePerformanceForSubject(materia).map((entry) => entry.assunto).filter(Boolean))];
+    topics.forEach((assunto) => {
+      const diagnosis = masteryDiagnosisForTarget({ materia, assunto });
+      if (!["critical", "deficiency", "attention", "insufficient"].includes(diagnosis.level)) return;
+      const title = diagnosis.level === "insufficient"
+        ? `${themeTitle(assunto)} ainda tem poucos dados`
+        : `${themeTitle(assunto)} precisa de reforço`;
+      const detail = diagnosis.level === "insufficient"
+        ? diagnosis.action?.text || "Registre mais questões para avaliar este tema."
+        : `${diagnosis.reasons.join(" e ")}. ${diagnosis.action?.label || "Reforço direcionado"}.`;
+      addInsight({
+        type: "mastery",
+        rank: diagnosis.level === "critical" ? 98 : diagnosis.level === "deficiency" ? 91 : diagnosis.level === "attention" ? 70 : 56,
+        title,
+        detail,
+        subject: materia,
+        topic: assunto,
+      });
+    });
+  });
+
   subjectNamesForInsights().forEach((materia) => {
     const entries = adaptivePerformanceForSubject(materia);
     const answered = entries.filter((entry) => Number(entry.questoes) > 0);
@@ -5850,6 +5884,10 @@ function explainStudySuggestion(block, context = {}) {
       else if (reason.includes("queda")) factors.push("queda de desempenho recente");
     });
   }
+  const mastery = adaptive.mastery;
+  if (mastery?.needsDiagnostic) factors.push("ainda faltam questões para avaliar melhor este tema");
+  else if (["critical", "deficiency"].includes(mastery?.level)) factors.push(mastery.action?.label === "Revisão aprofundada" ? "desempenho recente pede revisão aprofundada" : "desempenho recente pede reforço direcionado");
+  else if (mastery?.trend?.label === "falling") factors.push("queda nas sessões mais recentes");
   if (incidence?.applied && incidence.normalized >= 0.5) {
     factors.push(incidence.kind === "fgv" ? "incid\u00eancia hist\u00f3rica relevante na FGV" : "incid\u00eancia hist\u00f3rica relevante na mat\u00e9ria");
   }
@@ -5960,6 +5998,7 @@ function refreshStudyAlerts() {
     openReviews: Number(reviewLoad.bySubject?.[normalizeForMatch(subject.materia)]) || 0,
     reprograms: subject.reprogramacoes,
     daysWithoutContact: alertDaysWithoutContact(subject.materia, entries),
+    diagnosis: masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 }),
   }));
   const next = engine.build({
     subjects: inputSubjects,
@@ -6012,6 +6051,7 @@ function studyAlertReasons(alert = {}) {
   const metrics = alert.metrics || {};
   const labels = {
     LOW_PERFORMANCE: `desempenho recente de ${formatPercent(metrics.performance || 0)}`,
+    MASTERY_DEFICIENCY: (metrics.diagnosisReasons || []).join(" · ") || "desempenho recente pede reforço direcionado",
     PERFORMANCE_DROP: "queda consistente nas sessões recentes",
     LONG_TIME_NO_CONTACT: `${Number(metrics.daysWithoutContact) || 0} dias sem contato`,
     REVISION_BACKLOG: `${Number(metrics.reviews) || 0} revisões pendentes`,
@@ -8502,6 +8542,15 @@ function openEvolutionSubjectDetails(subjectName, context, trigger) {
   const subject = context.subjects.find((item) => normalizeForMatch(item.materia) === subjectName);
   if (!subject) return;
   const explanation = explainPriority(subject.priorityPlan);
+  const mastery = masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 });
+  const masteryLabel = {
+    strong: "Domínio forte",
+    adequate: "Domínio adequado",
+    attention: "Atenção",
+    deficiency: "Deficiência",
+    critical: "Crítico",
+    insufficient: "Mais dados necessários",
+  }[mastery.level] || "Em acompanhamento";
   const topicRows = subject.topics.map((topic) => {
     const key = topicKey(topic.materia, topic.assunto);
     const stateLabel = context.progress.completed.some((item) => topicKey(item.materia, item.assunto) === key) ? "Concluído" : context.progress.inProgress.some((item) => topicKey(item.materia, item.assunto) === key) ? "Em andamento" : "Pendente";
@@ -8513,7 +8562,7 @@ function openEvolutionSubjectDetails(subjectName, context, trigger) {
   openEvolutionTopicModal({
     title: subject.materia,
     subtitle: `Progresso ${formatPercent(subject.progress)} · ${subject.completed}/${subject.total} temas concluídos`,
-    body: `<div class="evolution-detail-grid"><div><strong>Desempenho</strong><span>${subject.performance.percentual === null ? "Ainda não há questões suficientes." : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</span></div><div><strong>Tempo estudado</strong><span>${subject.hours ? formatHours(subject.hours) : "Sem tempo registrado"}</span></div><div><strong>Revisões abertas</strong><span>${reviews.length}</span></div><div><strong>Prioridade</strong><span>${escapeHtml(subject.priority.label)}</span></div></div><section class="evolution-detail-section"><strong>Por que esta prioridade?</strong><ul>${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></section><section class="evolution-detail-section"><strong>Temas</strong><ul class="evolution-detail-topic-list">${topicRows || "<li>Nenhum tema disponível.</li>"}</ul></section>`,
+    body: `<div class="evolution-detail-grid"><div><strong>Desempenho</strong><span>${subject.performance.percentual === null ? "Ainda não há questões suficientes." : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</span></div><div><strong>Tempo estudado</strong><span>${subject.hours ? formatHours(subject.hours) : "Sem tempo registrado"}</span></div><div><strong>Revisões abertas</strong><span>${reviews.length}</span></div><div><strong>Prioridade</strong><span>${escapeHtml(subject.priority.label)}</span></div><div><strong>Diagnóstico</strong><span>${escapeHtml(masteryLabel)}${mastery.action?.label ? ` · ${escapeHtml(mastery.action.label)}` : ""}</span></div></div><section class="evolution-detail-section"><strong>Por que esta prioridade?</strong><ul>${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></section><section class="evolution-detail-section"><strong>Temas</strong><ul class="evolution-detail-topic-list">${topicRows || "<li>Nenhum tema disponível.</li>"}</ul></section>`,
   }, trigger);
 }
 

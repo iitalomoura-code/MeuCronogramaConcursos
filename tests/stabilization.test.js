@@ -14,8 +14,8 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260818-study-alerts"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260818-study-alerts"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260822-focus-mobile-overlay-close"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260902-mastery-diagnosis"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/study-alerts.js?v=20260818-study-alerts"), "A central de alertas deve ser carregada antes do app.");
 assert.ok(styles.includes("overflow-x: hidden;\n  overflow-y: auto;"), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('id="signOutButton"'), "Tema, configurações e sair devem permanecer no rodapé da sidebar.");
@@ -37,5 +37,7 @@ assert.ok(app.includes("reviewSessionOnly"), "Blocos temporários de revisão n�
 assert.ok(app.includes("function suspendFocusedStudy"), "Sair do modo focado deve preservar a sessão em andamento.");
 assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converter temas em partes operacionais vinculadas a uma meta.");
 assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
+assert.ok(index.includes("js/mastery-diagnosis.js?v=20260902-mastery-diagnosis"), "O motor de domínio deve ser carregado antes do app.");
+assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

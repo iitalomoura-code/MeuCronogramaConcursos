@@ -25,10 +25,12 @@
     const daysWithoutContact = Number(subject.daysWithoutContact);
     const reviews = Number(subject.openReviews) || 0;
     const reprograms = Number(subject.reprograms) || 0;
+    const diagnosis = subject.diagnosis || {};
     const isImportant = priority >= 60;
 
-    if (questions >= 10 && performance < .60) { reasons.push("LOW_PERFORMANCE"); score += 3; }
-    if (questions >= 30 && subject.performanceTrend === "Queda") { reasons.push("PERFORMANCE_DROP"); score += 2; }
+    if (["critical", "deficiency"].includes(diagnosis.level)) { reasons.push("MASTERY_DEFICIENCY"); score += diagnosis.level === "critical" ? 5 : 3; }
+    else if (questions >= 10 && performance < .60) { reasons.push("LOW_PERFORMANCE"); score += 3; }
+    if (diagnosis.trend === "falling" || (questions >= 30 && subject.performanceTrend === "Queda")) { reasons.push("PERFORMANCE_DROP"); score += 2; }
     if (Number.isFinite(daysWithoutContact) && daysWithoutContact >= (isImportant ? 10 : 14)) { reasons.push("LONG_TIME_NO_CONTACT"); score += isImportant ? 2 : 1; }
     if (reviews >= 2) { reasons.push("REVISION_BACKLOG"); score += 2; }
     if (reprograms >= 2) { reasons.push("REINFORCEMENT_REQUIRED"); score += 1; }
@@ -36,14 +38,14 @@
     if (isImportant && coverage < .50 && exam.coverageRisk) { reasons.push("COVERAGE_RISK"); score += 1; }
     if (!reasons.length) return null;
 
-    const dominant = reasons.includes("LOW_PERFORMANCE") || reasons.includes("PERFORMANCE_DROP") || reasons.includes("COVERAGE_RISK");
+    const dominant = reasons.includes("MASTERY_DEFICIENCY") || reasons.includes("LOW_PERFORMANCE") || reasons.includes("PERFORMANCE_DROP") || reasons.includes("COVERAGE_RISK");
     return {
       type: dominant ? "SUBJECT_ATTENTION" : reasons[0],
       subjectName: subject.name,
       severity: severityFor(score),
       score,
       reasonCodes: reasons,
-      metrics: { coverage, performance, questions, daysWithoutContact, reviews, reprograms, priority },
+      metrics: { coverage, performance, questions, daysWithoutContact, reviews, reprograms, priority, diagnosisLevel: diagnosis.level || "", diagnosisReasons: diagnosis.reasons || [] },
     };
   }
 
