@@ -11866,144 +11866,158 @@ textarea:focus {
   }
 }
 
-/* Painel de Evolução: grupos de leitura com início e fim visual claros. */
+/* Painel de Evolução: uma hierarquia contínua para resumo, progresso e histórico. */
+#tab-evolucao .evolution-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin: 16px 0 24px;
+}
+
+#tab-evolucao .evolution-toolbar label { width: min(100%, 190px); }
+#tab-evolucao .evolution-toolbar .compact-button { margin-left: auto; }
+
 #tab-evolucao .evolution-overview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0 0 28px;
+  gap: 18px;
+  margin: 0;
   border: 0;
+}
+
+#tab-evolucao .evolution-metric,
+#tab-evolucao .evolution-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: none;
 }
 
 #tab-evolucao .evolution-metric {
-  min-height: 116px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--card) 88%, var(--bg-main));
-  box-shadow: none;
+  min-height: 126px;
+  padding: 20px;
 }
 
-#tab-evolucao .evolution-metric:first-child { padding-left: 18px; }
-#tab-evolucao .evolution-metric:last-child { border-right: 1px solid var(--border); }
-#tab-evolucao .evolution-sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: 30px; margin: 0; border: 0; }
-#tab-evolucao .evolution-dashboard-grid {
+#tab-evolucao .evolution-metric strong { font-size: 27px; }
+#tab-evolucao .evolution-sections { display: grid; gap: 30px; margin-top: 30px; }
+#tab-evolucao .evolution-section { display: grid; gap: 16px; }
+#tab-evolucao .evolution-section-label h3 { margin: 0; color: var(--text); font-family: var(--font-heading); font-size: 18px; }
+
+#tab-evolucao .evolution-main-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 18px;
-}
-#tab-evolucao .evolution-primary-grid,
-#tab-evolucao .evolution-support-grid,
-#tab-evolucao .evolution-action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
-
-#tab-evolucao .evolution-card {
-  min-width: 0;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--card) 92%, var(--bg-main));
-  box-shadow: none;
+  gap: 20px;
 }
 
-#tab-evolucao .evolution-card > .evolution-section-heading { margin-bottom: 18px; }
-#tab-evolucao .evolution-section-heading h3 { font-size: 18px; font-weight: 680; }
-#tab-evolucao .evolution-section-heading p { max-width: 52ch; margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
-#tab-evolucao .evolution-progress-card,
-#tab-evolucao .evolution-pace-card,
-#tab-evolucao .evolution-attention-card,
-#tab-evolucao .evolution-recommendation-card { grid-column: auto; }
-#tab-evolucao .evolution-dashboard-grid > .evolution-card { grid-column: auto; }
-#tab-evolucao .evolution-subjects-card,
-#tab-evolucao .evolution-edital-map-card,
-#tab-evolucao .evolution-cycles-card,
-#tab-evolucao .evolution-completed-archive { grid-column: 1 / -1; }
+#tab-evolucao .evolution-card { padding: 22px; }
+#tab-evolucao .evolution-section-heading { margin-bottom: 18px; }
+#tab-evolucao .evolution-section-heading h3 { font-size: 19px; font-weight: 700; }
+#tab-evolucao .evolution-section-heading p { max-width: 48ch; margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 
-#tab-evolucao .evolution-progress-categories { gap: 8px; border: 0; }
-#tab-evolucao .evolution-progress-categories button {
-  padding: 10px 8px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--soft);
-}
-#tab-evolucao .evolution-pace-status { padding: 0 0 14px; border-bottom: 1px solid var(--divider); }
-#tab-evolucao .evolution-pace-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-#tab-evolucao .evolution-pace-grid > div,
-#tab-evolucao .evolution-performance-summary > div { padding: 4px 0; border: 0; }
-#tab-evolucao .evolution-pace-grid > div + div,
-#tab-evolucao .evolution-performance-summary > div + div { padding-left: 12px; border-left: 1px solid var(--divider); }
-#tab-evolucao .evolution-chart { padding: 10px 0 0; border-top: 1px solid var(--divider); }
-#tab-evolucao .evolution-subject-list,
-#tab-evolucao .attention-list,
-#tab-evolucao .evolution-deficiency-list,
-#tab-evolucao .evolution-cycle-list { border-top: 0; }
-#tab-evolucao .evolution-subject-card,
-#tab-evolucao .attention-subject { padding: 14px 0; border: 0; border-bottom: 1px solid var(--divider); }
-#tab-evolucao .attention-subject { padding-left: 12px; }
-
-.evolution-deficiency-list { display: grid; gap: 0; }
-.evolution-deficiency-heading,
-.evolution-deficiency-row {
+#tab-evolucao .predictive-summary-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1.75fr) minmax(96px, .8fr) 62px 76px minmax(125px, 1.15fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  align-items: center;
 }
-.evolution-deficiency-heading {
-  padding: 0 0 9px;
-  border-bottom: 1px solid var(--divider);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-.evolution-deficiency-row { padding: 12px 0; border-bottom: 1px solid var(--divider); }
-.evolution-deficiency-row > div { min-width: 0; }
-.evolution-deficiency-row strong,
-.evolution-deficiency-row small { display: block; }
-.evolution-deficiency-row strong { color: var(--text); font-size: 13px; font-weight: 700; }
-.evolution-deficiency-row small { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.35; }
-.evolution-deficiency-row > span { color: var(--muted); font-size: 12px; line-height: 1.35; }
-.evolution-deficiency-row.is-critical > span:nth-child(2),
-.evolution-deficiency-row.is-deficiency > span:nth-child(2) { color: var(--primary-soft-text); font-weight: 700; }
-.evolution-deficiency-row.is-attention > span:nth-child(2) { color: var(--text); font-weight: 650; }
-.evolution-deficiency-toggle { width: fit-content; margin-top: 12px; }
-#tab-evolucao .evolution-cycles-card > summary { margin: 0; }
-#tab-evolucao .evolution-completed-archive { padding: 18px 24px !important; background: transparent; }
 
-:root[data-theme="night"] #tab-evolucao .evolution-metric,
-:root[data-theme="night"] #tab-evolucao .evolution-card { background: color-mix(in srgb, var(--card) 94%, var(--bg-main)); }
+#tab-evolucao .predictive-summary-grid > div,
+#tab-evolucao .evolution-pace-grid > div,
+#tab-evolucao .evolution-performance-summary > div {
+  min-width: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--divider);
+}
+
+#tab-evolucao .predictive-summary-grid > div:last-child,
+#tab-evolucao .evolution-pace-grid > div:last-child,
+#tab-evolucao .evolution-performance-summary > div:last-child { padding-right: 0; border-right: 0; }
+
+#tab-evolucao .predictive-summary-grid span,
+#tab-evolucao .predictive-summary-grid small,
+#tab-evolucao .evolution-pace-grid span,
+#tab-evolucao .evolution-pace-grid small,
+#tab-evolucao .evolution-performance-summary span,
+#tab-evolucao .evolution-performance-summary small { display: block; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+#tab-evolucao .predictive-summary-grid strong,
+#tab-evolucao .evolution-pace-grid strong,
+#tab-evolucao .evolution-performance-summary strong { display: block; margin: 5px 0; color: var(--text); font-size: 17px; line-height: 1.2; }
+#tab-evolucao .predictive-coverage-visual { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--divider); }
+
+#tab-evolucao .evolution-pace-card { padding-block: 20px; }
+#tab-evolucao .evolution-pace-status { padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--divider); border-radius: 0; background: transparent; }
+#tab-evolucao .evolution-pace-grid,
+#tab-evolucao .evolution-performance-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+#tab-evolucao .evolution-pace-grid { margin-top: 14px; }
+#tab-evolucao .evolution-pace-suggestions { margin-top: 14px; padding-top: 12px; }
+
+#tab-evolucao .evolution-chart { margin-top: 18px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--divider); border-radius: 0; background: transparent; }
+
+#tab-evolucao .evolution-subjects-card { padding-bottom: 6px; }
+#tab-evolucao .evolution-subject-list { gap: 0; border-top: 1px solid var(--divider); }
+#tab-evolucao .evolution-subject-card {
+  display: grid;
+  grid-template-columns: minmax(190px, .85fr) minmax(0, 1.8fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 0;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+#tab-evolucao .evolution-subject-metrics { gap: 6px 16px; }
+#tab-evolucao .evolution-subject-metrics span { font-size: 12px; }
+
+#tab-evolucao .evolution-diagnosis-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+#tab-evolucao .evolution-diagnosis-summary strong,
+#tab-evolucao .evolution-diagnosis-summary span { display: block; }
+#tab-evolucao .evolution-diagnosis-summary strong { color: var(--text); font-size: 14px; }
+#tab-evolucao .evolution-diagnosis-summary span { margin-top: 4px; color: var(--muted); font-size: 13px; }
+
+#tab-evolucao .evolution-edital-map-card { padding: 22px; }
+#tab-evolucao .evolution-cycles-card > summary { margin: 0; }
+#tab-evolucao .evolution-cycles-card summary p { margin: 4px 0 0; color: var(--muted); font-size: 13px; font-weight: 400; }
+#tab-evolucao .evolution-completed-archive { padding: 18px 0; border-width: 1px 0; border-radius: 0; background: transparent; box-shadow: none; }
 
 @media (max-width: 980px) {
   #tab-evolucao .evolution-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  #tab-evolucao .evolution-primary-grid,
-  #tab-evolucao .evolution-support-grid,
-  #tab-evolucao .evolution-action-grid,
-  #tab-evolucao .evolution-dashboard-grid { grid-template-columns: 1fr; gap: 18px; }
-  #tab-evolucao .evolution-dashboard-grid .evolution-predictive-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-progress-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-performance-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-attention-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-deficiencies-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-recommendation-card,
-  #tab-evolucao .evolution-dashboard-grid .evolution-pace-card { grid-column: 1; }
+  #tab-evolucao .evolution-main-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 700px) {
+  #tab-evolucao .evolution-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #tab-evolucao .evolution-toolbar label { width: auto; }
+  #tab-evolucao .evolution-toolbar .compact-button { grid-column: 1 / -1; margin-left: 0; }
   #tab-evolucao .evolution-overview-grid { gap: 10px; }
-  #tab-evolucao .evolution-metric { min-height: 104px; padding: 14px; }
+  #tab-evolucao .evolution-metric { min-height: 108px; padding: 14px; }
+  #tab-evolucao .evolution-metric strong { font-size: 22px; }
+  #tab-evolucao .evolution-sections { gap: 24px; margin-top: 24px; }
   #tab-evolucao .evolution-card { padding: 18px; }
-  #tab-evolucao .evolution-sections { gap: 22px; }
-  #tab-evolucao .evolution-pace-grid { grid-template-columns: 1fr; }
-  .evolution-deficiency-heading { display: none; }
-  .evolution-deficiency-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
-  .evolution-deficiency-row > div { grid-column: 1 / -1; }
-  .evolution-deficiency-row > span { font-size: 11px; }
-  .evolution-deficiency-row > span:nth-child(2)::before { content: "Situação: "; color: var(--muted); font-weight: 500; }
-  .evolution-deficiency-row > span:nth-child(3)::before { content: "Tendência: "; color: var(--muted); font-weight: 500; }
-  .evolution-deficiency-row > span:nth-child(4)::before { content: "Confiança: "; color: var(--muted); font-weight: 500; }
-  .evolution-deficiency-row > span:nth-child(5) { grid-column: 1 / -1; color: var(--text); font-weight: 650; }
-  #tab-evolucao .evolution-pace-grid > div + div,
-  #tab-evolucao .evolution-performance-summary > div + div { padding-left: 0; padding-top: 12px; border-top: 1px solid var(--divider); border-left: 0; }
+  #tab-evolucao .predictive-summary-grid,
+  #tab-evolucao .evolution-pace-grid,
+  #tab-evolucao .evolution-performance-summary { grid-template-columns: 1fr; }
+  #tab-evolucao .predictive-summary-grid > div,
+  #tab-evolucao .evolution-pace-grid > div,
+  #tab-evolucao .evolution-performance-summary > div { padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--divider); }
+  #tab-evolucao .predictive-summary-grid > div:last-child,
+  #tab-evolucao .evolution-pace-grid > div:last-child,
+  #tab-evolucao .evolution-performance-summary > div:last-child { padding-bottom: 0; border-bottom: 0; }
+  #tab-evolucao .evolution-subject-card { grid-template-columns: 1fr; gap: 10px; }
+  #tab-evolucao .evolution-subject-card .text-action { justify-self: start; }
+  #tab-evolucao .evolution-diagnosis-summary { align-items: flex-start; flex-direction: column; }
 }
 
 /* Continue: study flow in the main column, compact context at the side. */

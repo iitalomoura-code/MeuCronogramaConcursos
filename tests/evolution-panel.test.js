@@ -16,7 +16,7 @@ const styles = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf
   "performanceTrend",
   "deadlineProjection",
   "evaluateSubjectAttention",
-  "renderEvolutionDeficiencies",
+  "renderEvolutionDiagnosisSummary",
   "exportEvolutionSummary",
   "renderEvolution",
 ].forEach((name) => assert.ok(app.includes(`function ${name}`), `A função ${name} deve existir.`));
@@ -32,9 +32,10 @@ assert.ok(app.includes("evolutionView.subject !== \"all\""), "A projeção globa
 assert.ok(app.includes("resumo-evolucao.txt"), "A exportação de resumo deve gerar arquivo de texto.");
 assert.ok(styles.includes(".evolution-overview-grid"), "O painel de evolução deve ter estilos próprios.");
 assert.ok(styles.includes(".evolution-topic-modal"), "Os detalhes devem ter modal acessível próprio.");
-assert.ok(index.includes('class="evolution-dashboard-grid"'), "Os cards principais devem compartilhar um grid equilibrado.");
-assert.ok(styles.includes("#tab-evolucao .evolution-dashboard-grid"), "O layout agrupado do painel deve ter estilos próprios.");
-assert.ok(index.includes('id="evolutionDeficiencies"'), "O mapa de deficiências precisa ter uma área própria no Painel de Evolução.");
-assert.ok(styles.includes(".evolution-deficiency-row"), "O mapa de deficiências deve ter estilos compactos e responsivos.");
+assert.ok(index.includes('class="evolution-main-grid"'), "Cobertura e desempenho devem compartilhar uma área principal equilibrada.");
+assert.ok(styles.includes("#tab-evolucao .evolution-main-grid"), "O layout principal deve ter estilos próprios.");
+assert.ok(index.includes('id="evolutionDiagnosisSummary"'), "O Painel deve resumir o Diagnóstico sem duplicar suas listas.");
+assert.ok(index.includes('data-tab-target="aprendizado"'), "O resumo deve levar o usuário à tela Diagnóstico.");
+assert.ok(!app.includes("function renderEvolutionDeficiencies"), "Deficiências detalhadas devem ficar apenas no Diagnóstico.");
 
 console.log("OK - painel de evolução consolida progresso, desempenho, projeção e exportação.");

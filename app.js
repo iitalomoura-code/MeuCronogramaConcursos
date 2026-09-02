@@ -183,7 +183,6 @@ let pendingSecondaryTabRender = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
-let evolutionDeficienciesExpanded = false;
 let adaptiveHistoryCache = null;
 let reviewAttentionCache = new Map();
 let reviewAttentionCacheSource = null;
@@ -404,6 +403,7 @@ const els = {
   learningDiagnosisBody: document.querySelector("#learningDiagnosisBody"),
   evolutionGrid: document.querySelector("#evolutionGrid"),
   evolutionPredictive: document.querySelector("#evolutionPredictive"),
+  evolutionDiagnosisSummary: document.querySelector("#evolutionDiagnosisSummary"),
   evolutionEmpty: document.querySelector("#evolutionEmpty"),
   evolutionSections: document.querySelector("#evolutionSections"),
   evolutionPeriod: document.querySelector("#evolutionPeriod"),
@@ -414,14 +414,11 @@ const els = {
   evolutionPace: document.querySelector("#evolutionPace"),
   evolutionPerformance: document.querySelector("#evolutionPerformance"),
   evolutionChartDescription: document.querySelector("#evolutionChartDescription"),
-  evolutionRecommendation: document.querySelector("#evolutionRecommendation"),
   evolutionTopicModal: document.querySelector("#evolutionTopicModal"),
   exportEvolutionButton: document.querySelector("#exportEvolutionButton"),
   evolutionCycleBody: document.querySelector("#evolutionCycleBody"),
   evolutionSubjectBody: document.querySelector("#evolutionSubjectBody"),
   evolutionSubjectChart: document.querySelector("#evolutionSubjectChart"),
-  attentionSubjects: document.querySelector("#attentionSubjects"),
-  evolutionDeficiencies: document.querySelector("#evolutionDeficiencies"),
   evolutionCompletedBody: document.querySelector("#evolutionCompletedBody"),
   saveNowButton: document.querySelector("#saveNowButton"),
   exportBackupButton: document.querySelector("#exportBackupButton"),
@@ -6291,7 +6288,6 @@ function queueStudyAlertsRefresh() {
   studyAlertsRefreshTimer = window.setTimeout(() => {
     if (!refreshStudyAlerts()) return;
     if (getActiveTabName() === "continuar") renderContinuePanel();
-    if (getActiveTabName() === "evolucao") renderEvolutionAttention();
     scheduleAutoSave();
   }, 180);
 }
@@ -8775,7 +8771,6 @@ function renderPredictiveEvolution(snapshot) {
   const examLabel = snapshot.exam.weeksToExam === null
     ? "Sem data de prova"
     : `${snapshot.exam.weeksToExam} ${snapshot.exam.weeksToExam === 1 ? "semana" : "semanas"} restantes`;
-  const attention = snapshot.subjects.filter((subject) => subject.risk.level !== "Sob controle").slice(0, 3);
   const projectionText = projectedPercent === null
     ? snapshot.confidence.message
     : `${snapshot.exam.situation} · cobertura estimada de ${projectedPercent}% até a prova.`;
@@ -8783,17 +8778,15 @@ function renderPredictiveEvolution(snapshot) {
   const projectedWidth = projectedPercent === null ? coveragePercent : Math.max(coveragePercent, projectedPercent);
   els.evolutionPredictive.innerHTML = `
     <div class="predictive-summary-grid">
-      <article><span>Cobertura do edital</span><strong>${coveragePercent}%</strong><small>Primeira cobertura: ${escapeHtml(estimate)}</small></article>
-      <article><span>Ritmo recente</span><strong>${escapeHtml(rhythm)}</strong><small>${escapeHtml(snapshot.rhythm.trend.direction ? `${snapshot.rhythm.trend.direction} ${snapshot.rhythm.trend.label.toLowerCase()}` : "Registros recentes")}</small></article>
-      <article><span>Até a prova</span><strong>${escapeHtml(examLabel)}</strong><small>${escapeHtml(projectionText)}</small></article>
-      <article><span>Matérias que exigem atenção</span><strong>${attention.length}</strong><small>${attention.length ? escapeHtml(attention.map((item) => item.name).join(" · ")) : "Sem sinal relevante agora"}</small></article>
+      <div><span>Primeira cobertura</span><strong>${escapeHtml(estimate)}</strong><small>${coveragePercent}% do edital com contato</small></div>
+      <div><span>Projeção</span><strong>${projectedPercent === null ? "Em observação" : `${projectedPercent}%`}</strong><small>${escapeHtml(projectionText)}</small></div>
+      <div><span>Até a prova</span><strong>${escapeHtml(examLabel)}</strong><small>Ritmo recente: ${escapeHtml(rhythm)}</small></div>
     </div>
     <div class="predictive-coverage-visual" aria-label="Cobertura real e projeção">
       <div class="predictive-coverage-label"><span>Cobertura real</span><span>Projeção${projectedPercent === null ? " indisponível" : `: ${projectedPercent}%`}</span></div>
       <div class="predictive-coverage-track"><i style="width:${actualWidth}%"></i>${projectedPercent !== null ? `<b style="width:${Math.max(0, projectedWidth - coveragePercent)}%; left:${coveragePercent}%"></b>` : ""}</div>
       <small>Linha contínua: contato já realizado · linha tracejada: estimativa.</small>
     </div>
-    ${attention.length ? `<div class="predictive-attention-list">${attention.map((item) => `<article><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.risk.level)}</span><p>${escapeHtml(item.risk.reasons.join(" · ") || "Acompanhe os próximos registros desta matéria.")}</p></article>`).join("")}</div>` : ""}
   `;
 }
 
@@ -8914,42 +8907,19 @@ function renderEvolutionSubjects(subjects) {
   els.evolutionSubjectBody.innerHTML = sorted.length ? sorted.map((subject) => `
     <article class="evolution-subject-card">
       <div><span class="evolution-subject-name">${escapeHtml(subject.materia)}</span><p>Progresso ${formatPercent(subject.progress)} · ${subject.completed}/${subject.total} temas concluídos</p></div>
-      <div class="evolution-subject-metrics"><span>Desempenho <strong>${subject.performance.percentual === null ? "Sem dados" : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</strong></span><span>Diagnóstico <strong>${escapeHtml(subject.attention.risk?.level || (subject.attention.level === "alta" ? "Prioridade" : subject.attention.level === "media" ? "Atenção" : "Sob controle"))}</strong></span><span>Revisões <strong>${subject.openReviews}</strong></span><span>Prioridade <strong>${escapeHtml(subject.priority.label)}</strong></span></div>
+      <div class="evolution-subject-metrics"><span>Desempenho <strong>${subject.performance.percentual === null ? "Sem dados" : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</strong></span><span>Tendência <strong>${escapeHtml(subject.performance.trend?.label || "Sem dados")}</strong></span><span>Revisões <strong>${subject.openReviews}</strong></span><span>Prioridade <strong>${escapeHtml(subject.priority.label)}</strong></span></div>
       <button class="text-action" type="button" data-evolution-subject-details="${escapeHtml(normalizeForMatch(subject.materia))}">Ver detalhes</button>
     </article>
   `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria encontrada para os filtros atuais.</div>`;
 }
 
-function renderEvolutionAttention() {
-  if (!els.attentionSubjects) return;
-  const alerts = visibleStudyAlerts(3);
-  els.attentionSubjects.innerHTML = alerts.length ? alerts.map((alert) => {
-    const action = studyAlertAction(alert);
-    return `<article class="attention-subject attention-${escapeHtml(alert.severity || "attention")}"><div><strong>${escapeHtml(studyAlertTitle(alert))}</strong><ul>${studyAlertReasons(alert).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul><p>${escapeHtml(action.target === "revisoes" ? "Considere iniciar as revisões mais relevantes antes de novos temas longos." : "Considere este ponto ao organizar os próximos blocos.")}</p></div><button class="text-action" type="button" data-study-alert-action="${escapeHtml(action.target)}" data-study-alert-id="${escapeHtml(alert.id)}">${escapeHtml(action.label)}</button></article>`;
-  }).join("") : `<div class="evolution-empty-inline">Nenhum ponto relevante para acompanhar neste momento.</div>`;
-}
-
-function renderEvolutionDeficiencies(subjects) {
-  if (!els.evolutionDeficiencies) return;
-  const engine = window.EvolutionDiagnosisEngine;
-  const rows = engine?.deficiencyTopics ? engine.deficiencyTopics(subjects) : [];
-  const visible = rows.slice(0, evolutionDeficienciesExpanded ? rows.length : 5);
-  if (!visible.length) {
-    els.evolutionDeficiencies.innerHTML = `<div class="evolution-empty-inline">Nenhum assunto com intervenção prioritária neste momento.</div>`;
-    return;
-  }
-  els.evolutionDeficiencies.innerHTML = `
-    <div class="evolution-deficiency-heading" aria-hidden="true"><span>Assunto</span><span>Situação</span><span>Tendência</span><span>Confiança</span><span>Próxima ação</span></div>
-    ${visible.map((row) => {
-      const diagnosis = row.diagnosis || {};
-      const label = engine.labelFor(diagnosis.level);
-      const trend = engine.trendLabel(diagnosis);
-      const confidence = engine.confidenceLabel(diagnosis.confidence);
-      const reason = diagnosis.reasons?.[0] || (diagnosis.questions ? `${diagnosis.questions} questões registradas` : "Registre questões para tornar a leitura mais precisa.");
-      const action = diagnosis.action?.label || (diagnosis.level === "insufficient" ? "Fazer 10 questões diagnósticas" : "Manter contato");
-      return `<article class="evolution-deficiency-row is-${escapeHtml(diagnosis.level || "adequate")}"><div><strong>${escapeHtml(row.assunto)}</strong><small>${escapeHtml(row.materia)} · ${escapeHtml(reason)}</small></div><span>${escapeHtml(label)}</span><span aria-label="Tendência ${escapeHtml(diagnosis.trend?.label || "insufficient")}">${escapeHtml(trend)}</span><span>${escapeHtml(confidence)}</span><span>${escapeHtml(action)}</span></article>`;
-    }).join("")}
-    ${rows.length > 5 ? `<button class="text-action evolution-deficiency-toggle" type="button" data-toggle-evolution-deficiencies aria-expanded="${evolutionDeficienciesExpanded}">${evolutionDeficienciesExpanded ? "Mostrar menos" : `Ver mais ${rows.length - 5} ${rows.length - 5 === 1 ? "assunto" : "assuntos"}`}</button>` : ""}
+function renderEvolutionDiagnosisSummary(subjects) {
+  if (!els.evolutionDiagnosisSummary) return;
+  const count = subjects.filter((subject) => subject.attention.level !== "baixa").length;
+  els.evolutionDiagnosisSummary.innerHTML = `
+    <div><strong>${count} ${count === 1 ? "matéria precisa" : "matérias precisam"} de atenção</strong>
+    <span>${count ? "O Diagnóstico reúne os motivos, a confiança e os próximos passos." : "Não há sinal relevante para intervenção neste momento."}</span></div>
+    <button class="text-action" type="button" data-tab-target="aprendizado">Ver diagnóstico</button>
   `;
 }
 
@@ -8998,17 +8968,6 @@ function renderEvolutionCycles(records, entries) {
     const percent = record.percentual === null ? "Sem dados" : formatPercent(record.percentual);
     return `<details class="evolution-cycle-item"><summary><div><strong>${escapeHtml(record.label)}${record.isLive ? " · em andamento" : ""}</strong><span>${record.metasConcluidas} de ${record.metasGeradas || record.metasConcluidas} blocos concluídos · ${formatHours(record.horasEstudadas)}</span></div><span>${percent}</span></summary><div class="evolution-cycle-details"><span>${record.questoes} questões · ${record.reviewsCreated || 0} revisões criadas · ${record.reprogramadas || 0} reprogramações</span><p>${escapeHtml(cycleComparisonText(record, previous))}</p></div></details>`;
   }).join("") : `<div class="evolution-empty-inline">Nenhum ciclo corresponde aos filtros atuais.</div>`;
-}
-
-function renderEvolutionRecommendation(subjects, projection) {
-  if (!els.evolutionRecommendation) return;
-  const attention = subjects.filter((subject) => subject.attention.level !== "baixa").slice(0, 2);
-  const content = attention.length
-    ? `Com base nos registros dos ciclos e no desempenho, ${attention.map((subject) => subject.materia).join(" e ")} concentram as principais necessidades de atenção. ${attention.map((subject) => subject.attention.suggestedAction).join(" ")}`
-    : projection.status === "Compatível"
-      ? "Com base nos registros disponíveis, o ritmo atual está compatível com o conteúdo principal. Continue ajustando o ciclo conforme sua disponibilidade."
-      : "Registre tempo, questões e acertos nos próximos blocos para tornar a recomendação mais específica.";
-  els.evolutionRecommendation.innerHTML = `<p>${escapeHtml(content)}</p>`;
 }
 
 function renderEvolutionCompletedArchive() {
@@ -9119,19 +9078,17 @@ function renderEvolution() {
   const cycleRecords = evolutionCycleRecords();
   const hasContent = progress.selected.length > 0 || (state.generatedBlocks || []).length > 0 || (state.cycleResults || []).length > 0;
   const cycleCounts = progress.selected.length ? `${progress.completed.length} de ${progress.selected.length} temas` : "Sem conteúdo confirmado";
-  const attentionSubjects = subjects.filter((subject) => subject.attention.level !== "baixa");
   const paceValue = projection.status === "Dados insuficientes" ? "Sem dados" : projection.status;
   const paceNote = projection.status === "Dados insuficientes"
     ? projection.reason
     : `${projection.days} dias até a prova`;
-  const attentionNote = attentionSubjects.length
-    ? `${attentionSubjects[0].materia} em destaque`
-    : "Sem sinais relevantes";
+  const rhythmValue = performance.hasTime ? formatHours(performance.horas) : "Sem dados";
+  const rhythmNote = performance.hasTime ? "Tempo registrado no período" : "Registre tempo para acompanhar";
   els.evolutionGrid.innerHTML = [
-    evolutionMetric("Edital estudado", progress.percent === null ? "Sem dados" : formatPercent(progress.percent), cycleCounts),
+    evolutionMetric("Cobertura do edital", progress.percent === null ? "Sem dados" : formatPercent(progress.percent), cycleCounts),
     evolutionMetric("Desempenho recente", performance.percentual === null ? "Sem dados" : formatPercent(performance.percentual), performance.questoes ? `${performance.questoes} questões no período` : "Registre questões e acertos"),
-    evolutionMetric("Ritmo até a prova", paceValue, paceNote),
-    evolutionMetric("Precisam de atenção", attentionSubjects.length, attentionNote),
+    evolutionMetric("Ritmo semanal", rhythmValue, rhythmNote),
+    evolutionMetric("Até a prova", paceValue, paceNote),
   ].join("");
   if (els.evolutionEmpty) {
     els.evolutionEmpty.hidden = hasContent;
@@ -9147,10 +9104,8 @@ function renderEvolution() {
   renderEvolutionPerformance(performance);
   renderEvolutionChart(entries, cycleRecords);
   renderEvolutionSubjects(subjects);
-  renderEvolutionAttention();
-  renderEvolutionDeficiencies(subjects);
+  renderEvolutionDiagnosisSummary(subjects);
   renderEvolutionCycles(cycleRecords, entries);
-  renderEvolutionRecommendation(subjects, projection);
   renderEvolutionCompletedArchive();
   evolutionContext = { progress, entries, performance, projection, subjects, cycleRecords, predictive: predictiveEvolutionSnapshot };
   if (window.lucide) window.lucide.createIcons();
@@ -12789,7 +12744,6 @@ document.addEventListener("click", (event) => {
       alert.updatedAt = alert.dismissedAt;
       scheduleAutoSave();
       if (getActiveTabName() === "continuar") renderContinuePanel();
-      if (getActiveTabName() === "evolucao") renderEvolutionAttention();
     }
     return;
   }
@@ -13823,12 +13777,6 @@ function handleEvolutionSubjectDetails(event) {
   openEvolutionSubjectDetails(button.dataset.evolutionSubjectDetails, evolutionContext, button);
 }
 els.evolutionSubjectBody?.addEventListener("click", handleEvolutionSubjectDetails);
-els.attentionSubjects?.addEventListener("click", handleEvolutionSubjectDetails);
-els.evolutionDeficiencies?.addEventListener("click", (event) => {
-  if (!event.target.closest("[data-toggle-evolution-deficiencies]")) return;
-  evolutionDeficienciesExpanded = !evolutionDeficienciesExpanded;
-  if (evolutionContext) renderEvolutionDeficiencies(evolutionContext.subjects);
-});
 els.evolutionTopicModal?.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-evolution-modal]")) closeEvolutionTopicModal();
 });
