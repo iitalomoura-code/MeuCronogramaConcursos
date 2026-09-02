@@ -114,6 +114,8 @@ assert.equal(completeProgress.compliance, 100);
 
 // 17. Melhoras e quedas usam pontos percentuais e exigem amostra mínima.
 const performance = {
+  questions: 40,
+  accuracy: 0.745,
   subjects: [
     { materia: "Português", questions: 20, accuracy: 0.81 },
     { materia: "RLM", questions: 20, accuracy: 0.68 },
@@ -121,6 +123,8 @@ const performance = {
   ],
 };
 const previousPerformance = {
+  questions: 40,
+  accuracy: 0.73,
   subjects: [
     { materia: "Português", questions: 20, accuracy: 0.74 },
     { materia: "RLM", questions: 20, accuracy: 0.72 },
@@ -138,6 +142,7 @@ const closure = engine.buildWeeklyClosure({
   progress: below,
   performance,
   previousPerformance,
+  previousProgress: { realizedHours: 4 },
   coverage: { totalTopics: 20, beforeContact: 10, afterContact: 13, beforePercent: 50, afterPercent: 65, newTopics: 3, completedTopics: 2, inProgressTopics: 1 },
   pending: {
     ongoing: [{ blockKey: "b", materia: "Administração Pública", assunto: "Planejamento" }],
@@ -146,14 +151,35 @@ const closure = engine.buildWeeklyClosure({
     reinforcements: [{ blockKey: "a", materia: "Português" }],
   },
   contactGaps: [{ materia: "Controle Externo", days: 9 }],
+  interventions: [
+    { materia: "Licitações", assunto: "Contratos", result: "resolved", detail: "O desempenho se manteve após o reforço." },
+    { materia: "RLM", assunto: "Lógica", result: "unchanged", detail: "Ainda não há melhora suficiente." },
+  ],
+  errorInsights: [{ materia: "RLM", assunto: "Lógica", recurrence: "high", postInterventionErrors: 2 }],
   examContext: { examDate: "2026-10-01", weeksRemaining: 6, coveragePercent: 65 },
 });
+assert.equal(closure.version, 2);
 assert.equal(closure.coverage.newTopics, 3);
 assert.ok(closure.highlights.length <= 4);
 assert.ok(closure.highlights.some((item) => item.detail.includes("p.p.")));
 assert.ok(closure.adjustments.some((item) => item.blockKey === "b" && item.type === "continue"));
 assert.ok(closure.adjustments.some((item) => item.materia === "Controle Externo"));
+assert.ok(closure.continuity.some((item) => item.title === "Tema em andamento"));
+assert.ok(closure.continuity.some((item) => item.title === "Reforço continua relevante"));
+assert.equal(closure.summary.questions, 40);
+assert.equal(closure.summary.coverageAdded, 3);
+assert.equal(closure.summary.hoursDelta, -2.5);
+assert.equal(closure.summary.performanceDeltaPoints, 2);
 assert.equal(closure.examContext.weeksRemaining, 6);
+
+// 18b. Um reforço recuperado não volta a ser priorizado só pelo resultado antigo.
+const recoveredClosure = engine.buildWeeklyClosure({
+  goal: normal,
+  progress: below,
+  performance: { subjects: [{ materia: "Licitações", questions: 20, accuracy: 0.55 }] },
+  interventions: [{ materia: "Licitações", assunto: "Contratos", result: "resolved", detail: "Recuperação confirmada." }],
+});
+assert.equal(recoveredClosure.adjustments.some((item) => item.type === "reinforce" && item.materia === "Licitações"), false);
 
 // 19. Semana sem estudo não acumula dívida nem inventa tendência.
 const emptyClosure = engine.buildWeeklyClosure({ goal: normal, progress: { compliance: 0 }, coverage: { totalTopics: 20 } });
@@ -189,6 +215,8 @@ assert.doesNotThrow(() => JSON.stringify(closedWithClosure));
 
 // 23. Integração: fechamento pendente, prévia e confirmação não alteram ciclos encerrados.
 assert.match(app, /function weeklyClosureSnapshot/);
+assert.match(app, /function previousWeeklyProgress/);
+assert.match(app, /weekly-summary-grid/);
 assert.match(app, /function pendingWeeklyClosure/);
 assert.match(app, /function confirmNextWeeklyGoal/);
 assert.match(app, /data-prepare-next-week/);

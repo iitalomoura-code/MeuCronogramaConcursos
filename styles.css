@@ -446,9 +446,6 @@ svg {
 }
 
 .weekly-closing-header,
-.weekly-closing-numbers,
-.weekly-closing-columns,
-.weekly-pending-meta,
 .weekly-next-preview,
 .weekly-preview-actions {
   display: flex;
@@ -482,18 +479,6 @@ svg {
   margin: 18px 0 12px;
 }
 
-.weekly-closing-numbers {
-  flex-wrap: wrap;
-  gap: 8px 22px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.weekly-closing-numbers b {
-  color: var(--text);
-  font-size: 16px;
-}
-
 .weekly-closing-section {
   margin-top: 24px;
   padding-top: 20px;
@@ -501,7 +486,6 @@ svg {
 }
 
 .weekly-closing-section h4,
-.weekly-closing-columns h4,
 .weekly-next-preview h4 {
   margin: 0 0 10px;
   color: var(--text);
@@ -545,78 +529,70 @@ svg {
   line-height: 1.5;
 }
 
-.weekly-closing-columns {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--divider);
-  gap: 36px;
+.weekly-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.weekly-closing-columns > section {
-  flex: 1 1 0;
+.weekly-summary-grid span {
+  display: grid;
   min-width: 0;
+  gap: 3px;
+  padding-right: 10px;
+  border-right: 1px solid var(--divider);
 }
 
-.weekly-closing-columns section > p:not(.muted-note) {
+.weekly-summary-grid span:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.weekly-summary-grid b {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.weekly-summary-grid small,
+.weekly-comparison-line,
+.weekly-pending-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.weekly-comparison-line {
   display: flex;
-  margin: 0;
-  padding: 8px 0;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 13px;
+}
+
+.weekly-continuity-list {
+  border-top: 1px solid var(--divider);
+}
+
+.weekly-continuity-list article {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.45fr) 1fr;
   gap: 16px;
+  padding: 10px 0;
   border-bottom: 1px solid var(--divider);
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.5;
 }
 
-.weekly-closing-columns section > p > strong {
+.weekly-continuity-list strong {
   color: var(--text);
 }
 
-.weekly-closing-columns section > p > span {
-  text-align: right;
+.weekly-next-section {
+  padding-bottom: 0;
 }
 
-.weekly-closing-columns em {
-  margin-left: 6px;
-  color: var(--muted);
-  font-style: normal;
-  font-weight: 650;
-}
-
-.weekly-closing-columns em.is-positive {
-  color: var(--badge-low-text);
-}
-
-.weekly-closing-columns em.is-attention {
-  color: var(--primary-soft-text);
-}
-
-.weekly-coverage-change {
-  align-items: flex-start !important;
-  flex-direction: column;
-  gap: 4px !important;
-}
-
-.weekly-coverage-change > strong {
-  font-size: 24px;
-}
-
-.weekly-coverage-change > span,
-.weekly-coverage-change > small {
-  text-align: left !important;
-}
-
-.weekly-coverage-change > small {
-  color: var(--muted);
-}
-
-.weekly-pending-meta {
-  margin-top: 10px;
-  flex-wrap: wrap;
-  gap: 7px 16px;
-  color: var(--muted);
-  font-size: 12px;
+.weekly-pending-note {
+  margin-top: 12px !important;
 }
 
 .weekly-next-preview {
@@ -693,6 +669,15 @@ svg {
     flex-wrap: wrap;
   }
 
+  .weekly-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 16px;
+  }
+
+  .weekly-summary-grid span:nth-child(3) {
+    border-right: 0;
+  }
+
   .weekly-preview-actions {
     width: 100%;
     justify-content: flex-end;
@@ -743,14 +728,30 @@ svg {
     font-size: 28px;
   }
 
-  .weekly-highlight-list,
-  .weekly-closing-columns {
+  .weekly-highlight-list {
     grid-template-columns: 1fr;
   }
 
-  .weekly-closing-columns {
+  .weekly-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weekly-summary-grid span:nth-child(odd) {
+    border-right: 1px solid var(--divider);
+  }
+
+  .weekly-summary-grid span:nth-child(even) {
+    border-right: 0;
+  }
+
+  .weekly-comparison-line {
     display: grid;
-    gap: 22px;
+    gap: 4px;
+  }
+
+  .weekly-continuity-list article {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 
   .weekly-next-preview dl {

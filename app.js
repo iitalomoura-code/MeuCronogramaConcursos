@@ -5500,7 +5500,11 @@ function weeklyPerformanceSnapshot(goal) {
   });
   const subjects = [...bySubject.values()]
     .filter((item) => item.questions >= 5)
-    .map((item) => ({ ...item, accuracy: item.correct / item.questions }))
+    .map((item) => ({
+      ...item,
+      accuracy: item.correct / item.questions,
+      diagnosis: masteryDiagnosisForTarget({ materia: item.materia }),
+    }))
     .sort((a, b) => a.accuracy - b.accuracy);
   const highlights = subjects
     .slice(0, 2)
@@ -5586,6 +5590,13 @@ function previousWeeklyPerformance(goal) {
     .sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0]?.summary?.performance || null;
 }
 
+function previousWeeklyProgress(goal) {
+  const previous = [...(state.weeklyGoals || [])]
+    .filter((item) => item.id !== goal.id && item.status === "closed" && item.summary && String(item.endDate || "") < String(goal.startDate || ""))
+    .sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0];
+  return previous ? weeklyProgressFromSummary(previous) : null;
+}
+
 function weeklyClosureSnapshot(goal, progress) {
   const engine = window.WeeklyGoalEngine;
   if (!engine || !goal) return null;
@@ -5595,6 +5606,7 @@ function weeklyClosureSnapshot(goal, progress) {
     progress,
     performance,
     previousPerformance: previousWeeklyPerformance(goal),
+    previousProgress: previousWeeklyProgress(goal),
     coverage: weeklyCoverageSnapshot(goal),
     pending: weeklyPendingSnapshot(goal, progress),
     contactGaps: weeklyContactGaps(goal),
@@ -7235,32 +7247,26 @@ function weeklyClosureMarkup(goal) {
   if (!weeklyDetailsOpen || !goal?.summary) return "";
   const progress = weeklyProgressFromSummary(goal);
   const closure = goal.closure || {};
-  const coverage = closure.coverage || {};
   const pending = closure.pending || {};
-  const pendingCount = [pending.ongoing, pending.reprogrammed, pending.relevantReviews, pending.reinforcements]
-    .reduce((sum, items) => sum + (Array.isArray(items) ? items.length : 0), 0);
+  const snapshot = closure.summary || {};
+  const continuity = closure.continuity || [];
+  const adjustments = (closure.adjustments || []).slice(0, 3);
   const preview = weeklyNextPreviewFor === goal.id ? weeklyNextGoalPreview(goal) : null;
   const previewStats = weeklyPreviewStats(preview);
-  const comparisons = closure.comparisons || [];
-  const exam = closure.examContext || goal.examContext || {};
+  const hoursComparison = Number.isFinite(snapshot.hoursDelta) ? `${snapshot.hoursDelta >= 0 ? "+" : ""}${formatHours(snapshot.hoursDelta)} em relação à semana anterior` : "Sem comparação de carga ainda";
+  const performanceComparison = Number.isFinite(snapshot.performanceDeltaPoints) ? `${snapshot.performanceDeltaPoints >= 0 ? "+" : ""}${snapshot.performanceDeltaPoints} p.p. em relação à semana anterior` : "Amostra insuficiente para comparar desempenho";
+  const deprioritized = Math.max(0, (pending.reprogrammed?.length || 0) - adjustments.filter((item) => item.type === "redistribute").length);
   return `
     <section class="weekly-closing" aria-label="Fechamento semanal">
       <header class="weekly-closing-header">
-        <div><span class="section-kicker">Sua semana · ${escapeHtml(weeklyPeriodLabel(goal))}</span><h3>${closure.noActivity ? "Semana sem atividades registradas" : `${progress.compliance}% da meta cumprida`}</h3><p>${closure.noActivity ? "Não houve atividades registradas nesta semana." : `${formatHours(progress.realizedHours)} de ${formatHours(goal.plannedHours)} estudadas`}</p></div>
+        <div><span class="section-kicker">Fechamento semanal · ${escapeHtml(weeklyPeriodLabel(goal))}</span><h3>${closure.noActivity ? "Semana sem atividades registradas" : "O que aprendemos nesta semana"}</h3><p>${closure.noActivity ? "A próxima semana pode começar leve, sem carregar automaticamente a carga anterior." : "O plano considera o que avançou, o que precisa continuar e o que pode perder prioridade."}</p></div>
         <strong>${progress.compliance}%</strong>
       </header>
       <div class="continue-weekly-track weekly-closing-track" role="progressbar" aria-label="Fechamento da meta semanal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.compliance}"><span style="width:${progress.compliance}%"></span></div>
-      <div class="weekly-closing-numbers"><span><b>${progress.completedBlocks}</b> blocos concluídos</span><span><b>${progress.completedReviews}</b> revisões realizadas</span><span><b>${progress.completedReinforcements}</b> reforços concluídos</span></div>
-      ${closure.highlights?.length ? `<div class="weekly-closing-section"><h4>Destaques da semana</h4><div class="weekly-highlight-list">${closure.highlights.map((item) => `<article><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail)}</p></article>`).join("")}</div></div>` : `<p class="muted-note">${closure.noActivity ? "Você pode preparar a próxima semana normalmente, sem acumular a carga anterior." : "Ainda não há dados suficientes para gerar destaques confiáveis."}</p>`}
-      <div class="weekly-closing-columns">
-        <section><h4>Evolução de desempenho</h4>${comparisons.length ? comparisons.slice(0, 4).map((item) => `<p><strong>${escapeHtml(item.materia)}</strong><span>${Math.round(item.previousAccuracy * 100)}% → ${Math.round(item.currentAccuracy * 100)}% <em class="${item.deltaPoints >= 0 ? "is-positive" : "is-attention"}">${item.deltaPoints >= 0 ? "↑ +" : "↓ "}${item.deltaPoints} p.p.</em></span></p>`).join("") : `<p class="muted-note">Dados insuficientes para comparar esta semana.</p>`}</section>
-        <section><h4>Cobertura do edital</h4>${Number(coverage.totalTopics) ? `<p class="weekly-coverage-change"><strong>${coverage.beforePercent || 0}% → ${coverage.afterPercent || 0}%</strong><span>+${coverage.newTopics || 0} ${Number(coverage.newTopics) === 1 ? "tema com primeiro contato" : "temas com primeiro contato"}</span><small>${coverage.completedTopics || 0} concluídos · ${coverage.inProgressTopics || 0} em andamento</small></p>` : `<p class="muted-note">A cobertura será exibida quando houver temas selecionados.</p>`}</section>
-      </div>
-      <div class="weekly-closing-section"><h4>Continua na próxima semana</h4><p>${pendingCount ? `${pendingCount} ${pendingCount === 1 ? "atividade será redistribuída" : "atividades serão redistribuídas"}.` : "Nenhuma pendência relevante precisa ser redistribuída."}</p><div class="weekly-pending-meta"><span>${pending.ongoing?.length || 0} em andamento</span><span>${pending.reprogrammed?.length || 0} reprogramadas</span><span>${pending.relevantReviews?.length || 0} revisões</span><span>${pending.reinforcements?.length || 0} reforços</span></div></div>
-      ${closure.adjustments?.length ? `<div class="weekly-closing-section"><h4>Ajustes para a próxima semana</h4><ul>${closure.adjustments.slice(0, 5).map((item) => `<li>${escapeHtml(item.reason)}</li>`).join("")}</ul></div>` : ""}
-      ${studyAlertsMarkup({ weekly: true })}
-      ${exam.examDate ? `<p class="weekly-exam-context"><strong>Contexto até a prova:</strong> ${Number(exam.weeksRemaining) >= 0 ? `${exam.weeksRemaining} ${Number(exam.weeksRemaining) === 1 ? "semana restante" : "semanas restantes"}` : "data cadastrada"} · ${Number(exam.coveragePercent) || 0}% de cobertura atual.</p>` : ""}
-      ${preview ? `<div class="weekly-next-preview"><div><span class="section-kicker">Próxima semana</span><h4>${formatHours(previewStats.hours)} previstas</h4></div><dl><div><dt>Blocos</dt><dd>${previewStats.blocks}</dd></div><div><dt>Revisões</dt><dd>${previewStats.reviews}</dd></div><div><dt>Reforços</dt><dd>${previewStats.reinforcements}</dd></div><div><dt>Matérias</dt><dd>${previewStats.subjects}</dd></div></dl><div class="weekly-preview-actions"><button class="ghost-button" type="button" data-cancel-week-preview>Voltar</button><button class="primary-button" type="button" data-confirm-next-week="${escapeHtml(goal.id)}">Confirmar semana</button></div></div>` : `<button class="primary-button weekly-prepare-button" type="button" data-prepare-next-week="${escapeHtml(goal.id)}"><i data-lucide="calendar-plus"></i><span>Preparar próxima semana</span></button>`}
+      <section class="weekly-closing-section weekly-summary-section"><h4>Sua semana</h4><div class="weekly-summary-grid"><span><b>${formatHours(snapshot.realizedHours ?? progress.realizedHours)}</b><small>de ${formatHours(snapshot.plannedHours ?? goal.plannedHours)} planejadas</small></span><span><b>${snapshot.completedBlocks ?? progress.completedBlocks}</b><small>blocos concluídos</small></span><span><b>${snapshot.completedReviews ?? progress.completedReviews}</b><small>revisões realizadas</small></span><span><b>${snapshot.completedReinforcements ?? progress.completedReinforcements}</b><small>reforços concluídos</small></span><span><b>${snapshot.questions || 0}</b><small>questões respondidas</small></span><span><b>+${snapshot.coverageAdded || 0}</b><small>${Number(snapshot.coverageAdded) === 1 ? "tema com contato" : "temas com contato"}</small></span></div><div class="weekly-comparison-line"><span>${escapeHtml(hoursComparison)}</span><span>${escapeHtml(performanceComparison)}</span></div></section>
+      <section class="weekly-closing-section"><h4>O que mudou</h4>${closure.highlights?.length ? `<div class="weekly-highlight-list">${closure.highlights.slice(0, 4).map((item) => `<article><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail)}</p></article>`).join("")}</div>` : `<p class="muted-note">${closure.noActivity ? "Você pode preparar a próxima semana normalmente, sem acumular a carga anterior." : "Ainda não há dados suficientes para gerar mudanças confiáveis."}</p>`}</section>
+      <section class="weekly-closing-section"><h4>O que merece continuidade</h4>${continuity.length ? `<div class="weekly-continuity-list">${continuity.map((item) => `<article><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></article>`).join("")}</div>` : `<p class="muted-note">Nenhum reforço ou tema em andamento exige continuidade especial agora.</p>`}</section>
+      <section class="weekly-closing-section weekly-next-section"><h4>O que muda agora</h4>${adjustments.length ? `<ul>${adjustments.map((item) => `<li>${escapeHtml(item.reason)}</li>`).join("")}</ul>` : `<p>O próximo ciclo manterá uma composição equilibrada entre continuidade, revisão e novos conteúdos.</p>`}<p class="weekly-pending-note">${deprioritized ? `${deprioritized} ${deprioritized === 1 ? "pendência perdeu prioridade" : "pendências perderam prioridade"} e não será carregada automaticamente.` : "Apenas conteúdos ainda relevantes serão considerados na próxima composição."}</p>${preview ? `<div class="weekly-next-preview"><div><span class="section-kicker">Próxima semana</span><h4>${formatHours(previewStats.hours)} previstas</h4></div><dl><div><dt>Blocos</dt><dd>${previewStats.blocks}</dd></div><div><dt>Revisões</dt><dd>${previewStats.reviews}</dd></div><div><dt>Reforços</dt><dd>${previewStats.reinforcements}</dd></div><div><dt>Matérias</dt><dd>${previewStats.subjects}</dd></div></dl><div class="weekly-preview-actions"><button class="ghost-button" type="button" data-cancel-week-preview>Voltar</button><button class="primary-button" type="button" data-confirm-next-week="${escapeHtml(goal.id)}">Confirmar semana</button></div></div>` : `<button class="primary-button weekly-prepare-button" type="button" data-prepare-next-week="${escapeHtml(goal.id)}"><i data-lucide="calendar-plus"></i><span>Preparar próxima semana</span></button>`}</section>
     </section>`;
 }
 

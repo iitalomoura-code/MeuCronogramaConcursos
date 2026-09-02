@@ -117,7 +117,7 @@
       .sort((a, b) => Math.abs(b.deltaPoints) - Math.abs(a.deltaPoints));
   }
 
-  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, coverage = null, pending = null, contactGaps = [], interventions = [], errorInsights = [], examContext = null } = {}) {
+  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, previousProgress = null, coverage = null, pending = null, contactGaps = [], interventions = [], errorInsights = [], examContext = null } = {}) {
     const comparisons = subjectPerformanceComparisons(performance, previousPerformance);
     const safeCoverage = {
       totalTopics: Number(coverage?.totalTopics) || 0,
@@ -135,6 +135,15 @@
       relevantReviews: Array.isArray(pending?.relevantReviews) ? pending.relevantReviews : [],
       reinforcements: Array.isArray(pending?.reinforcements) ? pending.reinforcements : [],
     };
+    const resolvedSubjects = new Set((interventions || [])
+      .filter((item) => item.result === "resolved")
+      .map((item) => String(item.materia || "").toLowerCase())
+      .filter(Boolean));
+    const needsReinforcement = (item) => {
+      const level = item?.diagnosis?.level;
+      if (level) return ["attention", "deficiency", "critical", "insufficient"].includes(level);
+      return Number(item?.questions) >= 10 && Number(item?.accuracy) < 0.7;
+    };
     const highlights = [];
     const addHighlight = (item) => {
       if (!item?.title || !item?.detail || highlights.length >= 4) return;
@@ -151,7 +160,7 @@
       });
     });
     (performance?.subjects || [])
-      .filter((item) => Number(item.questions) >= 10 && Number(item.accuracy) < 0.7)
+      .filter(needsReinforcement)
       .sort((a, b) => Number(a.accuracy) - Number(b.accuracy))
       .slice(0, 2)
       .forEach((item) => addHighlight({ type: "attention", materia: item.materia, title: "Ponto de atenção", detail: `${item.materia} ficou com ${Math.round(Number(item.accuracy) * 100)}% de acertos em ${item.questions} questões.` }));
@@ -183,21 +192,59 @@
     };
     safePending.ongoing.slice(0, 3).forEach((item) => addAdjustment({ type: "continue", blockKey: item.blockKey, materia: item.materia, assunto: item.assunto, weight: 110, reason: `concluir o tema em andamento de ${item.materia}` }));
     safePending.reprogrammed.slice(0, 3).forEach((item) => addAdjustment({ type: "redistribute", blockKey: item.blockKey, materia: item.materia, assunto: item.assunto, weight: 70, reason: `redistribuir ${item.assunto || item.materia} sem perder o progresso` }));
-    (performance?.subjects || []).filter((item) => Number(item.questions) >= 10 && Number(item.accuracy) < 0.7).slice(0, 2).forEach((item) => addAdjustment({ type: "reinforce", materia: item.materia, weight: 65, reason: `aumentar contato com ${item.materia}` }));
+    (performance?.subjects || [])
+      .filter((item) => needsReinforcement(item) && !resolvedSubjects.has(String(item.materia || "").toLowerCase()))
+      .slice(0, 2)
+      .forEach((item) => addAdjustment({ type: "reinforce", materia: item.materia, weight: 65, reason: `manter reforço em ${item.materia} enquanto o diagnóstico indicar necessidade` }));
     comparisons.filter((item) => item.deltaPoints >= 8 && item.currentAccuracy >= 0.75).slice(0, 1).forEach((item) => addAdjustment({ type: "maintain", materia: item.materia, weight: 20, reason: `manter a frequência de ${item.materia} após a evolução observada` }));
     if (gap) addAdjustment({ type: "return", materia: gap.materia, weight: 55, reason: `retomar ${gap.materia}` });
     if (safePending.relevantReviews.length) addAdjustment({ type: "reviews", weight: 60, reason: `reservar espaço para ${safePending.relevantReviews.length} ${safePending.relevantReviews.length === 1 ? "revisão relevante" : "revisões relevantes"}` });
 
+    const continuity = [];
+    const addContinuity = (item) => {
+      if (!item?.title || !item?.detail || continuity.length >= 3) return;
+      const key = `${item.type || ""}:${item.materia || ""}:${item.title}`;
+      if (!continuity.some((entry) => entry.key === key)) continuity.push({ ...item, key });
+    };
+    safePending.ongoing.slice(0, 2).forEach((item) => addContinuity({ type: "ongoing", materia: item.materia, title: "Tema em andamento", detail: `${item.assunto || item.materia} continua disponível para conclusão.` }));
+    (interventions || [])
+      .filter((item) => ["worse", "unchanged"].includes(item.result))
+      .slice(0, 2)
+      .forEach((item) => addContinuity({ type: "intervention", materia: item.materia, title: "Reforço continua relevante", detail: `${item.assunto || item.materia}: ${item.detail}` }));
+    (errorInsights || [])
+      .filter((item) => item.postInterventionErrors >= 2 || item.recurrence === "high")
+      .slice(0, 1)
+      .forEach((item) => addContinuity({ type: "errors", materia: item.materia, title: "Erros ainda concentrados", detail: `${item.assunto} segue pedindo atenção nos próximos contatos.` }));
+
+    const previousHours = Number(previousProgress?.realizedHours);
+    const currentQuestions = Number(performance?.questions) || 0;
+    const previousQuestions = Number(previousPerformance?.questions) || 0;
+    const currentAccuracy = Number(performance?.accuracy);
+    const previousAccuracy = Number(previousPerformance?.accuracy);
+    const hasPerformanceComparison = currentQuestions >= 10 && previousQuestions >= 10 && Number.isFinite(currentAccuracy) && Number.isFinite(previousAccuracy);
     const noActivity = (Number(progress.realizedHours) || 0) <= 0 && (Number(progress.completedBlocks) || 0) <= 0 && (Number(progress.completedReviews) || 0) <= 0;
     return {
-      version: 1,
+      version: 2,
       generatedAt: new Date().toISOString(),
       noActivity,
       headline: noActivity ? "Não houve atividades registradas nesta semana." : `${Number(progress.compliance) || 0}% da meta cumprida`,
       highlights: highlights.slice(0, 4).map(({ fingerprint, ...item }) => item),
       comparisons,
+      summary: {
+        plannedHours: Number(goal.plannedHours) || 0,
+        realizedHours: Number(progress.realizedHours) || 0,
+        completedBlocks: Number(progress.completedBlocks) || 0,
+        completedReviews: Number(progress.completedReviews) || 0,
+        completedReinforcements: Number(progress.completedReinforcements) || 0,
+        questions: currentQuestions,
+        coverageAdded: safeCoverage.newTopics,
+        coverageDeltaPoints: safeCoverage.afterPercent - safeCoverage.beforePercent,
+        hoursDelta: Number.isFinite(previousHours) ? Number(progress.realizedHours || 0) - previousHours : null,
+        performanceDeltaPoints: hasPerformanceComparison ? Math.round((currentAccuracy - previousAccuracy) * 100) : null,
+      },
       coverage: safeCoverage,
       pending: safePending,
+      continuity: continuity.map(({ key, ...item }) => item),
       adjustments: adjustments.slice(0, 6).map(({ key, ...item }) => item),
       examContext: examContext || goal.examContext || null,
     };
