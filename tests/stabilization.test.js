@@ -15,9 +15,9 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260902-evolution-diagnosis"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260902-continue-modules"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260902-recovery-cycle"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
-assert.ok(index.includes("js/continue-recommendation.js?v=20260902-continue-recommendation"), "O motor de recomendação deve carregar antes do app.");
+assert.ok(index.includes("js/continue-recommendation.js?v=20260902-recovery-cycle"), "O motor de recomendação deve carregar antes do app.");
 assert.ok(index.includes("js/study-alerts.js?v=20260902-unified-mastery"), "A central de alertas deve ser carregada antes do app.");
 assert.ok(styles.includes("overflow-x: hidden;\n  overflow-y: auto;"), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('id="signOutButton"'), "Tema, configurações e sair devem permanecer no rodapé da sidebar.");
@@ -40,6 +40,7 @@ assert.ok(app.includes("function suspendFocusedStudy"), "Sair do modo focado dev
 assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converter temas em partes operacionais vinculadas a uma meta.");
 assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
 assert.ok(index.includes("js/mastery-diagnosis.js?v=20260902-mastery-diagnosis"), "O motor de domínio deve ser carregado antes do app.");
+assert.ok(index.includes("js/learning-intervention.js?v=20260902-recovery-cycle"), "O ciclo de recuperação deve carregar antes das revisões adaptativas.");
 assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

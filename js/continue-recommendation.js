@@ -79,6 +79,7 @@
     const factors = [];
     if (context.weeklyReinforcement?.reasons?.length) context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
     if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
+    if (adaptive.reason) factors.push(adaptive.reason);
     if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
     if (helpers.normalizeStatus?.(block.status) === "Em andamento") factors.push("tema em andamento");
     if (helpers.normalizeStatus?.(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");

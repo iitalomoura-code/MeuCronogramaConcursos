@@ -114,7 +114,7 @@
       .sort((a, b) => Math.abs(b.deltaPoints) - Math.abs(a.deltaPoints));
   }
 
-  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, coverage = null, pending = null, contactGaps = [], examContext = null } = {}) {
+  function buildWeeklyClosure({ goal = {}, progress = {}, performance = null, previousPerformance = null, coverage = null, pending = null, contactGaps = [], interventions = [], examContext = null } = {}) {
     const comparisons = subjectPerformanceComparisons(performance, previousPerformance);
     const safeCoverage = {
       totalTopics: Number(coverage?.totalTopics) || 0,
@@ -157,6 +157,11 @@
     }
     const gap = [...contactGaps].filter((item) => Number(item.days) >= 7).sort((a, b) => Number(b.days) - Number(a.days))[0];
     if (gap) addHighlight({ type: "contact", materia: gap.materia, title: "Tempo sem contato", detail: `${gap.materia} está há ${gap.days} dias sem estudo registrado.` });
+    (interventions || []).slice(0, 2).forEach((item) => {
+      if (!item?.materia || !item?.detail) return;
+      const title = item.result === "resolved" ? "Recuperação confirmada" : item.result === "improved" || item.result === "improving-signal" ? "Tema em melhora" : "Reforço precisa evoluir";
+      addHighlight({ type: item.result === "resolved" || item.result === "improved" ? "progress" : "attention", materia: item.materia, title, detail: `${item.assunto || item.materia}: ${item.detail}` });
+    });
 
     const adjustments = [];
     const addAdjustment = (item) => {

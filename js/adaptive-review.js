@@ -112,6 +112,17 @@
     return new Date(plan.availableAt).getTime() <= startOfDay(now).getTime() ? "Disponível" : "Pendente";
   }
 
+  function interventionUpdate(record, context, session, now) {
+    if (!global.LearningIntervention?.update || !session?.diagnosis) return null;
+    return global.LearningIntervention.update(record, {
+      materia: context.materia,
+      assunto: context.assunto,
+      diagnosis: session.diagnosis,
+      source: context.origem || "desempenho",
+      now,
+    });
+  }
+
   function mergeReview(existing, context, session, now = new Date(), manual = false) {
     if (!context?.materia || !context?.assunto || !context?.id || !context?.sourceKey) {
       return { record: null, created: false, updated: false, concluded: false, invalid: true, reason: "Matéria e assunto válidos são necessários." };
@@ -120,9 +131,10 @@
     const canCreate = manual || result.automatic;
     const attempt = makeAttempt(session, now);
     const base = existing ? { ...existing, tentativas: Array.isArray(existing.tentativas) ? [...existing.tentativas] : [] } : null;
+    const intervention = interventionUpdate(base || (context.previousIntervention ? { intervencao: context.previousIntervention } : null), context, session, now);
 
     if (!canCreate) {
-      if (!base) return { record: null, created: false, updated: false, concluded: false, insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason };
+      if (!base) return { record: null, created: false, updated: false, concluded: false, insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason, interventionState: intervention?.state || null };
       if (shouldAppendAttempt(base, attempt)) base.tentativas.push(attempt);
       if (result.resolveExisting) {
         base.status = "Concluída";
@@ -131,11 +143,18 @@
       base.atualizadaEm = new Date(now).toISOString();
       base.motivo = { percentual: result.percent ?? attempt.percentual, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
       base.diagnostico = diagnosisSnapshot(session.diagnosis);
-      return { record: base, created: false, updated: true, concluded: base.status === "Concluída", insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason };
+      if (intervention?.state) base.intervencao = intervention.state;
+      return { record: base, created: false, updated: true, concluded: base.status === "Concluída", insufficient: Boolean(result.insufficient) || result.total < 10, reason: result.reason, interventionOutcome: intervention?.outcome || null };
     }
 
-    const intensity = result.intensity || "curta";
+    const intensity = intervention?.recommendation?.intensity || result.intensity || "curta";
     const plan = buildPlan({ ...result, intensity }, now);
+    if (intervention?.recommendation?.cooldownDays) {
+      const availableAt = new Date(startOfDay(now).getTime() + intervention.recommendation.cooldownDays * DAY);
+      plan.availableAt = availableAt.toISOString();
+      plan.availableDate = formatDate(availableAt);
+      plan.flexibleLabel = `Nova reavaliação disponível a partir de ${formatDate(availableAt)}`;
+    }
     const record = base || {
       id: context.id,
       sourceKey: context.sourceKey,
@@ -160,12 +179,13 @@
     record.intervalLabel = `Revisão adaptativa · ${plan.definition.label}`;
     record.motivo = { percentual: result.percent ?? attempt.percentual, acertos: attempt.acertos, totalQuestoes: attempt.totalQuestoes };
     record.diagnostico = diagnosisSnapshot(session.diagnosis);
-    record.questoesSugeridas = Math.max(1, Number(record.questoesSugeridas) || plan.definition.questions);
-    record.sugestao = plan.definition.suggestion;
+    if (intervention?.state) record.intervencao = intervention.state;
+    record.questoesSugeridas = Math.max(1, Number(intervention?.recommendation?.questions) || plan.definition.questions);
+    record.sugestao = intervention?.recommendation?.text || plan.definition.suggestion;
     record.disponibilidade = plan.flexibleLabel;
     record.atualizadaEm = new Date(now).toISOString();
     record.canceladaEm = "";
-    return { record, created: !base, updated: Boolean(base), concluded: false, improved, insufficient: false, reason: plan.flexibleLabel };
+    return { record, created: !base, updated: Boolean(base), concluded: false, improved, insufficient: false, reason: plan.flexibleLabel, interventionOutcome: intervention?.outcome || null };
   }
 
   global.AdaptiveReviewEngine = {

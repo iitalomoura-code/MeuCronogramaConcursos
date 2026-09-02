@@ -3935,6 +3935,24 @@ function adaptiveReviewFor(materia = "", assunto = "") {
   };
 }
 
+function learningInterventionFor(materia = "", assunto = "") {
+  const fromReviews = (state.reviews || [])
+    .filter((record) => isAdaptiveReview(record) && record.intervencao && topicMatches(record, materia, assunto))
+    .sort((a, b) => new Date(b.intervencao?.updatedAt || b.atualizadaEm || b.criadaEm || 0) - new Date(a.intervencao?.updatedAt || a.atualizadaEm || a.criadaEm || 0))[0]?.intervencao || null;
+  if (fromReviews) return fromReviews;
+  return state.generatedBlocks
+    .filter((block) => block.intervencao && topicMatches(block, materia, assunto))
+    .sort((a, b) => new Date(b.intervencao?.updatedAt || b.atualizadoEm || 0) - new Date(a.intervencao?.updatedAt || a.atualizadoEm || 0))[0]?.intervencao || null;
+}
+
+function learningInterventionInsights() {
+  const records = [
+    ...(state.reviews || []).filter((record) => record.intervencao),
+    ...state.generatedBlocks.filter((block) => block.intervencao),
+  ];
+  return window.LearningIntervention?.insights?.(records) || [];
+}
+
 function adaptivePerformanceForTopic(materia = "", assunto = "") {
   return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia, assunto));
 }
@@ -4026,6 +4044,12 @@ function adaptivePriorityAdjustment(target = {}) {
 }
 
 function adaptivePriorityReason(target = {}, data = adaptivePriorityAdjustment(target)) {
+  const intervention = learningInterventionFor(target.materia, target.assunto);
+  if (intervention?.lastResult === "resolved") return "O desempenho melhorou após o reforço; mantenha contato normal pelo ciclo.";
+  if (intervention?.lastResult === "improved") return intervention.lastResultMessage || "O tema está reagindo bem ao reforço.";
+  if (["unchanged", "worse"].includes(intervention?.lastResult) && Number(intervention.ineffectiveInterventions) >= 2) {
+    return intervention.lastResultMessage || "O tema continua exigindo uma abordagem mais aprofundada.";
+  }
   if (data.mastery?.needsDiagnostic) return data.mastery.action?.text || "Faça algumas questões para avaliar melhor este tema.";
   if (data.mastery?.level === "critical") return "Prioridade reforçada: o desempenho recente pede revisão aprofundada.";
   if (data.mastery?.level === "deficiency") return "Prioridade reforçada: o desempenho recente pede reforço direcionado.";
@@ -5437,6 +5461,7 @@ function weeklyClosureSnapshot(goal, progress) {
     coverage: weeklyCoverageSnapshot(goal),
     pending: weeklyPendingSnapshot(goal, progress),
     contactGaps: weeklyContactGaps(goal),
+    interventions: learningInterventionInsights(),
     examContext: goal.examContext || weeklyExamContext(),
   });
 }
@@ -9093,6 +9118,7 @@ function syncAdaptiveReviewForBlock(block, options = {}) {
     materia: block.materia,
     assunto: block.assunto,
     ciclo: block.ciclo || currentCycleLabel(),
+    previousIntervention: block.intervencao || null,
   }, {
     percentual: totalQuestoes ? acertos / totalQuestoes : 0,
     acertos,
@@ -9107,7 +9133,10 @@ function syncAdaptiveReviewForBlock(block, options = {}) {
     })(),
   }, new Date(), Boolean(options.manual));
 
-  if (!outcome.record) return outcome;
+  if (!outcome.record) {
+    if (outcome.interventionState) block.intervencao = outcome.interventionState;
+    return outcome;
+  }
   const index = state.reviews.findIndex((record) => record.id === sourceKey);
   if (index >= 0) state.reviews[index] = normalizeAdaptiveReviewRecord(outcome.record);
   else state.reviews.push(normalizeAdaptiveReviewRecord(outcome.record));
