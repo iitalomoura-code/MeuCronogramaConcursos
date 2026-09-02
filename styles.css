@@ -11935,10 +11935,38 @@ textarea:focus {
 #tab-evolucao .evolution-chart { padding: 10px 0 0; border-top: 1px solid var(--divider); }
 #tab-evolucao .evolution-subject-list,
 #tab-evolucao .attention-list,
+#tab-evolucao .evolution-deficiency-list,
 #tab-evolucao .evolution-cycle-list { border-top: 0; }
 #tab-evolucao .evolution-subject-card,
 #tab-evolucao .attention-subject { padding: 14px 0; border: 0; border-bottom: 1px solid var(--divider); }
 #tab-evolucao .attention-subject { padding-left: 12px; }
+
+.evolution-deficiency-list { display: grid; gap: 0; }
+.evolution-deficiency-heading,
+.evolution-deficiency-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.75fr) minmax(96px, .8fr) 62px 76px minmax(125px, 1.15fr);
+  gap: 12px;
+  align-items: center;
+}
+.evolution-deficiency-heading {
+  padding: 0 0 9px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.evolution-deficiency-row { padding: 12px 0; border-bottom: 1px solid var(--divider); }
+.evolution-deficiency-row > div { min-width: 0; }
+.evolution-deficiency-row strong,
+.evolution-deficiency-row small { display: block; }
+.evolution-deficiency-row strong { color: var(--text); font-size: 13px; font-weight: 700; }
+.evolution-deficiency-row small { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+.evolution-deficiency-row > span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.evolution-deficiency-row.is-critical > span:nth-child(2),
+.evolution-deficiency-row.is-deficiency > span:nth-child(2) { color: var(--primary-soft-text); font-weight: 700; }
+.evolution-deficiency-row.is-attention > span:nth-child(2) { color: var(--text); font-weight: 650; }
+.evolution-deficiency-toggle { width: fit-content; margin-top: 12px; }
 #tab-evolucao .evolution-cycles-card > summary { margin: 0; }
 #tab-evolucao .evolution-completed-archive { padding: 18px 24px !important; background: transparent; }
 
@@ -11955,6 +11983,7 @@ textarea:focus {
   #tab-evolucao .evolution-dashboard-grid .evolution-progress-card,
   #tab-evolucao .evolution-dashboard-grid .evolution-performance-card,
   #tab-evolucao .evolution-dashboard-grid .evolution-attention-card,
+  #tab-evolucao .evolution-dashboard-grid .evolution-deficiencies-card,
   #tab-evolucao .evolution-dashboard-grid .evolution-recommendation-card,
   #tab-evolucao .evolution-dashboard-grid .evolution-pace-card { grid-column: 1; }
 }
@@ -11965,6 +11994,14 @@ textarea:focus {
   #tab-evolucao .evolution-card { padding: 18px; }
   #tab-evolucao .evolution-sections { gap: 22px; }
   #tab-evolucao .evolution-pace-grid { grid-template-columns: 1fr; }
+  .evolution-deficiency-heading { display: none; }
+  .evolution-deficiency-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .evolution-deficiency-row > div { grid-column: 1 / -1; }
+  .evolution-deficiency-row > span { font-size: 11px; }
+  .evolution-deficiency-row > span:nth-child(2)::before { content: "Situação: "; color: var(--muted); font-weight: 500; }
+  .evolution-deficiency-row > span:nth-child(3)::before { content: "Tendência: "; color: var(--muted); font-weight: 500; }
+  .evolution-deficiency-row > span:nth-child(4)::before { content: "Confiança: "; color: var(--muted); font-weight: 500; }
+  .evolution-deficiency-row > span:nth-child(5) { grid-column: 1 / -1; color: var(--text); font-weight: 650; }
   #tab-evolucao .evolution-pace-grid > div + div,
   #tab-evolucao .evolution-performance-summary > div + div { padding-left: 0; padding-top: 12px; border-top: 1px solid var(--divider); border-left: 0; }
 }

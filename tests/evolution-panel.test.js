@@ -16,6 +16,7 @@ const styles = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf
   "performanceTrend",
   "deadlineProjection",
   "evaluateSubjectAttention",
+  "renderEvolutionDeficiencies",
   "exportEvolutionSummary",
   "renderEvolution",
 ].forEach((name) => assert.ok(app.includes(`function ${name}`), `A função ${name} deve existir.`));
@@ -26,12 +27,14 @@ const styles = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf
 assert.ok(app.includes('normalizeForMatch(topic.estudar || "sim") !== "nao"'), "Temas retirados do estudo não podem entrar no denominador do progresso.");
 assert.ok(app.includes("totals.acertos"), "O painel deve somar acertos antes de calcular desempenho.");
 assert.ok(app.includes("EVOLUTION_TREND_MARGIN = 0.03"), "A tendência deve usar margem mínima de 3 pontos percentuais.");
-assert.ok(app.includes("subject.performance.questoes >= EVOLUTION_MIN_SAMPLE_QUESTIONS"), "Atenção por matéria deve exigir amostra mínima quando baseada em acertos.");
+assert.ok(app.includes("window.EvolutionDiagnosisEngine"), "O painel deve priorizar o adaptador do diagnóstico central.");
 assert.ok(app.includes("evolutionView.subject !== \"all\""), "A projeção global deve avisar quando houver filtro de matéria.");
 assert.ok(app.includes("resumo-evolucao.txt"), "A exportação de resumo deve gerar arquivo de texto.");
 assert.ok(styles.includes(".evolution-overview-grid"), "O painel de evolução deve ter estilos próprios.");
 assert.ok(styles.includes(".evolution-topic-modal"), "Os detalhes devem ter modal acessível próprio.");
 assert.ok(index.includes('class="evolution-dashboard-grid"'), "Os cards principais devem compartilhar um grid equilibrado.");
 assert.ok(styles.includes("#tab-evolucao .evolution-dashboard-grid"), "O layout agrupado do painel deve ter estilos próprios.");
+assert.ok(index.includes('id="evolutionDeficiencies"'), "O mapa de deficiências precisa ter uma área própria no Painel de Evolução.");
+assert.ok(styles.includes(".evolution-deficiency-row"), "O mapa de deficiências deve ter estilos compactos e responsivos.");
 
 console.log("OK - painel de evolução consolida progresso, desempenho, projeção e exportação.");

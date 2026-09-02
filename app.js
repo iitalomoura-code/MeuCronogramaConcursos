@@ -180,6 +180,7 @@ let pendingTabRenderTimer = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
+let evolutionDeficienciesExpanded = false;
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
 let mobileDrawerOpen = false;
@@ -384,6 +385,7 @@ const els = {
   evolutionSubjectBody: document.querySelector("#evolutionSubjectBody"),
   evolutionSubjectChart: document.querySelector("#evolutionSubjectChart"),
   attentionSubjects: document.querySelector("#attentionSubjects"),
+  evolutionDeficiencies: document.querySelector("#evolutionDeficiencies"),
   evolutionCompletedBody: document.querySelector("#evolutionCompletedBody"),
   saveNowButton: document.querySelector("#saveNowButton"),
   exportBackupButton: document.querySelector("#exportBackupButton"),
@@ -8161,6 +8163,24 @@ function deadlineProjection(progress = evolutionProgressMetrics()) {
 }
 
 function evaluateSubjectAttention(subject, projection = {}) {
+  const diagnosisEngine = window.EvolutionDiagnosisEngine;
+  if (diagnosisEngine?.subjectRisk && subject.diagnosis) {
+    const risk = diagnosisEngine.subjectRisk({
+      ...subject,
+      coverage: subject.progress,
+      priority: (Number(subject.priority?.percent) || 0) / 100,
+      remainingHours: Math.max(0, Number(subject.pending) || 0),
+    }, { weeksToExam: Number.isFinite(projection.days) ? Math.ceil(projection.days / 7) : null });
+    const level = risk.level === "Prioridade" ? "alta" : risk.level === "Atenção" ? "media" : "baixa";
+    return {
+      level,
+      reasons: risk.reasons,
+      suggestedAction: risk.action?.text || (risk.diagnosis?.level === "insufficient" ? "Faça 10 questões diagnósticas antes de decidir o reforço." : "Acompanhe a evolução nos próximos registros."),
+      risk,
+    };
+  }
+
+  // Compatibility fallback for saved plans loaded without the diagnosis module.
   const reasons = [];
   let score = 0;
   if (subject.performance.questoes >= EVOLUTION_MIN_SAMPLE_QUESTIONS && subject.performance.percentual < .6) {
@@ -8201,6 +8221,12 @@ function evolutionSubjectData(entries, progress, projection) {
     if (!grouped.has(key)) grouped.set(key, { materia: topic.materia, topics: [] });
     grouped.get(key).topics.push(topic);
   });
+  const diagnosisCache = new Map();
+  const diagnosisFor = (target) => {
+    const key = topicKey(target.materia, target.assunto || "__materia__");
+    if (!diagnosisCache.has(key)) diagnosisCache.set(key, masteryDiagnosisForTarget(target));
+    return diagnosisCache.get(key);
+  };
   return [...grouped.values()].map((subject) => {
     const subjectEntries = entries.filter((entry) => normalizeForMatch(entry.materia) === normalizeForMatch(subject.materia));
     const completed = subject.topics.filter((topic) => progress.completed.some((item) => topicKey(item.materia, item.assunto) === topicKey(topic.materia, topic.assunto))).length;
@@ -8211,6 +8237,17 @@ function evolutionSubjectData(entries, progress, projection) {
     const adaptive = adaptivePriorityForTarget({ ...plan, materia: subject.materia, prioridadeBase: basePriority });
     const priority = priorityInfo(adaptive.adjusted);
     const performance = performanceMetrics(subjectEntries);
+    const subjectDiagnosis = diagnosisFor({ materia: subject.materia, prioridade: basePriority });
+    const diagnosis = subjectDiagnosis.available === false ? null : subjectDiagnosis;
+    const topicDiagnoses = subject.topics.map((topic) => {
+      const diagnosedTopic = diagnosisFor({ materia: subject.materia, assunto: topic.assunto, prioridade: basePriority });
+      const topicDiagnosis = diagnosedTopic.available === false ? null : diagnosedTopic;
+      return {
+        assunto: themeTitle(topic.assunto),
+        diagnosis: topicDiagnosis,
+        relevance: Math.max(basePriority, Number(topicDiagnosis?.incidence?.normalized) || 0),
+      };
+    });
     const openReviews = (state.reviews || []).filter((review) => !["Concluída", "Cancelada"].includes(normalizeReviewStatus(review.status)) && topicMatches(review, subject.materia)).length;
     const reprogramacoes = [...subjectEntries, ...(state.generatedBlocks || []).filter((block) => normalizeForMatch(block.materia) === normalizeForMatch(subject.materia))]
       .reduce((sum, entry) => sum + (Number(entry.reprogramacoes) || (normalizeStatus(entry.status) === "Reprogramar" ? 1 : 0)), 0);
@@ -8228,6 +8265,10 @@ function evolutionSubjectData(entries, progress, projection) {
       reprogramacoes,
       hours: performance.horas,
       entries: subjectEntries,
+      diagnosis,
+      topicDiagnoses,
+      relevance: Math.max(basePriority, ...topicDiagnoses.map((item) => item.relevance)),
+      daysWithoutContact: alertDaysWithoutContact(subject.materia, entries),
     };
     return { ...data, attention: evaluateSubjectAttention(data, projection) };
   });
@@ -8277,6 +8318,10 @@ function buildPredictiveEvolution(progress, subjects) {
     openReviews: subject.openReviews,
     reprograms: subject.reprogramacoes,
     remainingHours: Math.max(0, Number(subject.pending) || 0) * referenceMinutes / 60,
+    daysWithoutContact: subject.daysWithoutContact,
+    incidence: Math.max(0, Number(subject.relevance) || 0),
+    diagnosis: subject.diagnosis,
+    topicDiagnoses: subject.topicDiagnoses,
   }));
   return engine.build({ topics, entries, subjects: predictiveSubjects, examDate: config.dataProva, weeklyHours: config.horasSemana });
 }
@@ -8437,7 +8482,7 @@ function renderEvolutionSubjects(subjects) {
   els.evolutionSubjectBody.innerHTML = sorted.length ? sorted.map((subject) => `
     <article class="evolution-subject-card">
       <div><span class="evolution-subject-name">${escapeHtml(subject.materia)}</span><p>Progresso ${formatPercent(subject.progress)} · ${subject.completed}/${subject.total} temas concluídos</p></div>
-      <div class="evolution-subject-metrics"><span>Desempenho <strong>${subject.performance.percentual === null ? "Sem dados" : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</strong></span><span>Tendência <strong>${escapeHtml(subject.performance.trend.label)}</strong></span><span>Revisões <strong>${subject.openReviews}</strong></span><span>Prioridade <strong>${escapeHtml(subject.priority.label)}</strong></span></div>
+      <div class="evolution-subject-metrics"><span>Desempenho <strong>${subject.performance.percentual === null ? "Sem dados" : `${formatPercent(subject.performance.percentual)} em ${subject.performance.questoes} questões`}</strong></span><span>Diagnóstico <strong>${escapeHtml(subject.attention.risk?.level || (subject.attention.level === "alta" ? "Prioridade" : subject.attention.level === "media" ? "Atenção" : "Sob controle"))}</strong></span><span>Revisões <strong>${subject.openReviews}</strong></span><span>Prioridade <strong>${escapeHtml(subject.priority.label)}</strong></span></div>
       <button class="text-action" type="button" data-evolution-subject-details="${escapeHtml(normalizeForMatch(subject.materia))}">Ver detalhes</button>
     </article>
   `).join("") : `<div class="evolution-empty-inline">Nenhuma matéria encontrada para os filtros atuais.</div>`;
@@ -8450,6 +8495,30 @@ function renderEvolutionAttention() {
     const action = studyAlertAction(alert);
     return `<article class="attention-subject attention-${escapeHtml(alert.severity || "attention")}"><div><strong>${escapeHtml(studyAlertTitle(alert))}</strong><ul>${studyAlertReasons(alert).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul><p>${escapeHtml(action.target === "revisoes" ? "Considere iniciar as revisões mais relevantes antes de novos temas longos." : "Considere este ponto ao organizar os próximos blocos.")}</p></div><button class="text-action" type="button" data-study-alert-action="${escapeHtml(action.target)}" data-study-alert-id="${escapeHtml(alert.id)}">${escapeHtml(action.label)}</button></article>`;
   }).join("") : `<div class="evolution-empty-inline">Nenhum ponto relevante para acompanhar neste momento.</div>`;
+}
+
+function renderEvolutionDeficiencies(subjects) {
+  if (!els.evolutionDeficiencies) return;
+  const engine = window.EvolutionDiagnosisEngine;
+  const rows = engine?.deficiencyTopics ? engine.deficiencyTopics(subjects) : [];
+  const visible = rows.slice(0, evolutionDeficienciesExpanded ? rows.length : 5);
+  if (!visible.length) {
+    els.evolutionDeficiencies.innerHTML = `<div class="evolution-empty-inline">Nenhum assunto com intervenção prioritária neste momento.</div>`;
+    return;
+  }
+  els.evolutionDeficiencies.innerHTML = `
+    <div class="evolution-deficiency-heading" aria-hidden="true"><span>Assunto</span><span>Situação</span><span>Tendência</span><span>Confiança</span><span>Próxima ação</span></div>
+    ${visible.map((row) => {
+      const diagnosis = row.diagnosis || {};
+      const label = engine.labelFor(diagnosis.level);
+      const trend = engine.trendLabel(diagnosis);
+      const confidence = engine.confidenceLabel(diagnosis.confidence);
+      const reason = diagnosis.reasons?.[0] || (diagnosis.questions ? `${diagnosis.questions} questões registradas` : "Registre questões para tornar a leitura mais precisa.");
+      const action = diagnosis.action?.label || (diagnosis.level === "insufficient" ? "Fazer 10 questões diagnósticas" : "Manter contato");
+      return `<article class="evolution-deficiency-row is-${escapeHtml(diagnosis.level || "adequate")}"><div><strong>${escapeHtml(row.assunto)}</strong><small>${escapeHtml(row.materia)} · ${escapeHtml(reason)}</small></div><span>${escapeHtml(label)}</span><span aria-label="Tendência ${escapeHtml(diagnosis.trend?.label || "insufficient")}">${escapeHtml(trend)}</span><span>${escapeHtml(confidence)}</span><span>${escapeHtml(action)}</span></article>`;
+    }).join("")}
+    ${rows.length > 5 ? `<button class="text-action evolution-deficiency-toggle" type="button" data-toggle-evolution-deficiencies aria-expanded="${evolutionDeficienciesExpanded}">${evolutionDeficienciesExpanded ? "Mostrar menos" : `Ver mais ${rows.length - 5} ${rows.length - 5 === 1 ? "assunto" : "assuntos"}`}</button>` : ""}
+  `;
 }
 
 function cycleMetricsForView(record, entries) {
@@ -8543,7 +8612,7 @@ function openEvolutionSubjectDetails(subjectName, context, trigger) {
   const subject = context.subjects.find((item) => normalizeForMatch(item.materia) === subjectName);
   if (!subject) return;
   const explanation = explainPriority(subject.priorityPlan);
-  const mastery = masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 });
+  const mastery = subject.diagnosis || masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 });
   const masteryLabel = {
     strong: "Domínio forte",
     adequate: "Domínio adequado",
@@ -8557,7 +8626,9 @@ function openEvolutionSubjectDetails(subjectName, context, trigger) {
     const stateLabel = context.progress.completed.some((item) => topicKey(item.materia, item.assunto) === key) ? "Concluído" : context.progress.inProgress.some((item) => topicKey(item.materia, item.assunto) === key) ? "Em andamento" : "Pendente";
     const topicEntries = subject.entries.filter((entry) => topicKey(entry.materia, entry.assunto) === key);
     const metrics = performanceMetrics(topicEntries);
-    return `<li><strong>${escapeHtml(themeTitle(topic.assunto))}</strong><span>${stateLabel}${metrics.percentual === null ? "" : ` · ${formatPercent(metrics.percentual)} em ${metrics.questoes} questões`}</span></li>`;
+    const topicDiagnosis = subject.topicDiagnoses?.find((item) => normalizeForMatch(item.assunto) === normalizeForMatch(themeTitle(topic.assunto)))?.diagnosis;
+    const diagnosisLabel = topicDiagnosis ? ({ strong: "Domínio forte", adequate: "Sob controle", attention: "Atenção", deficiency: "Deficiência", critical: "Crítico", insufficient: "Mais dados necessários" }[topicDiagnosis.level] || "Em acompanhamento") : "";
+    return `<li><strong>${escapeHtml(themeTitle(topic.assunto))}</strong><span>${stateLabel}${metrics.percentual === null ? "" : ` · ${formatPercent(metrics.percentual)} em ${metrics.questoes} questões`}${diagnosisLabel ? ` · ${escapeHtml(diagnosisLabel)}` : ""}</span></li>`;
   }).join("");
   const reviews = (state.reviews || []).filter((review) => topicMatches(review, subject.materia) && !["Concluída", "Cancelada"].includes(normalizeReviewStatus(review.status)));
   openEvolutionTopicModal({
@@ -8645,6 +8716,7 @@ function renderEvolution() {
   renderEvolutionChart(entries, cycleRecords);
   renderEvolutionSubjects(subjects);
   renderEvolutionAttention();
+  renderEvolutionDeficiencies(subjects);
   renderEvolutionCycles(cycleRecords, entries);
   renderEvolutionRecommendation(subjects, projection);
   renderEvolutionCompletedArchive();
@@ -13124,6 +13196,11 @@ function handleEvolutionSubjectDetails(event) {
 }
 els.evolutionSubjectBody?.addEventListener("click", handleEvolutionSubjectDetails);
 els.attentionSubjects?.addEventListener("click", handleEvolutionSubjectDetails);
+els.evolutionDeficiencies?.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-toggle-evolution-deficiencies]")) return;
+  evolutionDeficienciesExpanded = !evolutionDeficienciesExpanded;
+  if (evolutionContext) renderEvolutionDeficiencies(evolutionContext.subjects);
+});
 els.evolutionTopicModal?.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-evolution-modal]")) closeEvolutionTopicModal();
 });

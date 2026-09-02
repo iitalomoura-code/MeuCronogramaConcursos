@@ -54,6 +54,10 @@
   }
 
   function subjectRisk(subject = {}, context = {}) {
+    if (subject.diagnosis && global.EvolutionDiagnosisEngine?.subjectRisk) {
+      return global.EvolutionDiagnosisEngine.subjectRisk(subject, context);
+    }
+    // Compatibility fallback for snapshots created before the shared diagnosis.
     const reasons = [];
     let score = 0;
     const coverage = clamp(subject.coverage);
