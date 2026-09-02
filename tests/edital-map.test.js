@@ -9,7 +9,8 @@ assert.ok(html.includes('class="evolution-card evolution-edital-map-card"'), "O 
 assert.ok(html.includes('id="editalMapBody"'), "O mapa precisa de uma área própria de renderização.");
 assert.ok(app.includes("function editalMapTopicState"), "O estado de cada tema deve reutilizar blocos e revisões existentes.");
 assert.ok(app.includes("function renderEditalMap"), "O mapa deve ter renderização própria.");
-assert.ok(app.includes('if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);'), "O mapa deve ser renderizado ao abrir o Painel de Evolução.");
+assert.ok(app.includes('pendingSecondaryTabRender = window.setTimeout'), "O mapa deve ser carregado após a primeira pintura do Painel de Evolução.");
+assert.ok(app.includes('safeRender("Mapa do edital", renderEditalMap)'), "O mapa deve manter renderização própria e segura.");
 assert.ok(app.includes("reviewAttentionFor(materia, assunto)"), "Revisões pendentes devem ser consultadas pelo mecanismo existente.");
 assert.ok(app.includes("editalMapSubjectPriority"), "As matérias devem ser ordenadas pela prioridade atual.");
 assert.ok(app.includes("const open = editalMapOpenSubjects.has(key);"), "As matérias do mapa devem iniciar recolhidas.");

@@ -177,10 +177,15 @@ let focusedLongSessionNoticeId = "";
 let focusedStudySaving = false;
 let pendingTabRenderFrame = 0;
 let pendingTabRenderTimer = 0;
+let pendingSecondaryTabRender = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
 let evolutionDeficienciesExpanded = false;
+let adaptiveHistoryCache = null;
+let reviewAttentionCache = new Map();
+let reviewAttentionCacheSource = null;
+let masteryDiagnosisCache = new Map();
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
 let mobileDrawerOpen = false;
@@ -191,6 +196,14 @@ let newPlanCloudReadyPromise = null;
 let newPlanReturnToPlans = false;
 let loadedExamPhase = "";
 let examPhaseUpdatedAt = "";
+
+function invalidateDerivedStudyCaches() {
+  adaptiveHistoryCache = null;
+  reviewAttentionCache.clear();
+  reviewAttentionCacheSource = null;
+  masteryDiagnosisCache.clear();
+  predictiveEvolutionSnapshot = null;
+}
 
 const els = {
   tabs: document.querySelectorAll("[data-tab-target]"),
@@ -1567,7 +1580,6 @@ function renderActiveTabContent(tabName) {
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
   if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
-  if (tabName === "evolucao") safeRender("Mapa do edital", renderEditalMap);
   if (tabName === "diagnostico") safeRender("Diagnóstico inicial", renderInitialDiagnosis);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
   if (tabName === "revisar-planejamento") safeRender("Revisão do planejamento", renderPlanningReview);
@@ -1590,6 +1602,7 @@ function syncGoalTimerIntervalForTab(tabName) {
 function scheduleActiveTabRender(tabName) {
   if (pendingTabRenderFrame) cancelAnimationFrame(pendingTabRenderFrame);
   if (pendingTabRenderTimer) clearTimeout(pendingTabRenderTimer);
+  if (pendingSecondaryTabRender) clearTimeout(pendingSecondaryTabRender);
   pendingTabRenderFrame = requestAnimationFrame(() => {
     pendingTabRenderFrame = 0;
     pendingTabRenderTimer = window.setTimeout(() => {
@@ -1598,6 +1611,12 @@ function scheduleActiveTabRender(tabName) {
       if (!panel?.classList.contains("active")) return;
       renderActiveTabContent(tabName);
       animatePanelNumbers(tabName);
+      if (tabName === "evolucao") {
+        pendingSecondaryTabRender = window.setTimeout(() => {
+          pendingSecondaryTabRender = 0;
+          if (getActiveTabName() === "evolucao") safeRender("Mapa do edital", renderEditalMap);
+        }, 80);
+      }
     }, 0);
   });
 }
@@ -3775,6 +3794,7 @@ function entryDateValue(entry = {}) {
 }
 
 function adaptiveHistoryEntries() {
+  if (adaptiveHistoryCache) return adaptiveHistoryCache;
   const entries = [];
   const pushBlock = (block = {}, source = "") => {
     if (!block || !block.materia) return;
@@ -3809,7 +3829,8 @@ function adaptiveHistoryEntries() {
     (result.completed || []).forEach((block) => pushBlock({ ...block, savedAt: result.savedAt || result.closedAt || "" }, "cycleResults"));
   });
 
-  return entries.sort((a, b) => entryDateValue(a) - entryDateValue(b));
+  adaptiveHistoryCache = entries.sort((a, b) => entryDateValue(a) - entryDateValue(b));
+  return adaptiveHistoryCache;
 }
 
 function topicMatches(entry = {}, materia = "", assunto = "") {
@@ -3841,12 +3862,21 @@ function recentPerformanceDrop(entries = []) {
 
 function reviewAttentionFor(materia = "", assunto = "") {
   ensureReviewsArray();
+  if (reviewAttentionCacheSource !== state.reviews) {
+    reviewAttentionCache.clear();
+    reviewAttentionCacheSource = state.reviews;
+  }
+  const cacheKey = `${normalizeForMatch(materia)}::${normalizeForMatch(assunto)}`;
+  const cached = reviewAttentionCache.get(cacheKey);
+  if (cached) return cached;
   const related = state.reviews
     .filter((record) => !["Concluída", "Cancelada"].includes(record.status) && topicMatches(record, materia, assunto))
     .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }));
   const overdue = related.filter((record) => record.statusInfo.group === "overdue");
   const today = related.filter((record) => record.statusInfo.group === "today");
-  return { related, overdue, today, hasAttention: overdue.length > 0 || today.length > 0 };
+  const result = { related, overdue, today, hasAttention: overdue.length > 0 || today.length > 0 };
+  reviewAttentionCache.set(cacheKey, result);
+  return result;
 }
 
 function adaptivePerformanceForSubject(materia = "") {
@@ -3925,6 +3955,8 @@ function masteryDiagnosisForTarget(target = {}) {
   const engine = window.MasteryDiagnosis;
   const materia = target.materia || "";
   const assunto = target.assunto || "";
+  const cacheKey = [normalizeForMatch(materia), normalizeForMatch(assunto), Number(target.prioridadeBase ?? target.prioridade) || ""].join("::");
+  if (masteryDiagnosisCache.has(cacheKey)) return masteryDiagnosisCache.get(cacheKey);
   const subjectEntries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
   const topicEntries = assunto ? uniqueDiagnosticEntries(adaptivePerformanceForTopic(materia, assunto)) : [];
   const macro = assunto ? macroTopicFor(materia, assunto) : "";
@@ -3944,7 +3976,11 @@ function masteryDiagnosisForTarget(target = {}) {
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
-  if (!engine?.diagnose) return { available: false, level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
+  if (!engine?.diagnose) {
+    const fallback = { available: false, level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
+    masteryDiagnosisCache.set(cacheKey, fallback);
+    return fallback;
+  }
   const diagnosis = engine.diagnose({
     entries: selected.entries,
     basis: selected.basis,
@@ -3956,7 +3992,9 @@ function masteryDiagnosisForTarget(target = {}) {
     lastContact,
     initialInfluence: initial.adjustment || 0,
   });
-  return { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
+  const result = { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, reviewAttention, hasContact: Boolean(lastContact) };
+  masteryDiagnosisCache.set(cacheKey, result);
+  return result;
 }
 
 function adaptivePriorityAdjustment(target = {}) {
@@ -6378,7 +6416,10 @@ async function closeFocusedStudy(options = {}) {
   const session = focusedStudySession || state.activeFocusSession;
   const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
   const standaloneReview = Boolean(session?.standaloneReview || state.generatedBlocks[index]?.reviewSessionOnly);
-  if (!options.discard && !standaloneReview) await persistFocusedSession({ immediate: true, label: "Sessão salva" });
+  if (!options.discard && !standaloneReview) {
+    // The overlay must disappear before any local serialization or cloud request.
+    void persistFocusedSession({ immediate: true, label: "Sessão salva" });
+  }
   stopFocusedTimerInterval();
   if (standaloneReview && index >= 0) {
     state.generatedBlocks.splice(index, 1);
@@ -7364,12 +7405,13 @@ function saveStudyResult({
     reopenCompletedBlock(block, nextStatus, { previousStatus, syncReviews: false });
   }
   if (nextStatus === "Reprogramar" && previousStatus !== "Reprogramar") block.reprogramacoes = (Number(block.reprogramacoes) || 0) + 1;
+  invalidateDerivedStudyCaches();
   if (syncReviews) syncBlockReviewRecords(block);
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
   updateBlockAccuracy(block);
   updateNavigationState();
   queueStudyAlertsRefresh();
-  if (persist) saveAppStateNow(source === "focused" ? "Resultado do estudo salvo" : "Desempenho salvo");
+  if (persist) scheduleAutoSave();
   return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
 }
 
@@ -10951,6 +10993,7 @@ function resetPlanningAccess() {
 }
 
 function applyAppSnapshot(saved = {}) {
+  invalidateDerivedStudyCaches();
   isRestoring = true;
   let repairedCycleEntries = 0;
   let repairedReviewEntries = 0;
@@ -11261,7 +11304,10 @@ function yieldForInteraction() {
 
 async function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
-  if (changes) markUnsavedChanges();
+  if (changes) {
+    invalidateDerivedStudyCaches();
+    markUnsavedChanges();
+  }
   if (cloudIsPrimary() && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
     updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
     return true;
@@ -11283,6 +11329,7 @@ async function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
 
 function scheduleAutoSave() {
   if (isRestoring) return;
+  invalidateDerivedStudyCaches();
   if (state.dataSource === "cloud-unavailable") {
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return;

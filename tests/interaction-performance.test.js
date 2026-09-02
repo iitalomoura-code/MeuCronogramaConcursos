@@ -27,6 +27,12 @@ assert.ok(app.includes("function yieldForInteraction()"), "Salvamentos pesados d
 assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A leitura da árvore do edital deve ocorrer somente em sua tela.");
 assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
 assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");
+assert.ok(app.includes("function invalidateDerivedStudyCaches"), "Cálculos derivados devem ter invalidação explícita.");
+assert.ok(app.includes("let masteryDiagnosisCache = new Map()"), "Diagnósticos repetidos devem reutilizar um cache por estado.");
+assert.ok(app.includes("let adaptiveHistoryCache = null"), "O histórico adaptativo não deve ser remontado para cada tema.");
+assert.ok(app.includes("let reviewAttentionCache = new Map()"), "Atenção de revisões deve reutilizar a leitura no mesmo estado.");
+assert.ok(app.includes("pendingSecondaryTabRender = window.setTimeout"), "O mapa secundário deve renderizar após a primeira pintura do Painel de Evolução.");
+assert.ok(app.includes("void persistFocusedSession({ immediate: true, label: \"Sessão salva\" })"), "Fechar o modo foco deve persistir em segundo plano.");
 assert.ok(app.includes('if (getActiveTabName() !== "cronograma") return;'), "Cronômetros dos cards não devem varrer blocos enquanto a tela do ciclo está oculta.");
 assert.ok(app.includes('if (target.closest(".focused-study-modal, .performance-modal, .ql-editor")) return false;'), "Editores com persistência própria não devem disparar autosave global duplicado.");
 assert.ok(app.includes('if (tabName === "conteudo") safeRender("Conteúdo Programático", () => renderRows({ preserveState: true }))'), "A árvore extensa do edital deve ser montada somente quando sua tela for aberta.");
