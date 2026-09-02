@@ -36,4 +36,10 @@ result = signals([
 ]);
 assert.ok(result.concentration >= .4, "Um assunto com cerca de 40% dos erros da matéria deve ser destacado.");
 
+result = signals([
+  { ...error("Português", "Pontuação", 4, "same-session", 2), registroAutomatico: true },
+  { ...error("Português", "Pontuação", 1, "same-session", 2), registroManual: true, tipoErro: "Interpretação" },
+]);
+assert.equal(result.recentErrors, 4, "O registro rápido não pode somar em duplicidade à contagem automática da mesma sessão.");
+
 console.log("OK - análise de erros diferencia episódio, recorrência, persistência, recência e concentração.");

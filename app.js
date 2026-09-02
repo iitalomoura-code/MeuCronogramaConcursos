@@ -190,6 +190,8 @@ let errorAnalysisRevision = 0;
 let learningDiagnosisModelCache = null;
 let learningDiagnosisModelRevision = -1;
 let learningDiagnosisView = { subject: "all", attentionOnly: false, status: "", expandedSubjects: new Set() };
+let errorNotebookView = { subject: "all", topic: "all", type: "all", period: "all", editingId: "" };
+let recentFocusedErrorSubmission = { key: "", at: 0 };
 let continueDerivedStateRevision = 0;
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
@@ -390,6 +392,11 @@ const els = {
   notebookText: document.querySelector("#notebookText"),
   notebookEditorHeader: document.querySelector("#notebookEditorHeader"),
   notebookStatus: document.querySelector("#notebookStatus"),
+  errorNotebookSubjectFilter: document.querySelector("#errorNotebookSubjectFilter"),
+  errorNotebookTopicFilter: document.querySelector("#errorNotebookTopicFilter"),
+  errorNotebookTypeFilter: document.querySelector("#errorNotebookTypeFilter"),
+  errorNotebookPeriodFilter: document.querySelector("#errorNotebookPeriodFilter"),
+  errorNotebookBody: document.querySelector("#errorNotebookBody"),
   learningDiagnosisSubjectFilter: document.querySelector("#learningDiagnosisSubjectFilter"),
   learningDiagnosisAttentionOnly: document.querySelector("#learningDiagnosisAttentionOnly"),
   learningDiagnosisBody: document.querySelector("#learningDiagnosisBody"),
@@ -1594,6 +1601,7 @@ function renderActiveTabContent(tabName) {
   if (tabName === "revisoes") safeRender("Revisões", renderReviews);
   if (tabName === "evolucao") safeRender("Painel de evolução", renderEvolution, renderEvolutionError);
   if (tabName === "erros") safeRender("Caderno de resumos", renderErrors);
+  if (tabName === "caderno-erros") safeRender("Caderno de erros", renderErrorNotebook);
   if (tabName === "aprendizado") safeRender("Diagnóstico de aprendizagem", renderLearningDiagnosis);
   if (tabName === "diagnostico") safeRender("Diagnóstico inicial", renderInitialDiagnosis);
   if (tabName === "pesos" && state.planningBase) safeRender("Prioridade das matérias", renderPlanningBase);
@@ -6681,6 +6689,34 @@ function focusedReviewOptionsMarkup(block, draft) {
   `;
 }
 
+function focusedErrorEntryMarkup(block, draft) {
+  const sessionErrors = manualErrorsForSession(draft.sessionId, block.materia, block.assunto).length;
+  return `
+    <div class="focused-error-tools" aria-label="Registro rápido de erros">
+      <button class="ghost-button compact-button" type="button" data-register-quick-error><i data-lucide="plus"></i><span>Erro</span></button>
+      <button class="text-action" type="button" data-open-focused-error><i data-lucide="flag"></i><span>Registrar erro</span></button>
+      <small data-focused-error-count ${sessionErrors ? "" : "hidden"}>${sessionErrors ? `${sessionErrors} ${sessionErrors === 1 ? "erro registrado" : "erros registrados"}` : ""}</small>
+    </div>
+    <section class="focused-error-entry" hidden aria-label="Registrar erro desta sessão">
+      <div class="focused-error-entry-heading">
+        <div><strong>Registrar erro</strong><span>${escapeHtml(block.materia)} · ${escapeHtml(themeTitle(block.assunto))}</span></div>
+        <button class="icon-button" type="button" data-close-focused-error aria-label="Fechar registro de erro"><i data-lucide="x"></i></button>
+      </div>
+      <label>Erro ou descrição curta
+        <input data-focused-error-description maxlength="180" placeholder="Ex.: Confundi a regra de acentuação." />
+      </label>
+      <div class="focused-error-entry-grid">
+        <label>Tipo do erro <span>Opcional</span>
+          <select data-focused-error-type>${ERROR_TYPE_OPTIONS.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select>
+        </label>
+        <label>Observação <span>Opcional</span>
+          <input data-focused-error-observation maxlength="220" placeholder="Algo para revisar depois" />
+        </label>
+      </div>
+      <div class="focused-error-entry-actions"><button class="primary-button compact-button" type="button" data-save-focused-error><i data-lucide="check"></i><span>Salvar erro</span></button></div>
+    </section>`;
+}
+
 function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   const timer = focusedTimerSeconds();
   const isReview = context.context === "revisao";
@@ -6729,6 +6765,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
             <span><strong>Ponto de atenção</strong><small>Registra este tema no resultado; não agenda revisão sozinho.</small></span>
           </label>
         </div>
+        ${focusedErrorEntryMarkup(block, draft)}
         ${isReview ? "" : focusedReviewOptionsMarkup(block, draft)}
         <div class="focused-study-form">
           <div class="focused-study-form-grid">
@@ -7520,6 +7557,89 @@ function updateBlockAccuracy(block) {
   block.percentual = questions > 0 ? correct / questions : 0;
 }
 
+const ERROR_TYPE_OPTIONS = ["Não classificar", "Conteúdo não dominado", "Confusão conceitual", "Interpretação", "Distração", "Leitura do enunciado", "Cálculo", "Memória", "Outro"];
+
+function createErrorRecordId() {
+  return `erro:${crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+
+function focusedErrorContext() {
+  const index = focusedStudyIndex;
+  const block = state.generatedBlocks[index];
+  const draft = focusedStudyDrafts.get(index);
+  if (!block || !draft) return null;
+  const intervention = learningInterventionFor(block.materia, block.assunto);
+  return {
+    block,
+    draft,
+    materia: block.materia,
+    assunto: block.assunto,
+    macrotema: macroTopicFor(block.materia, block.assunto),
+    sessaoId: String(draft.sessionId || focusedStudySession?.id || createStudySessionId()),
+    revisaoId: draft.reviewId || block.reviewId || "",
+    intervencaoId: intervention?.createdAt || "",
+  };
+}
+
+function manualErrorsForSession(sessionId = "", materia = "", assunto = "") {
+  return (state.errors || []).filter((item) => !item.registroAutomatico && String(item.sessaoId || item.sessionId || "") === String(sessionId) && topicMatches(item, materia, assunto));
+}
+
+function updateFocusedErrorCount() {
+  const context = focusedErrorContext();
+  if (!context) return;
+  const count = manualErrorsForSession(context.sessaoId, context.materia, context.assunto).length;
+  document.querySelectorAll("[data-focused-error-count]").forEach((node) => {
+    node.textContent = count ? `${count} ${count === 1 ? "erro registrado" : "erros registrados"}` : "";
+    node.hidden = !count;
+  });
+}
+
+function registerFocusedError({ quick = false } = {}) {
+  const context = focusedErrorContext();
+  if (!context) return false;
+  const panel = document.querySelector(".focused-error-entry");
+  const description = quick ? "" : String(panel?.querySelector("[data-focused-error-description]")?.value || "").trim();
+  const type = quick ? "Não classificar" : String(panel?.querySelector("[data-focused-error-type]")?.value || "Não classificar");
+  const observation = quick ? "" : String(panel?.querySelector("[data-focused-error-observation]")?.value || "").trim();
+  if (!quick && !description) {
+    panel?.querySelector("[data-focused-error-description]")?.focus();
+    showToast("Descreva o erro em uma frase curta.");
+    return false;
+  }
+  const fingerprint = `${context.sessaoId}::${normalizeForMatch(description)}::${normalizeForMatch(type)}::${quick ? "quick" : "detail"}`;
+  const now = Date.now();
+  if (recentFocusedErrorSubmission.key === fingerprint && now - recentFocusedErrorSubmission.at < 900) return false;
+  recentFocusedErrorSubmission = { key: fingerprint, at: now };
+  state.errors = Array.isArray(state.errors) ? state.errors : [];
+  state.errors.push({
+    id: createErrorRecordId(),
+    materia: context.materia,
+    assunto: context.assunto,
+    macrotema: context.macrotema,
+    registradaEm: new Date().toISOString(),
+    sessaoId: context.sessaoId,
+    origem: "registro-manual",
+    registroManual: true,
+    quantidade: 1,
+    descricao: description,
+    tipoErro: type,
+    observacao: observation,
+    revisaoId: context.revisaoId,
+    intervencaoId: context.intervencaoId,
+  });
+  invalidateDerivedStudyCaches();
+  scheduleAutoSave();
+  if (panel && !quick) {
+    panel.querySelector("[data-focused-error-description]").value = "";
+    panel.querySelector("[data-focused-error-observation]").value = "";
+    panel.hidden = true;
+  }
+  updateFocusedErrorCount();
+  showToast("Erro registrado.");
+  return true;
+}
+
 function recordStudyErrors(block = {}, { sessionId = "", source = "", questions = 0, correctAnswers = 0, notes = "" } = {}) {
   const total = Math.max(0, Number(questions) || 0);
   const correct = Math.min(total, Math.max(0, Number(correctAnswers) || 0));
@@ -7527,7 +7647,7 @@ function recordStudyErrors(block = {}, { sessionId = "", source = "", questions 
   if (!count || !block.materia || !block.assunto) return false;
   state.errors = Array.isArray(state.errors) ? state.errors : [];
   const stableSessionId = String(sessionId || block.lastSavedSessionId || `${source}:${block.id || block.materia}:${block.assunto}`);
-  const existing = state.errors.find((item) => String(item.sessaoId || item.sessionId || "") === stableSessionId && topicMatches(item, block.materia, block.assunto));
+  const existing = state.errors.find((item) => !item.registroManual && String(item.sessaoId || item.sessionId || "") === stableSessionId && topicMatches(item, block.materia, block.assunto));
   const intervention = learningInterventionFor(block.materia, block.assunto);
   const next = {
     id: existing?.id || `error-session:${stableSessionId}`,
@@ -7537,6 +7657,7 @@ function recordStudyErrors(block = {}, { sessionId = "", source = "", questions 
     registradaEm: new Date().toISOString(),
     sessaoId: stableSessionId,
     origem: source || block.tipoAtividade || "estudo",
+    registroAutomatico: true,
     quantidade: count,
     dificuldade: block.dificuldade || "",
     observacao: String(notes || block.observacoes || "").trim(),
@@ -10310,6 +10431,57 @@ function renderErrors() {
   if (window.lucide) window.lucide.createIcons();
 }
 
+function errorNotebookRecordDate(record = {}) {
+  const date = new Date(record.registradaEm || record.createdAt || record.data || 0);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function errorNotebookType(record = {}) {
+  return String(record.tipoErro || record.errorType || record.tipo || "Não classificar") || "Não classificar";
+}
+
+function renderErrorNotebook() {
+  if (!els.errorNotebookBody) return;
+  const records = [...(state.errors || [])].sort((a, b) => errorNotebookRecordDate(b) - errorNotebookRecordDate(a));
+  const subjects = [...new Set(records.map((item) => item.materia).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const topics = [...new Set(records.filter((item) => errorNotebookView.subject === "all" || item.materia === errorNotebookView.subject).map((item) => item.assunto).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const types = [...new Set(records.map(errorNotebookType))].sort((a, b) => a.localeCompare(b));
+  if (!subjects.includes(errorNotebookView.subject)) errorNotebookView.subject = "all";
+  if (!topics.includes(errorNotebookView.topic)) errorNotebookView.topic = "all";
+  if (!types.includes(errorNotebookView.type)) errorNotebookView.type = "all";
+  const fill = (element, allLabel, values, selected) => {
+    if (!element) return;
+    element.innerHTML = `<option value="all">${allLabel}</option>${values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
+    element.value = selected;
+  };
+  fill(els.errorNotebookSubjectFilter, "Todas as matérias", subjects, errorNotebookView.subject);
+  fill(els.errorNotebookTopicFilter, "Todos os assuntos", topics, errorNotebookView.topic);
+  fill(els.errorNotebookTypeFilter, "Todos os tipos", types, errorNotebookView.type);
+  if (els.errorNotebookPeriodFilter) els.errorNotebookPeriodFilter.value = errorNotebookView.period;
+  const since = errorNotebookView.period === "all" ? 0 : Date.now() - Number(errorNotebookView.period) * 86400000;
+  const visible = records.filter((item) =>
+    (errorNotebookView.subject === "all" || item.materia === errorNotebookView.subject) &&
+    (errorNotebookView.topic === "all" || item.assunto === errorNotebookView.topic) &&
+    (errorNotebookView.type === "all" || errorNotebookType(item) === errorNotebookView.type) &&
+    (!since || errorNotebookRecordDate(item) >= since)
+  );
+  if (!visible.length) {
+    els.errorNotebookBody.innerHTML = `<div class="empty-panel">Nenhum erro registrado para estes filtros.</div>`;
+    return;
+  }
+  els.errorNotebookBody.innerHTML = visible.map((item) => {
+    const editing = errorNotebookView.editingId === item.id;
+    const date = errorNotebookRecordDate(item) ? new Date(errorNotebookRecordDate(item)).toLocaleDateString("pt-BR") : "Data não informada";
+    const description = String(item.descricao || item.observacao || item.observacoes || "").trim();
+    const source = item.registroAutomatico ? "Resultado da sessão" : "Registro rápido";
+    return `<article class="error-notebook-item ${editing ? "is-editing" : ""}">
+      <div class="error-notebook-item-heading"><div><span>${escapeHtml(item.materia || "Matéria não informada")}</span><h3>${escapeHtml(themeTitle(item.assunto || "Assunto não informado"))}</h3></div><small>${escapeHtml(source)} · ${escapeHtml(date)}</small></div>
+      ${editing ? `<div class="error-notebook-edit"><label>Erro ou descrição curta<input data-error-field="descricao" value="${escapeHtml(item.descricao || "")}" maxlength="180" /></label><label>Tipo<select data-error-field="tipoErro">${ERROR_TYPE_OPTIONS.map((type) => `<option ${errorNotebookType(item) === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}</select></label><label>Observação<input data-error-field="observacao" value="${escapeHtml(item.observacao || item.observacoes || "")}" maxlength="220" /></label><div><button class="primary-button compact-button" type="button" data-save-error="${escapeHtml(item.id)}">Salvar</button><button class="text-action" type="button" data-cancel-error-edit>Cancelar</button></div></div>` : `<div class="error-notebook-item-content"><p>${escapeHtml(description || "Erro registrado sem observação.")}</p><div><span>${escapeHtml(errorNotebookType(item))}</span><span>${Number(item.quantidade) > 1 ? `${Number(item.quantidade)} erros na sessão` : "1 erro"}</span></div></div>`}
+      <div class="error-notebook-item-actions"><button class="text-action" type="button" data-edit-error="${escapeHtml(item.id)}">Editar</button><button class="text-action danger-text" type="button" data-delete-error="${escapeHtml(item.id)}">Excluir</button></div>
+    </article>`;
+  }).join("");
+}
+
 function renderNotebookEditor() {
   if (!notebookSelection.assunto) {
     els.notebookEditorHeader.innerHTML = `<span class="notebook-hint">Selecione um tema para escrever o resumo.</span>`;
@@ -12246,6 +12418,52 @@ els.mobilePlanTitle?.addEventListener("click", () => {
 });
 els.mobileDrawerBackdrop?.addEventListener("click", () => closeMobileDrawer());
 document.addEventListener("click", (event) => {
+  const editError = event.target.closest("[data-edit-error]");
+  if (editError) {
+    errorNotebookView.editingId = editError.dataset.editError || "";
+    renderErrorNotebook();
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-error-edit]")) {
+    errorNotebookView.editingId = "";
+    renderErrorNotebook();
+    return;
+  }
+
+  const saveError = event.target.closest("[data-save-error]");
+  if (saveError) {
+    const item = (state.errors || []).find((record) => record.id === saveError.dataset.saveError);
+    const row = saveError.closest(".error-notebook-item");
+    if (item && row) {
+      item.descricao = String(row.querySelector('[data-error-field="descricao"]')?.value || "").trim();
+      item.tipoErro = String(row.querySelector('[data-error-field="tipoErro"]')?.value || "Não classificar");
+      item.observacao = String(row.querySelector('[data-error-field="observacao"]')?.value || "").trim();
+      item.atualizadaEm = new Date().toISOString();
+      errorNotebookView.editingId = "";
+      invalidateDerivedStudyCaches();
+      scheduleAutoSave();
+      renderErrorNotebook();
+      showToast("Erro atualizado.");
+    }
+    return;
+  }
+
+  const deleteError = event.target.closest("[data-delete-error]");
+  if (deleteError) {
+    const id = deleteError.dataset.deleteError || "";
+    const before = (state.errors || []).length;
+    state.errors = (state.errors || []).filter((record) => record.id !== id);
+    if (state.errors.length !== before) {
+      errorNotebookView.editingId = "";
+      invalidateDerivedStudyCaches();
+      scheduleAutoSave();
+      renderErrorNotebook();
+      showToast("Erro excluído.");
+    }
+    return;
+  }
+
   const reinforceTopic = event.target.closest("[data-reinforce-topic]");
   if (reinforceTopic) {
     reinforceLearningDiagnosisTopic(reinforceTopic.dataset.reinforceTopic || "", reinforceTopic.dataset.reinforceSubject || "");
@@ -12304,6 +12522,31 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-focused-timer-reset]")) {
     resetFocusedTimer();
+    return;
+  }
+
+  if (event.target.closest("[data-register-quick-error]")) {
+    registerFocusedError({ quick: true });
+    return;
+  }
+
+  if (event.target.closest("[data-open-focused-error]")) {
+    const panel = document.querySelector(".focused-error-entry");
+    if (panel) {
+      panel.hidden = false;
+      panel.querySelector("[data-focused-error-description]")?.focus();
+    }
+    return;
+  }
+
+  if (event.target.closest("[data-close-focused-error]")) {
+    const panel = document.querySelector(".focused-error-entry");
+    if (panel) panel.hidden = true;
+    return;
+  }
+
+  if (event.target.closest("[data-save-focused-error]")) {
+    registerFocusedError();
     return;
   }
 
@@ -12514,6 +12757,18 @@ els.learningDiagnosisAttentionOnly?.addEventListener("change", () => {
   learningDiagnosisView.status = "";
   renderLearningDiagnosis();
 });
+const syncErrorNotebookFilters = () => {
+  errorNotebookView.subject = els.errorNotebookSubjectFilter?.value || "all";
+  errorNotebookView.topic = els.errorNotebookTopicFilter?.value || "all";
+  errorNotebookView.type = els.errorNotebookTypeFilter?.value || "all";
+  errorNotebookView.period = els.errorNotebookPeriodFilter?.value || "all";
+  errorNotebookView.editingId = "";
+  renderErrorNotebook();
+};
+els.errorNotebookSubjectFilter?.addEventListener("change", syncErrorNotebookFilters);
+els.errorNotebookTopicFilter?.addEventListener("change", syncErrorNotebookFilters);
+els.errorNotebookTypeFilter?.addEventListener("change", syncErrorNotebookFilters);
+els.errorNotebookPeriodFilter?.addEventListener("change", syncErrorNotebookFilters);
 document.addEventListener("input", (event) => {
   const field = event.target.closest("[data-focused-field]");
   if (!field || focusedStudyIndex < 0) return;

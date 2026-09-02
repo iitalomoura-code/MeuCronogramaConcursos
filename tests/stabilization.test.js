@@ -14,8 +14,8 @@ assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expo
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260902-learning-diagnosis"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260902-learning-diagnosis"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260902-error-notebook"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260902-error-notebook"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
 assert.ok(index.includes("js/continue-recommendation.js?v=20260902-error-analysis"), "O motor de recomendação deve carregar antes do app.");
 assert.ok(index.includes("js/study-alerts.js?v=20260902-unified-mastery"), "A central de alertas deve ser carregada antes do app.");
@@ -41,10 +41,13 @@ assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converte
 assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
 assert.ok(index.includes("js/mastery-diagnosis.js?v=20260902-error-analysis"), "O motor de domínio deve ser carregado antes do app.");
 assert.ok(index.includes("js/learning-intervention.js?v=20260902-recovery-cycle"), "O ciclo de recuperação deve carregar antes das revisões adaptativas.");
-assert.ok(index.includes("js/error-analysis.js?v=20260902-error-analysis"), "A análise de erros deve carregar antes do diagnóstico central.");
+assert.ok(index.includes("js/error-analysis.js?v=20260902-error-notebook"), "A análise de erros deve carregar antes do diagnóstico central.");
 assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");
 assert.ok(index.includes('data-tab-target="aprendizado"') && index.includes('id="tab-aprendizado"'), "O Diagnóstico de aprendizagem deve ficar disponível em Acompanhamento.");
 assert.ok(index.includes("js/learning-diagnosis-view.js?v=20260902-learning-diagnosis"), "A visualização de diagnóstico deve carregar antes do app.");
 assert.ok(app.includes("function renderLearningDiagnosis"), "A tela deve reutilizar o diagnóstico central para montar sua leitura.");
+assert.ok(index.includes('data-tab-target="caderno-erros"') && index.includes('id="tab-caderno-erros"'), "O registro bruto deve ter um Caderno de Erros separado do diagnóstico.");
+assert.ok(app.includes("function registerFocusedError"), "O modo foco deve registrar erros sem depender do fechamento da sessão.");
+assert.ok(app.includes("registroAutomatico: true"), "A contagem automática da sessão deve permanecer distinguível dos registros manuais.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

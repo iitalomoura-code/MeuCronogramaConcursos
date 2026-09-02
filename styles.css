@@ -12242,3 +12242,70 @@ textarea:focus {
   .learning-diagnosis-subject header small { white-space: normal; }
   .learning-diagnosis-map-row { padding-inline: 0; }
 }
+
+/* Registro de erros: rápido no modo foco, detalhado apenas quando fizer sentido. */
+.focused-error-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.focused-error-tools .ghost-button {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--text);
+}
+
+.focused-error-tools .text-action { min-height: 32px; padding: 0 4px; font-size: 12px; }
+.focused-error-tools small { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 650; }
+.focused-error-entry { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--card) 94%, var(--bg-main)); }
+.focused-error-entry[hidden] { display: none; }
+.focused-error-entry-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.focused-error-entry-heading > div { display: grid; gap: 3px; }
+.focused-error-entry-heading strong { font-size: 14px; }
+.focused-error-entry-heading span { color: var(--muted); font-size: 11px; }
+.focused-error-entry-heading .icon-button { width: 30px; min-width: 30px; height: 30px; min-height: 30px; }
+.focused-error-entry > label, .focused-error-entry-grid > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.focused-error-entry label > span { color: var(--muted); font-size: 10px; font-weight: 500; }
+.focused-error-entry input, .focused-error-entry select { margin-top: 0; }
+.focused-error-entry-grid { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: 12px; }
+.focused-error-entry-actions { display: flex; justify-content: flex-end; }
+
+.error-notebook-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 2px 0 24px; }
+.error-notebook-filters label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.error-notebook-filters label > select { margin-top: 0; }
+.error-notebook-body { display: grid; gap: 10px; }
+.error-notebook-item { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--card) 94%, var(--bg-main)); }
+.error-notebook-item-heading { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
+.error-notebook-item-heading > div { display: grid; gap: 4px; }
+.error-notebook-item-heading span { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
+.error-notebook-item-heading h3 { margin: 0; font-size: 15px; }
+.error-notebook-item-heading small { color: var(--muted); font-size: 11px; text-align: right; }
+.error-notebook-item-content { display: grid; gap: 8px; }
+.error-notebook-item-content p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.45; }
+.error-notebook-item-content div { display: flex; flex-wrap: wrap; gap: 6px; }
+.error-notebook-item-content span { padding: 4px 7px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 700; }
+.error-notebook-item-actions { display: flex; gap: 12px; padding-top: 2px; }
+.error-notebook-item-actions .text-action { min-height: 28px; padding: 0; font-size: 12px; }
+.error-notebook-edit { display: grid; grid-template-columns: minmax(180px, 1.2fr) minmax(150px, .7fr) minmax(180px, 1.2fr); gap: 10px; align-items: end; }
+.error-notebook-edit label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.error-notebook-edit label > :is(input, select) { margin-top: 0; }
+.error-notebook-edit > div { display: flex; align-items: center; gap: 10px; }
+
+@media (max-width: 760px) {
+  .error-notebook-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .error-notebook-edit { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .focused-error-tools { flex-wrap: wrap; gap: 7px; }
+  .focused-error-tools small { width: 100%; margin-left: 0; }
+  .focused-error-entry-grid, .error-notebook-filters { grid-template-columns: 1fr; }
+  .focused-error-entry-actions .primary-button { width: 100%; justify-content: center; min-height: 42px; }
+  .error-notebook-item-heading { flex-direction: column; }
+  .error-notebook-item-heading small { text-align: left; }
+}
