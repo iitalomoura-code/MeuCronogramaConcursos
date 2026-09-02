@@ -10610,15 +10610,6 @@ textarea:focus {
   box-shadow: none;
 }
 
-.evolution-progress-card { order: 1; }
-.evolution-performance-card { order: 2; }
-.evolution-pace-card { order: 3; grid-column: 1 / -1; }
-.evolution-attention-card { order: 4; grid-column: 1 / -1; }
-.evolution-subjects-card { order: 5; grid-column: 1 / -1; }
-.evolution-recommendation-card { order: 6; grid-column: 1 / -1; }
-.evolution-cycles-card { order: 7; grid-column: 1 / -1; }
-.evolution-completed-archive { order: 8; grid-column: 1 / -1; }
-
 .evolution-section-heading {
   margin-bottom: 13px;
 }
@@ -10808,16 +10799,6 @@ textarea:focus {
     gap: 0;
   }
 
-  .evolution-progress-card,
-  .evolution-performance-card,
-  .evolution-pace-card,
-  .evolution-attention-card,
-  .evolution-subjects-card,
-  .evolution-recommendation-card,
-  .evolution-cycles-card,
-  .evolution-completed-archive {
-    grid-column: 1;
-  }
 }
 
 @media (max-width: 700px) {
@@ -11902,16 +11883,20 @@ textarea:focus {
 
 #tab-evolucao .evolution-metric strong { font-size: 27px; }
 #tab-evolucao .evolution-sections { display: grid; gap: 30px; margin-top: 30px; }
-#tab-evolucao .evolution-section { display: grid; gap: 16px; }
-#tab-evolucao .evolution-section-label h3 { margin: 0; color: var(--text); font-family: var(--font-heading); font-size: 18px; }
-
+#tab-evolucao .evolution-main-card { padding: 24px; }
+#tab-evolucao .evolution-main-heading { margin-bottom: 22px; }
+#tab-evolucao .evolution-main-heading h3 { margin: 0; color: var(--text); font-size: 20px; }
+#tab-evolucao .evolution-main-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 #tab-evolucao .evolution-main-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
+  gap: 32px;
 }
 
 #tab-evolucao .evolution-card { padding: 22px; }
+#tab-evolucao .evolution-main-card { padding: 24px; }
+#tab-evolucao .evolution-main-column { min-width: 0; }
+#tab-evolucao .evolution-performance-column { display: flex; flex-direction: column; padding-left: 32px; border-left: 1px solid var(--divider); }
 #tab-evolucao .evolution-section-heading { margin-bottom: 18px; }
 #tab-evolucao .evolution-section-heading h3 { font-size: 19px; font-weight: 700; }
 #tab-evolucao .evolution-section-heading p { max-width: 48ch; margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -11954,6 +11939,8 @@ textarea:focus {
 #tab-evolucao .evolution-pace-suggestions { margin-top: 14px; padding-top: 12px; }
 
 #tab-evolucao .evolution-chart { margin-top: 18px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--divider); border-radius: 0; background: transparent; }
+#tab-evolucao .evolution-chart-scroll { overflow: visible; }
+#tab-evolucao .evolution-chart svg { width: 100%; height: auto; min-width: 0; }
 
 #tab-evolucao .evolution-subjects-card { padding-bottom: 6px; }
 #tab-evolucao .evolution-subject-list { gap: 0; border-top: 1px solid var(--divider); }
@@ -11977,9 +11964,10 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 16px 0;
+  margin-top: 22px;
+  padding: 16px 0 0;
   border-top: 1px solid var(--divider);
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 0;
 }
 
 #tab-evolucao .evolution-diagnosis-summary strong,
@@ -11995,6 +11983,7 @@ textarea:focus {
 @media (max-width: 980px) {
   #tab-evolucao .evolution-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #tab-evolucao .evolution-main-grid { grid-template-columns: 1fr; }
+  #tab-evolucao .evolution-performance-column { padding: 24px 0 0; border-top: 1px solid var(--divider); border-left: 0; }
 }
 
 @media (max-width: 700px) {
@@ -12005,7 +11994,8 @@ textarea:focus {
   #tab-evolucao .evolution-metric { min-height: 108px; padding: 14px; }
   #tab-evolucao .evolution-metric strong { font-size: 22px; }
   #tab-evolucao .evolution-sections { gap: 24px; margin-top: 24px; }
-  #tab-evolucao .evolution-card { padding: 18px; }
+  #tab-evolucao .evolution-card,
+  #tab-evolucao .evolution-main-card { padding: 18px; }
   #tab-evolucao .predictive-summary-grid,
   #tab-evolucao .evolution-pace-grid,
   #tab-evolucao .evolution-performance-summary { grid-template-columns: 1fr; }

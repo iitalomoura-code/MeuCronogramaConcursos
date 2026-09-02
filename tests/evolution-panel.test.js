@@ -35,6 +35,9 @@ assert.ok(styles.includes(".evolution-topic-modal"), "Os detalhes devem ter moda
 assert.ok(index.includes('class="evolution-main-grid"'), "Cobertura e desempenho devem compartilhar uma área principal equilibrada.");
 assert.ok(styles.includes("#tab-evolucao .evolution-main-grid"), "O layout principal deve ter estilos próprios.");
 assert.ok(index.includes('id="evolutionDiagnosisSummary"'), "O Painel deve resumir o Diagnóstico sem duplicar suas listas.");
+assert.ok(index.includes('class="evolution-card evolution-main-card"'), "A evolução principal deve usar um único container visual.");
+assert.ok(styles.includes("grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr)"), "As colunas principais devem ocupar a largura de forma proporcional.");
+assert.ok(styles.includes("#tab-evolucao .evolution-chart svg { width: 100%"), "O gráfico deve responder à largura real da coluna.");
 assert.ok(index.includes('data-tab-target="aprendizado"'), "O resumo deve levar o usuário à tela Diagnóstico.");
 assert.ok(!app.includes("function renderEvolutionDeficiencies"), "Deficiências detalhadas devem ficar apenas no Diagnóstico.");
 
