@@ -10525,11 +10525,22 @@ function notebookSubjectGroups() {
   const map = new Map();
   state.rows.forEach((row) => {
     const materia = String(row.materia || "").trim();
-    if (!materia || row.estudar === "Nao") return;
+    if (!materia) return;
     if (!map.has(materia)) map.set(materia, []);
     const title = themeTitle(row.assunto || "");
     if (title && !map.get(materia).some((t) => t.title === title)) {
-      map.get(materia).push({ title, assunto: row.assunto || "" });
+      map.get(materia).push({ title, assunto: row.assunto || "", subarea: row.subarea || "" });
+    }
+  });
+  // O caderno é pessoal e opcional: resumos antigos continuam acessíveis mesmo
+  // se o conteúdo programático estiver temporariamente vazio ou desmarcado.
+  Object.keys(state.notebook || {}).forEach((key) => {
+    const [materia, ...titleParts] = String(key).split("::");
+    const title = titleParts.join("::").trim();
+    if (!materia || !title) return;
+    if (!map.has(materia)) map.set(materia, []);
+    if (!map.get(materia).some((theme) => theme.title === title)) {
+      map.get(materia).push({ title, assunto: title, subarea: "" });
     }
   });
   return map;
