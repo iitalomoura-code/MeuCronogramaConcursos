@@ -154,6 +154,10 @@ let lastProgramParseMeta = {
   originalText: "",
   parsedStructure: [],
   document: null,
+  mode: "raw",
+  confidence: 0,
+  structureSource: "parser",
+  interpretation: "",
 };
 let lastDocumentExtractionMeta = null;
 let contentSearchTerm = "";
@@ -1200,10 +1204,49 @@ function splitTopics(text) {
     });
 }
 
+function documentStructureAnalysis(rawText) {
+  const parser = typeof window !== "undefined" ? window.DocumentStructureParser : null;
+  if (!parser?.analyze) return null;
+  const documentMeta = typeof lastDocumentExtractionMeta !== "undefined" ? lastDocumentExtractionMeta : null;
+  const sourceMatches = documentMeta?.sourceText && String(documentMeta.sourceText).trim() === String(rawText || "").trim();
+  return parser.analyze({
+    text: String(rawText || ""),
+    nodes: sourceMatches ? documentMeta.nodes || [] : [],
+  });
+}
+
+function isEditorialProgramNote(line) {
+  const parser = typeof window !== "undefined" ? window.DocumentStructureParser : null;
+  return Boolean(parser?.isEditorialNote?.(line));
+}
+
 function parseProgramContent(rawText) {
+  const structure = documentStructureAnalysis(rawText);
+  if (structure?.mode === "structured" && structure.rows?.length) {
+    const rows = structure.rows.map((row) => enrichThemeRow(row));
+    const subjects = [...new Set(rows.map((row) => row.materia).filter(Boolean))];
+    lastProgramParseMeta = {
+      subjects,
+      subjectsWithoutTopics: [],
+      genericLabelsIgnored: [],
+      looseTopics: [],
+      suspiciousSubjects: [],
+      duplicatedThemes: [],
+      unusuallyLargeSubjects: [],
+      parsingProblems: structure.problems || [],
+      originalText: String(rawText || ""),
+      parsedStructure: structure.tree || [],
+      document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta,
+      mode: "structured",
+      confidence: structure.confidence || 0,
+      structureSource: "user-structured",
+      interpretation: structure.message || "Estrutura reconhecida no documento. Os títulos e agrupamentos originais foram preservados.",
+    };
+    return rows;
+  }
   const normalized = formatImportedProgramText(rawText);
   if (!normalized) {
-    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [], genericLabelsIgnored: [], looseTopics: [], suspiciousSubjects: [], duplicatedThemes: [], unusuallyLargeSubjects: [], parsingProblems: [], originalText: String(rawText || ""), parsedStructure: [], document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta };
+    lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [], genericLabelsIgnored: [], looseTopics: [], suspiciousSubjects: [], duplicatedThemes: [], unusuallyLargeSubjects: [], parsingProblems: [], originalText: String(rawText || ""), parsedStructure: [], document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta, mode: "raw", confidence: structure?.confidence || 0, structureSource: "parser", interpretation: "Edital bruto organizado automaticamente." };
     return [];
   }
 
@@ -1253,6 +1296,12 @@ function parseProgramContent(rawText) {
 
   normalizedProgramLines(normalized).forEach((record) => {
     const line = record.text;
+    if (isEditorialProgramNote(line)) {
+      flushOutline();
+      flushLooseTopics();
+      parsingProblems.push({ type: "editorial-note", text: line, sourceLine: record.sourceLine });
+      return;
+    }
     if (isIgnoredProgramModule(line)) {
       flushOutline();
       flushLooseTopics();
@@ -1334,6 +1383,10 @@ function parseProgramContent(rawText) {
     originalText: String(rawText || ""),
     parsedStructure,
     document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta,
+    mode: "raw",
+    confidence: structure?.confidence || 0.5,
+    structureSource: "parser",
+    interpretation: "O conteúdo parece um edital bruto. Organizamos os itens em temas para facilitar o estudo.",
   };
   return rows;
 }
@@ -1985,7 +2038,15 @@ function showContentParserWarnings(warnings) {
   }
   if (!panel) return;
   panel.replaceChildren();
-  panel.hidden = !warnings.length;
+  const structured = lastProgramParseMeta.mode === "structured";
+  panel.hidden = !warnings.length && !lastProgramParseMeta.interpretation;
+  if (panel.hidden) return;
+  const interpretation = document.createElement("p");
+  interpretation.className = "content-parser-interpretation";
+  interpretation.textContent = lastProgramParseMeta.interpretation || (structured
+    ? "Estrutura reconhecida no documento. Os títulos e agrupamentos originais foram preservados."
+    : "Edital bruto organizado automaticamente.");
+  panel.appendChild(interpretation);
   if (!warnings.length) return;
   const title = document.createElement("strong");
   title.textContent = "Revise estes pontos antes de confirmar:";
@@ -2449,6 +2510,7 @@ function renderRows(options = {}) {
       const fullSubject = allGroups.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(group.materia)) || group;
       const studyCount = fullSubject.rows.filter((row) => row.estudar !== "Nao").length;
       const contentCount = fullSubject.rows.reduce((sum, row) => sum + Math.max(1, topicAtoms(themeDetails(row.assunto)).length), 0);
+      const sourceSection = fullSubject.rows.map((row) => row?.origemEdital?.section).find(Boolean) || "";
       const key = normalizeForMatch(group.materia);
       const details = document.createElement("details");
       details.className = "subject-group";
@@ -2460,6 +2522,7 @@ function renderRows(options = {}) {
         <summary class="subject-group-header">
           <div class="subject-heading">
             <strong>${highlightContentText(group.materia)}</strong>
+            ${sourceSection ? `<span class="subject-study-count">${escapeHtml(sourceSection)}</span>` : ""}
             <span class="subject-study-count">${fullSubject.rows.length} tema${fullSubject.rows.length === 1 ? "" : "s"} &middot; ${contentCount} itens de conte\u00fado &middot; ${studyCount} selecionado${studyCount === 1 ? "" : "s"}</span>
           </div>
           <div class="subject-group-actions">
@@ -2506,6 +2569,7 @@ function renderRows(options = {}) {
               <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
               <div class="theme-card-badges">
                 ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
+                ${row.subarea ? '<span class="content-badge">Subárea · ' + escapeHtml(row.subarea) + '</span>' : ""}
                 ${groupingInfo ? '<span class="content-badge grouping">Agrupamento sugerido</span><span class="content-badge grouping-confidence ' + (groupingInfo.confidence === "Alta" ? "high" : "review") + '">' + (groupingInfo.confidence === "Alta" ? "Alta confiança" : "Revisar agrupamento") + '</span>' : ""}
                 ${problem ? '<span class="content-badge problem" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> Revisar</span>' : ""}
                 ${topicFeedbackBadge(row)}
@@ -2983,13 +3047,14 @@ async function readDocx(file) {
   const arrayBuffer = await file.arrayBuffer();
   if (typeof window.mammoth.convertToHtml === "function") {
     const result = await window.mammoth.convertToHtml({ arrayBuffer });
-    const text = extractDocxTextFromHtml(result.value);
-    lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [] };
+    const extracted = window.DocumentStructureParser?.extractHtmlNodes?.(result.value);
+    const text = extracted?.text || extractDocxTextFromHtml(result.value);
+    lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [], nodes: extracted?.nodes || [], sourceText: text, structurePreserved: Boolean(extracted?.nodes?.length) };
     return text;
   }
   const result = await window.mammoth.extractRawText({ arrayBuffer });
   const text = formatImportedProgramText(result.value);
-  lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [] };
+  lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [], nodes: [], sourceText: text, structurePreserved: false };
   return text;
 }
 
@@ -12918,7 +12983,7 @@ els.processButton.addEventListener("click", async () => {
   els.programText.value = text;
   addHistory("colagem manual", originalText);
   const parsedRows = parseProgramContent(originalText);
-  const pedagogicallyGroupedRows = window.PedagogicalContentGrouping?.groupRows
+  const pedagogicallyGroupedRows = lastProgramParseMeta.structureSource !== "user-structured" && window.PedagogicalContentGrouping?.groupRows
     ? window.PedagogicalContentGrouping.groupRows(parsedRows)
     : parsedRows;
   const warnings = programParserWarnings(pedagogicallyGroupedRows);

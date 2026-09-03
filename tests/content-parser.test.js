@@ -4,6 +4,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const documentStructureParser = require(path.resolve(__dirname, "..", "js", "document-structure-parser.js"));
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const start = source.indexOf("function uppercaseRatio");
@@ -23,6 +24,7 @@ function loadParser() {
       .replace(/^\s*[-\u2022*]\s+/, "")
       .trim(),
     enrichThemeRow: (row) => row,
+    window: { DocumentStructureParser: documentStructureParser },
   };
   vm.createContext(context);
   vm.runInContext("let lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };\n" + source.slice(start, end) + "\nthis.getLastProgramParseMeta = () => lastProgramParseMeta;", context);
@@ -171,6 +173,18 @@ assert.ok(inlineOutline[0].assunto.includes("Modelos") && inlineOutline[0].assun
 assert.equal(parser.parseOutlineNumber("10.1.2. Item" ).level, 3, "N\u00edveis devem aceitar ponto final opcional.");
 assert.equal(parser.parseOutlineNumber("10").level, 1, "Marcador isolado deve preservar seu n\u00edvel para receber a linha seguinte.");
 assert.equal(parser.parseOutlineNumber("Lei n\u00ba 14.133/2021"), null, "N\u00fameros de leis no texto n\u00e3o podem ser tratados como hierarquia.");
+
+const structuredTaxonomy = parser.parseProgramContent(`
+LÍNGUA PORTUGUESA
+1. Interpretação, tipologia e organização textual
+Gêneros literários e não literários; textos narrativos, descritivos e argumentativos.
+2. Semântica e emprego vocabular
+Sentido e emprego dos vocábulos; campos semânticos.
+`);
+assert.equal(structuredTaxonomy.length, 2, "Estrutura reconhecida deve preservar cada título numerado como tema.");
+assert.equal(structuredTaxonomy[0].structureSource, "user-structured", "Documento estruturado não deve seguir o agrupamento de edital bruto.");
+assert.equal(structuredTaxonomy[0].conteudosOriginais.length, 1, "Descrição estruturada com ponto e vírgula deve permanecer uma unidade original.");
+assert.equal(parser.getLastProgramParseMeta().mode, "structured", "A prévia deve receber a interpretação estrutural do documento.");
 
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
 console.log("OK - marcadores gen\u00e9ricos, temas expl\u00edcitos, numera\u00e7\u00e3o hier\u00e1rquica, continua\u00e7\u00f5es e normaliza\u00e7\u00e3o.");

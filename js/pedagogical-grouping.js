@@ -135,7 +135,7 @@
     TAXONOMY.forEach((taxonomy) => {
       taxonomy.macrothemes.forEach((macrotheme) => {
         const indexes = rows.map((row, index) => ({ row, index }))
-          .filter(({ row, index }) => !consumed.has(index) && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title)
+          .filter(({ row, index }) => !consumed.has(index) && row?.structureSource !== "user-structured" && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title)
           .map(({ index }) => index);
         if (indexes.length < 2) return;
         const selected = indexes.map((index) => rows[index]);
