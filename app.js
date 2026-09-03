@@ -5169,8 +5169,9 @@ function renderGeneratedSchedule() {
         const isPerformanceOpen = index === performanceEditIndex;
         const isDetailOpen = index === unitDetailIndex;
         const isCompleted = normalizeStatus(block.status) === "Conclu\u00eddo";
+        const display = cycleBlockDisplayInfo(block);
         return `
-          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}" data-block-index="${index}">
+          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""} ${display.isAdaptive ? "has-adaptive-adjustment" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}" data-cycle-adaptive="${display.isAdaptive}" data-block-index="${index}">
             <div class="goal-card-index">
               <span>Bloco</span>
               <strong>${block.bloco}</strong>
@@ -5184,28 +5185,20 @@ function renderGeneratedSchedule() {
                 ${goalTimerMarkup(block, index)}
               </div>
               <div class="goal-card-meta">
+                <span class="cycle-type-badge cycle-type-${display.kind}">${escapeHtml(display.label)}</span>
+                ${display.isAdaptive ? `<span class="cycle-adaptive-label"><i data-lucide="sparkles"></i>Ajuste adaptativo</span>` : ""}
                 <label class="goal-duration-field">Dura\u00e7\u00e3o
                   <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real do bloco ${block.bloco}" />
                 </label>
-                <div class="goal-activity">
-                  <span>Atividade</span>
-                  <strong>${escapeHtml(block.atividadeSugerida || block.tipoAtividade || block.tipo || "Teoria e quest\u00f5es")}</strong>
-                </div>
-                <div class="goal-priority">
-                  <span>Prioridade</span>
-                  ${priorityDots(block.prioridade)}
-                </div>
+                ${display.questions ? `<span class="cycle-question-count">${display.questions} quest\u00f5es</span>` : ""}
                 <div class="goal-status">
                   <span>Status</span>
                   ${statusBadge(block.status)}
                 </div>
-                <div class="goal-review">
-                  <span>Revis\u00e3o</span>
-                  ${reviewBadge(block)}
-                </div>
               </div>
               <div class="goal-card-actions">
-                <button class="text-action" type="button" data-toggle-unit="${index}">${isDetailOpen ? "Ocultar detalhes" : "Ver detalhes"}</button>
+                ${isCompleted ? "" : `<button class="primary-button compact-button cycle-start-button" type="button" data-start-cycle="${index}"><i data-lucide="play"></i><span>${normalizeStatus(block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button>`}
+                <button class="text-action" type="button" data-toggle-unit="${index}">${isDetailOpen ? "Ocultar detalhes" : display.detailsLabel}</button>
                 ${isCompleted ? `<button class="ghost-button compact-button" type="button" data-reopen-block="${index}"><i data-lucide="rotate-ccw"></i><span>Reabrir meta</span></button>` : ""}
                 <button class="ghost-button compact-button" type="button" data-toggle-performance="${index}">
                   <i data-lucide="${isPerformanceOpen ? "chevron-right" : "activity"}"></i><span>Atualizar desempenho</span>
@@ -5230,19 +5223,21 @@ function organizeCycleBlocksByStatus() {
 
   const cards = [...list.querySelectorAll(".cycle-goal-card")];
   const groups = [
-    { key: "upcoming", label: "Pr\u00f3ximos", statuses: ["N\u00e3o iniciado", "Reprogramar"] },
-    { key: "in-progress", label: "Em andamento", statuses: ["Em andamento"] },
-    { key: "completed", label: "Conclu\u00eddos", statuses: ["Conclu\u00eddo"] },
+    { key: "in-progress", label: "Em andamento", matches: (card) => card.dataset.cycleStatus === "Em andamento" },
+    { key: "upcoming", label: "Pr\u00f3ximos blocos", matches: (card) => ["N\u00e3o iniciado", "Reprogramar"].includes(card.dataset.cycleStatus) && card.dataset.cycleAdaptive !== "true" },
+    { key: "adaptive", label: "Ajustes adaptativos", matches: (card) => card.dataset.cycleAdaptive === "true" && !["Em andamento", "Conclu\u00eddo"].includes(card.dataset.cycleStatus) },
+    { key: "completed", label: "Conclu\u00eddos", matches: (card) => card.dataset.cycleStatus === "Conclu\u00eddo", collapsible: true },
   ];
   const fragment = document.createDocumentFragment();
 
   groups.forEach((group) => {
-    const groupCards = cards.filter((card) => group.statuses.includes(card.dataset.cycleStatus));
+    const groupCards = cards.filter(group.matches);
     if (!groupCards.length) return;
-    const section = document.createElement("section");
+    const section = document.createElement(group.collapsible ? "details" : "section");
     section.className = `cycle-block-group cycle-block-group-${group.key}`;
-    const heading = document.createElement("h3");
-    heading.textContent = group.label;
+    const heading = document.createElement(group.collapsible ? "summary" : "h3");
+    if (group.collapsible) heading.innerHTML = `<span>${group.label}</span><small>${groupCards.length}</small>`;
+    else heading.textContent = group.label;
     section.appendChild(heading);
     groupCards.forEach((card) => section.appendChild(card));
     fragment.appendChild(section);
@@ -7462,6 +7457,53 @@ function statusBadge(status) {
   return `<span class="status-badge ${className}">${normalized}</span>`;
 }
 
+function cycleBlockDisplayInfo(block = {}) {
+  const activity = normalizeForMatch(block.atividadeSugerida || block.tipoAtividade || block.tipo || "");
+  const intervention = block.intervencao || null;
+  const recommendation = intervention?.recommendation || {};
+  const mode = normalizeForMatch(recommendation.mode || "");
+  const interventionOrigin = normalizeForMatch(block.interventionOrigin || intervention?.origin || "");
+  const isResolved = intervention?.lastResult === "resolved";
+  const isAdaptive = !isResolved && Boolean(
+    block.diagnosticInterventionOnly
+    || block.intervencao
+    || block.interventionOrigin
+    || (Number(block.adaptiveAdjustment) > 0 && block.adaptiveReason)
+  );
+  let kind = "study";
+  let label = "Estudo";
+
+  if (activity.includes("revis")) {
+    kind = "review";
+    label = "Revisão";
+  } else if (block.diagnosticInterventionOnly || interventionOrigin.includes("diagnost") || mode.includes("diagnostic")) {
+    kind = "diagnostic";
+    label = "Diagnóstico";
+  } else if (mode.includes("recovery") || mode.includes("recuper") || Number(intervention?.ineffectiveInterventions) >= 2) {
+    kind = "recovery";
+    label = "Recuperação";
+  } else if (block.intervencao || interventionOrigin.includes("reforc") || mode.includes("reinforcement")) {
+    kind = "reinforcement";
+    label = "Reforço";
+  } else if (activity === "questoes" || activity === "questao" || activity.startsWith("questoes ")) {
+    kind = "questions";
+    label = "Questões";
+  }
+
+  const reason = isAdaptive
+    ? recommendation.text || intervention?.lastResultMessage || block.adaptiveReason || "Este bloco recebeu atenção adicional na composição atual."
+    : "";
+  return {
+    kind,
+    label,
+    isAdaptive,
+    reason,
+    questions: Math.max(0, Number(recommendation.questions) || 0),
+    focusContext: kind === "review" ? "revisao" : kind === "diagnostic" ? "diagnostico" : ["reinforcement", "recovery"].includes(kind) ? "reforco" : "estudo",
+    detailsLabel: isAdaptive ? "Por que entrou agora?" : "Ver detalhes",
+  };
+}
+
 function validReviewKeys() {
   return new Set(REVIEW_INTERVALS.map((item) => item.key));
 }
@@ -7495,6 +7537,7 @@ function reviewBadge(block) {
 }
 
 function unitDetailCard(block) {
+  const display = cycleBlockDisplayInfo(block);
   const metaProgress = metaProgressForBlock(block);
   const currentContent = block.conteudoBloco && normalizeForMatch(block.conteudoBloco) !== normalizeForMatch(block.assunto)
     ? `<p><strong>Parte deste bloco</strong><br>${escapeHtml(block.conteudoBloco)}</p>`
@@ -7508,6 +7551,7 @@ function unitDetailCard(block) {
       <p>${escapeHtml(block.assunto)}</p>
       ${currentContent}
       ${metaInfo}
+      ${display.reason ? `<div class="goal-adaptive-explanation"><strong>Por que entrou agora?</strong><p>${escapeHtml(display.reason)}</p></div>` : ""}
     </div>
   `;
 }
@@ -13545,6 +13589,15 @@ els.scheduleWrap.addEventListener("click", (event) => {
     return;
   }
 
+  const startCycleButton = event.target.closest("[data-start-cycle]");
+  if (startCycleButton) {
+    const index = Number(startCycleButton.dataset.startCycle);
+    const block = state.generatedBlocks[index];
+    if (!block || normalizeStatus(block.status) === "Concluído") return;
+    openFocusedStudy(index, { context: cycleBlockDisplayInfo(block).focusContext });
+    return;
+  }
+
   const performanceButton = event.target.closest("[data-toggle-performance]");
   if (performanceButton) {
     const index = Number(performanceButton.dataset.togglePerformance);
@@ -13561,7 +13614,10 @@ els.scheduleWrap.addEventListener("click", (event) => {
     const card = unitButton.closest(".cycle-goal-card");
     if (!block || !card) return;
     els.scheduleWrap.querySelectorAll(".goal-detail-panel").forEach((panel) => panel.remove());
-    els.scheduleWrap.querySelectorAll("[data-toggle-unit]").forEach((button) => { button.textContent = "Ver detalhes"; });
+    els.scheduleWrap.querySelectorAll("[data-toggle-unit]").forEach((button) => {
+      const buttonBlock = state.generatedBlocks[Number(button.dataset.toggleUnit)];
+      button.textContent = cycleBlockDisplayInfo(buttonBlock).detailsLabel;
+    });
     if (unitDetailIndex === index) {
       unitDetailIndex = -1;
     } else {

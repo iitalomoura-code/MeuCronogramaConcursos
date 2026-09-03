@@ -9349,6 +9349,36 @@ textarea:focus {
   margin: 0 0 8px;
 }
 
+.cycle-block-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.cycle-block-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cycle-block-group > summary small {
+  display: inline-grid;
+  min-width: 20px;
+  place-items: center;
+  padding: 2px 5px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
 .cycle-goal-card,
 :root[data-theme="night"] .cycle-goal-card {
   grid-template-columns: 42px minmax(0, 1fr);
@@ -9380,6 +9410,11 @@ textarea:focus {
   border-radius: 12px;
   border-bottom-color: transparent;
   background: var(--primary-soft);
+}
+
+.cycle-goal-card.has-adaptive-adjustment:not(.is-in-progress) {
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 58%, var(--divider));
 }
 
 .goal-card-index {
@@ -9446,6 +9481,7 @@ textarea:focus {
 
 .goal-card-meta {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px 16px;
 }
@@ -9485,6 +9521,42 @@ textarea:focus {
   outline-offset: 3px;
 }
 
+.cycle-type-badge,
+.cycle-adaptive-label,
+.cycle-question-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cycle-type-badge {
+  padding: 2px 7px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: var(--soft);
+}
+
+.cycle-type-review,
+.cycle-type-diagnostic,
+.cycle-type-reinforcement,
+.cycle-type-recovery {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--divider));
+  color: var(--primary-soft-text);
+}
+
+.cycle-adaptive-label {
+  gap: 4px;
+  color: var(--primary-soft-text);
+}
+
+.cycle-adaptive-label svg {
+  width: 13px;
+  height: 13px;
+}
+
 .goal-activity strong {
   color: var(--muted);
   font-size: 13px;
@@ -9514,6 +9586,17 @@ textarea:focus {
   margin-top: 1px;
 }
 
+.cycle-start-button.compact-button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.cycle-start-button.compact-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .goal-card-actions .ghost-button.compact-button {
   min-height: 28px;
   padding: 0;
@@ -9527,6 +9610,24 @@ textarea:focus {
 .goal-card-actions .ghost-button.compact-button:hover {
   color: var(--primary);
   transform: none;
+}
+
+.goal-adaptive-explanation {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--divider);
+}
+
+.goal-adaptive-explanation strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.goal-adaptive-explanation p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @media (max-width: 700px) {
@@ -9576,6 +9677,12 @@ textarea:focus {
 
   .goal-card-actions {
     flex-wrap: wrap;
+  }
+
+  .cycle-type-badge,
+  .cycle-adaptive-label,
+  .cycle-question-count {
+    font-size: 11px;
   }
 }
 
