@@ -115,6 +115,8 @@ let notebookHistory = [];
 let isUndoingNotebook = false;
 let quillEditor = null;
 let isLoadingNotebook = false;
+let notebookEditing = false;
+let notebookReturnToFocus = null;
 
 let isRestoring = false;
 let saveTimer = 0;
@@ -9897,6 +9899,7 @@ function reviewCardMarkup(item) {
   if (!isDone && !isCancelled) {
     actions.push(`<button class="primary-button compact-button" type="button" data-start-review="${escapeHtml(item.id || "")}"><i data-lucide="play"></i><span>Iniciar revis\u00e3o</span></button>`);
     actions.push(`<button class="ghost-button compact-button" type="button" data-review-history="${escapeHtml(item.id || "")}"><i data-lucide="history"></i><span>Ver hist\u00f3rico</span></button>`);
+    actions.push(`<button class="text-action" type="button" data-open-review-notebook="${escapeHtml(item.id || "")}">Consultar resumo</button>`);
     actions.push(`<button class="text-action" type="button" data-review-postpone="${escapeHtml(item.id || "")}">Adiar</button>`);
     if (isAdaptiveReview(item)) actions.push(`<button class="text-action" type="button" data-adaptive-review-action="questions" data-adaptive-review-id="${escapeHtml(item.id || "")}">Quest\u00f5es</button>`);
     actions.push(`<button class="text-action" type="button" data-toggle-review-status="${escapeHtml(item.id || "")}">Concluir</button>`);
@@ -10206,6 +10209,27 @@ function setNotebookEditorEnabled(enabled) {
   const toolbar = document.querySelector("#notebookToolbar");
   if (toolbar) toolbar.classList.toggle("is-disabled", !enabled);
   if (els.notebookText) els.notebookText.classList.toggle("is-disabled", !enabled);
+}
+
+function notebookContextRow() {
+  return state.rows.find((row) => row.materia === notebookSelection.materia && row.assunto === notebookSelection.assunto) || null;
+}
+
+function setNotebookEditing(editing) {
+  notebookEditing = Boolean(editing && notebookSelection.assunto);
+  renderNotebookEditor();
+  if (notebookEditing) window.setTimeout(() => quillEditor?.focus(), 0);
+}
+
+function returnToFocusedStudyFromNotebook() {
+  const context = notebookReturnToFocus;
+  notebookReturnToFocus = null;
+  if (!context || !state.generatedBlocks[context.index]) {
+    switchTab("continuar");
+    return;
+  }
+  switchTab("continuar");
+  void openFocusedStudy(context.index, context.focusContext || { context: "estudo" });
 }
 
 function saveNotebookEditor() {
@@ -10623,7 +10647,7 @@ function renderErrorNotebook() {
 
 function renderNotebookEditor() {
   if (!notebookSelection.assunto) {
-    els.notebookEditorHeader.innerHTML = `<span class="notebook-hint">Selecione um tema para escrever o resumo.</span>`;
+    els.notebookEditorHeader.innerHTML = `<span class="notebook-hint">Selecione um tema para consultar ou escrever suas anotações.</span>`;
     setNotebookEditorEnabled(false);
     if (quillEditor) {
       isLoadingNotebook = true;
@@ -10636,19 +10660,28 @@ function renderNotebookEditor() {
   const title = themeTitle(notebookSelection.assunto);
   const details = themeDetails(notebookSelection.assunto);
   const hasDistinctDetails = details && normalizeForMatch(details) !== normalizeForMatch(title);
-  els.notebookEditorHeader.innerHTML = `
-    <strong>${escapeHtml(title)}</strong>
-    ${hasDistinctDetails ? `<span>${escapeHtml(shortText(details, 160))}</span>` : ""}
-  `;
-  setNotebookEditorEnabled(true);
   const saved = state.notebook[notebookKey(notebookSelection.materia, notebookSelection.assunto)] || "";
+  const hasNote = notebookHasContent(saved);
+  els.notebookEditorHeader.innerHTML = `
+    <div class="notebook-editor-context">
+      <span>${escapeHtml(notebookSelection.materia)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      ${hasDistinctDetails ? `<details class="notebook-source"><summary>Conteúdo previsto</summary><p>${escapeHtml(details)}</p></details>` : ""}
+    </div>
+    <div class="notebook-editor-actions">
+      ${notebookReturnToFocus ? '<button class="text-action" type="button" data-return-focused-study>Voltar ao estudo</button>' : ""}
+      ${notebookEditing ? '<button class="text-action" type="button" data-finish-notebook-edit>Concluir edição</button>' : `<button class="ghost-button compact-button" type="button" data-edit-notebook>${hasNote ? "Editar" : "Adicionar minhas anotações"}</button>`}
+    </div>
+  `;
+  setNotebookEditorEnabled(notebookEditing);
   if (quillEditor) {
     isLoadingNotebook = true;
     quillEditor.setContents(quillEditor.clipboard.convert({ html: sanitizeNotebookHtml(saved) }), "silent");
     quillEditor.history.clear();
     isLoadingNotebook = false;
   }
-  els.notebookStatus.textContent = "";
+  els.notebookText.closest(".notebook-editor")?.classList.toggle("is-reading", !notebookEditing);
+  els.notebookStatus.textContent = hasNote ? "Salvo" : "";
 }
 
 const NOTEBOOK_PASTE_STYLE_ATTRIBUTES = ["color", "background", "font", "size"];
@@ -12700,6 +12733,8 @@ document.addEventListener("click", (event) => {
     const block = state.generatedBlocks[focusedStudyIndex];
     if (block) {
       notebookSelection = { materia: block.materia, assunto: block.assunto };
+      notebookEditing = false;
+      notebookReturnToFocus = { index: focusedStudyIndex, focusContext: { context: focusedStudySession?.context || "estudo", reviewId: focusedStudySession?.reviewId || "" } };
       switchTab("erros");
     }
     return;
@@ -13772,6 +13807,7 @@ els.notebookSubjects?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-notebook-subject]");
   if (!button) return;
   if (notebookSelection.assunto) saveNotebookEditor();
+  notebookEditing = false;
   notebookSelection = { materia: button.dataset.notebookSubject, assunto: "" };
   renderErrors();
 });
@@ -13779,10 +13815,19 @@ els.notebookThemes?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-notebook-theme]");
   if (!button) return;
   if (notebookSelection.assunto) saveNotebookEditor();
+  notebookEditing = false;
   notebookSelection.assunto = button.dataset.notebookTheme;
   renderErrors();
 });
 els.notebookSearch?.addEventListener("input", () => renderErrors());
+els.notebookEditorHeader?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-edit-notebook]")) setNotebookEditing(true);
+  if (event.target.closest("[data-finish-notebook-edit]")) {
+    saveNotebookEditor();
+    setNotebookEditing(false);
+  }
+  if (event.target.closest("[data-return-focused-study]")) returnToFocusedStudyFromNotebook();
+});
 function initQuillEditor() {
   if (quillEditor || typeof Quill === "undefined" || !els.notebookText) return;
   quillEditor = new Quill("#notebookText", {
@@ -13836,6 +13881,16 @@ els.reviewsBody?.addEventListener("click", async (event) => {
   if (historyButton) {
     const record = reviewScheduleRows("all").find((item) => item.id === historyButton.dataset.reviewHistory);
     if (record) renderReviewHistoryModal(record);
+    return;
+  }
+  const notebookButton = event.target.closest("[data-open-review-notebook]");
+  if (notebookButton) {
+    const record = reviewScheduleRows("all").find((item) => item.id === notebookButton.dataset.openReviewNotebook);
+    if (record) {
+      notebookSelection = { materia: record.materia, assunto: record.assunto };
+      notebookEditing = false;
+      switchTab("erros");
+    }
     return;
   }
   const postponeButton = event.target.closest("[data-review-postpone]");
