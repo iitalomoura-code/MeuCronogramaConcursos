@@ -3077,23 +3077,11 @@ async function readTxt(file) {
 }
 
 function extractDocxTextFromHtml(html) {
+  const extracted = window.DocumentStructureParser?.extractHtmlBlocks?.(html);
+  if (extracted?.text) return extracted.text;
   const template = document.createElement("template");
   template.innerHTML = String(html || "");
-  const root = template.content;
-  const lines = [];
-  const push = (value) => {
-    const text = tidyProgramLine(value);
-    if (text) lines.push(text);
-  };
-  root.querySelectorAll("table").forEach((table) => {
-    table.querySelectorAll("tr").forEach((row) => {
-      const cells = [...row.children].map((cell) => tidyProgramLine(cell.textContent || "")).filter(Boolean);
-      if (cells.length) push(cells.join(" | "));
-    });
-    table.remove();
-  });
-  root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li").forEach((node) => push(node.textContent || ""));
-  return formatImportedProgramText(lines.join("\n"));
+  return formatImportedProgramText(template.content.textContent || "");
 }
 
 async function readDocx(file) {
@@ -3101,9 +3089,18 @@ async function readDocx(file) {
   const arrayBuffer = await file.arrayBuffer();
   if (typeof window.mammoth.convertToHtml === "function") {
     const result = await window.mammoth.convertToHtml({ arrayBuffer });
-    const extracted = window.DocumentStructureParser?.extractHtmlNodes?.(result.value);
+    const extracted = window.DocumentStructureParser?.extractHtmlBlocks?.(result.value)
+      || window.DocumentStructureParser?.extractHtmlNodes?.(result.value);
     const text = extracted?.text || extractDocxTextFromHtml(result.value);
-    lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [], nodes: extracted?.nodes || [], sourceText: text, structurePreserved: Boolean(extracted?.nodes?.length) };
+    lastDocumentExtractionMeta = {
+      type: "docx",
+      textSearchable: Boolean(text),
+      warnings: result.messages || [],
+      nodes: extracted?.nodes || [],
+      sourceText: text,
+      structurePreserved: Boolean(extracted?.nodes?.length),
+      structureFormat: extracted?.nodes?.length ? "html-blocks" : "plain-text-fallback",
+    };
     return text;
   }
   const result = await window.mammoth.extractRawText({ arrayBuffer });
@@ -13061,6 +13058,9 @@ if (els.fileInput) els.fileInput.addEventListener("change", async () => {
   try {
     const text = await readFile(file);
     const formatted = formatImportedProgramText(text);
+    // The textarea receives this normalized version. Keep the structural DOCX
+    // snapshot aligned with it so the block representation is used on import.
+    if (lastDocumentExtractionMeta?.type === "docx") lastDocumentExtractionMeta.sourceText = formatted;
     els.programText.value = formatted;
     addHistory(file.name, text);
   } catch (error) {

@@ -83,4 +83,39 @@ const headingSubareas = parser.analyze({ nodes: [
 assert.equal(new Set(headingSubareas.rows.map((row) => row.materia)).size, 1, "Hierarquia de heading do DOCX deve preservar a matéria principal.");
 assert.deepEqual(headingSubareas.rows.map((row) => row.subarea), ["Direito Tributário", "Direito Previdenciário"]);
 
+const sequentialDocxSubjects = parser.analyze({ nodes: [
+  { type: "paragraph", text: "LÍNGUA PORTUGUESA", sourceOrder: 0 },
+  { type: "gap", text: "", sourceOrder: 1 },
+  { type: "numbered-item", text: "Interpretação, tipologia e organização textual", outlineNumber: "1", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 2 },
+  { type: "paragraph", text: "Gêneros literários e não literários; textos narrativos, descritivos e argumentativos.", sourceOrder: 3 },
+  { type: "numbered-item", text: "Reescrita e norma culta", outlineNumber: "7", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 4 },
+  { type: "paragraph", text: "Substituição, deslocamento e adequação gramatical.", sourceOrder: 5 },
+  { type: "gap", text: "", sourceOrder: 6 },
+  { type: "paragraph", text: "LÍNGUA INGLESA", sourceOrder: 7 },
+  { type: "gap", text: "", sourceOrder: 8 },
+  { type: "numbered-item", text: "Compreensão e interpretação de textos em inglês", outlineNumber: "1", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 9 },
+  { type: "paragraph", text: "Ideias principais e secundárias; inferência e contexto.", sourceOrder: 10 },
+  { type: "numbered-item", text: "Vocabulário e relações semânticas", outlineNumber: "2", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 11 },
+  { type: "paragraph", text: "Vocabulário contextual e relações de sentido.", sourceOrder: 12 },
+  { type: "gap", text: "", sourceOrder: 13 },
+  { type: "paragraph", text: "RACIOCÍNIO LÓGICO-MATEMÁTICO E ESTATÍSTICA", sourceOrder: 14 },
+  { type: "numbered-item", text: "Lógica proposicional e argumentação", outlineNumber: "1", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 15 },
+  { type: "paragraph", text: "Proposições; conectivos; equivalências lógicas e argumentos.", sourceOrder: 16 },
+] });
+assert.equal(sequentialDocxSubjects.mode, "structured", "Sequência de matérias e listas do DOCX deve usar o modo estruturado.");
+assert.deepEqual([...new Set(sequentialDocxSubjects.rows.map((row) => row.materia))], ["LÍNGUA PORTUGUESA", "LÍNGUA INGLESA", "RACIOCÍNIO LÓGICO-MATEMÁTICO E ESTATÍSTICA"], "A reinicialização da lista deve delimitar matérias consecutivas.");
+assert.equal(sequentialDocxSubjects.rows.find((row) => row.materia === "LÍNGUA INGLESA" && row.outlineNumber === "1").sourceBlockType, "docx-numbered", "A lista automática do Word deve chegar ao row final com sua origem.");
+assert.ok(!sequentialDocxSubjects.rows.find((row) => row.materia === "LÍNGUA INGLESA").assunto.includes("Proposições"), "Conteúdo de Raciocínio Lógico não pode ser incorporado ao Inglês.");
+assert.ok(sequentialDocxSubjects.rows.find((row) => row.materia.startsWith("RACIOCÍNIO") && row.assunto.includes("Proposições; conectivos")), "A descrição deve permanecer no tema da matéria correta.");
+
+const acronymTopicsInDocx = parser.analyze({ nodes: [
+  { type: "paragraph", text: "LEGISLAÇÃO TRIBUTÁRIA", sourceOrder: 0 },
+  { type: "numbered-item", text: "CSLL", outlineNumber: "1", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 1 },
+  { type: "paragraph", text: "Princípios; fato gerador; contribuinte e base de cálculo.", sourceOrder: 2 },
+  { type: "numbered-item", text: "IPI E IOF", outlineNumber: "2", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 3 },
+  { type: "paragraph", text: "Princípios constitucionais e apuração.", sourceOrder: 4 },
+] });
+assert.deepEqual([...new Set(acronymTopicsInDocx.rows.map((row) => row.materia))], ["LEGISLAÇÃO TRIBUTÁRIA"], "Siglas em itens numerados devem permanecer na matéria aberta.");
+assert.deepEqual(acronymTopicsInDocx.rows.map((row) => row.assunto.split(":")[0]), ["CSLL", "IPI E IOF"]);
+
 console.log("OK - parser híbrido preserva estrutura, subáreas, notas editoriais e quebras de documento.");
