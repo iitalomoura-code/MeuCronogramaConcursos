@@ -186,5 +186,48 @@ assert.equal(structuredTaxonomy[0].structureSource, "user-structured", "Document
 assert.equal(structuredTaxonomy[0].conteudosOriginais.length, 1, "Descrição estruturada com ponto e vírgula deve permanecer uma unidade original.");
 assert.equal(parser.getLastProgramParseMeta().mode, "structured", "A prévia deve receber a interpretação estrutural do documento.");
 
+const uppercaseAcronymOutline = parser.parseProgramContent(`
+LEGISLAÇÃO TRIBUTÁRIA
+1. CSLL
+Princípios; fato gerador; contribuinte; base de cálculo e apuração.
+5. IPI e IOF
+Princípios constitucionais; fato gerador; contribuinte; base de cálculo e apuração.
+6. PIS/Pasep e COFINS
+Regime cumulativo e não cumulativo.
+`);
+assert.deepEqual([...new Set(uppercaseAcronymOutline.map((row) => row.materia))], ["LEGISLAÇÃO TRIBUTÁRIA"], "Siglas numeradas não podem abrir matérias novas.");
+assert.deepEqual(uppercaseAcronymOutline.map((row) => row.assunto.split(":")[0]), ["CSLL", "IPI e IOF", "PIS/Pasep e COFINS"], "Títulos com siglas devem permanecer como temas individuais.");
+assert.equal(uppercaseAcronymOutline[0].outlineNumber, "1", "A numeração do tema deve permanecer no row final.");
+assert.equal(uppercaseAcronymOutline[0].outlineLevel, 1, "O nível do tema deve permanecer no row final.");
+assert.equal(uppercaseAcronymOutline[0].sourceBlockType, "numbered-item", "A origem do bloco numerado deve ser preservada.");
+
+const uppercaseAcronymWithoutNumber = parser.parseProgramContent(`
+LEGISLAÇÃO TRIBUTÁRIA
+CSLL
+Princípios; fato gerador; contribuinte; base de cálculo e apuração.
+IPI e IOF
+Princípios constitucionais; fato gerador; contribuinte; base de cálculo e apuração.
+`);
+assert.deepEqual([...new Set(uppercaseAcronymWithoutNumber.map((row) => row.materia))], ["LEGISLAÇÃO TRIBUTÁRIA"], "Título curto seguido de descrição deve permanecer na matéria aberta.");
+assert.deepEqual(uppercaseAcronymWithoutNumber.map((row) => row.assunto.split(":")[0]), ["CSLL", "IPI e IOF"], "O padrão título e descrição deve produzir temas, mesmo sem numeração.");
+
+const realSubjectTransition = parser.parseProgramContent(`
+LEGISLAÇÃO TRIBUTÁRIA
+8. CIDE
+Contribuição de intervenção no domínio econômico.
+LEGISLAÇÃO ADUANEIRA
+1. Jurisdição e Administração Aduaneira
+Competências e normas aplicáveis.
+`);
+assert.deepEqual([...new Set(realSubjectTransition.map((row) => row.materia))], ["LEGISLAÇÃO TRIBUTÁRIA", "LEGISLAÇÃO ADUANEIRA"], "Uma transição estrutural real deve abrir a nova matéria.");
+
+const acronymInsideAdministration = parser.parseProgramContent(`
+ADMINISTRAÇÃO GERAL E PÚBLICA
+Balanced Scorecard — BSC
+Indicadores, perspectivas e mapa estratégico.
+`);
+assert.deepEqual([...new Set(acronymInsideAdministration.map((row) => row.materia))], ["ADMINISTRAÇÃO GERAL E PÚBLICA"], "Sigla em título interno não pode virar matéria.");
+assert.equal(acronymInsideAdministration[0].assunto.split(":")[0], "Balanced Scorecard — BSC", "O título interno deve ser preservado integralmente.");
+
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
 console.log("OK - marcadores gen\u00e9ricos, temas expl\u00edcitos, numera\u00e7\u00e3o hier\u00e1rquica, continua\u00e7\u00f5es e normaliza\u00e7\u00e3o.");

@@ -944,10 +944,11 @@ function isGenericProgramLabel(value) {
 }
 
 function isExplicitSubjectText(value) {
+  const outline = parseOutlineNumber(value);
+  if (outline) return false;
   const clean = stripEnumerator(value).replace(/[:;.]$/, "").trim();
   if (!clean || clean.includes(";") || isGenericProgramLabel(clean)) return false;
-  const words = clean.split(/\s+/).filter(Boolean);
-  return words.length <= 10 && uppercaseRatio(clean) > 0.72;
+  return KNOWN_SUBJECT_NAMES.has(normalizeForMatch(clean));
 }
 
 const KNOWN_SUBJECT_NAMES = new Set([
@@ -998,7 +999,10 @@ function splitNamedThemeLine(line) {
   return { title, contents };
 }
 
-function looksLikeSubjectLine(line, hasOpenSubject = false) {
+function looksLikeSubjectLine(line, hasOpenSubject = false, { nextLine = "" } = {}) {
+  // Preserve the outline marker while deciding the role of a line. A numbered
+  // item belongs to the current subject unless an explicit subject label says otherwise.
+  if (parseOutlineNumber(line)) return false;
   const clean = stripEnumerator(line).replace(/[:;.]$/, "").trim();
   if (!clean || clean.includes(";") || clean.includes(":")) return false;
   if (isIgnoredProgramModule(clean) || isGenericProgramLabel(clean)) return false;
@@ -1006,12 +1010,30 @@ function looksLikeSubjectLine(line, hasOpenSubject = false) {
   if (words.length > 10) return false;
   const normalized = normalizeForMatch(clean);
   const exactKnownSubject = KNOWN_SUBJECT_NAMES.has(normalized);
-  if (isExplicitSubjectText(clean)) return true;
+  if (exactKnownSubject) return true;
+  // Before any subject is open, uppercase still needs structural support from
+  // the following top-level item. This accommodates unfamiliar disciplines
+  // without letting a standalone acronym decide the classification.
+  if (!hasOpenSubject && words.length >= 2 && uppercaseRatio(clean) > 0.72 && Boolean(parseOutlineNumber(nextLine))) return true;
   const knownSubject =
     /\b(portugues|lingua portuguesa|direito|administracao|constitucional|administrativo|controle externo|contabilidade|matematica|raciocinio|informatica|tecnologia|tecnologia da informacao|legislacao|etica|auditoria|orcamento|financas|economia|estatistica|governanca|licitacoes|contratos|discursiva|recursos|logistica)\b/.test(normalized);
   if (!knownSubject) return false;
-  if (exactKnownSubject) return true;
-  return !hasOpenSubject && isExplicitSubjectText(clean);
+  if (!hasOpenSubject) return words.length >= 2 && uppercaseRatio(clean) > 0.72;
+  // A new, unknown discipline inside an already open discipline needs a real
+  // section transition. Typographic emphasis alone is intentionally weak.
+  return words.length >= 2 && Boolean(parseOutlineNumber(nextLine));
+}
+
+function isTopicTitleFollowedByDescription(line, nextLine, hasOpenSubject = false) {
+  if (!hasOpenSubject || parseOutlineNumber(line) || parseOutlineNumber(nextLine)) return false;
+  const title = normalizeTopic(stripEnumerator(line));
+  const description = normalizeTopic(stripEnumerator(nextLine));
+  if (!title || !description || title.includes(":") || title.includes(";")) return false;
+  if (looksLikeSubjectLine(title, true, { nextLine })) return false;
+  const titleWords = title.split(/\s+/).filter(Boolean);
+  const shortTitle = titleWords.length <= 7 && title.length <= 72;
+  const descriptiveNextLine = description.length >= 28 || description.includes(";") || description.includes(",");
+  return shortTitle && descriptiveNextLine;
 }
 
 function tidyProgramLine(value) {
@@ -1181,6 +1203,9 @@ function convertOutlineToStudyStructure(materia, tree) {
       estudar: "Sim",
       observacoes: "",
       temaExplicito: true,
+      outlineNumber: node.number,
+      outlineLevel: node.level,
+      sourceBlockType: "numbered-item",
       origemEdital: {
         originalText: sourceNodes.map((item) => item.originalText).join("\n"),
         parsedStructure: outlineNodeSnapshot(node),
@@ -1268,7 +1293,7 @@ function parseProgramContent(rawText) {
     if (!currentSubject) return;
     subjectNames.set(normalizeForMatch(currentSubject), currentSubject);
   };
-  const appendTopic = (materia, assunto, explicit = false, origemEdital = null) => {
+  const appendTopic = (materia, assunto, explicit = false, origemEdital = null, structuralMeta = {}) => {
     const topic = normalizeTopic(assunto);
     if (!topic) return;
     if (isGenericProgramLabel(topic)) {
@@ -1276,7 +1301,7 @@ function parseProgramContent(rawText) {
       return;
     }
     const order = rows.filter((row) => normalizeForMatch(row.materia || "") === normalizeForMatch(materia || "")).length + 1;
-    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit, origemEdital }));
+    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit, origemEdital, ...structuralMeta }));
   };
   const flushLooseTopics = () => {
     if (!looseTopics.length) return;
@@ -1292,13 +1317,23 @@ function parseProgramContent(rawText) {
     parsedStructure.push(...result.tree.roots.map(outlineNodeSnapshot));
     convertOutlineToStudyStructure(currentSubject, result.tree).forEach((row) => {
       const duplicate = rows.some((existing) => normalizeForMatch(existing.materia) === normalizeForMatch(row.materia) && normalizeForMatch(existing.assunto) === normalizeForMatch(row.assunto));
-      if (!duplicate) appendTopic(row.materia, row.assunto, true, row.origemEdital);
+      if (!duplicate) {
+        appendTopic(row.materia, row.assunto, true, row.origemEdital, {
+          outlineNumber: row.outlineNumber,
+          outlineLevel: row.outlineLevel,
+          sourceBlockType: row.sourceBlockType,
+        });
+      }
     });
     outlineLines = [];
   };
 
-  normalizedProgramLines(normalized).forEach((record) => {
+  const consumedSourceLines = new Set();
+  normalizedProgramLines(normalized).forEach((record, index, records) => {
+    if (consumedSourceLines.has(record.sourceLine)) return;
     const line = record.text;
+    const nextRecord = records[index + 1];
+    const nextLine = nextRecord?.text || "";
     if (isEditorialProgramNote(line)) {
       flushOutline();
       flushLooseTopics();
@@ -1319,16 +1354,29 @@ function parseProgramContent(rawText) {
       return;
     }
 
-    if (looksLikeSubjectLine(line, Boolean(currentSubject))) {
+    // Numbered entries must be classified before anything strips their marker.
+    // This keeps `1. CSLL` tied to the current subject as a topic.
+    if (parseOutlineNumber(line)) {
+      flushLooseTopics();
+      outlineLines.push(record);
+      return;
+    }
+
+    if (looksLikeSubjectLine(line, Boolean(currentSubject), { nextLine })) {
       flushOutline();
       flushLooseTopics();
       registerSubject(stripEnumerator(line).replace(/[:;.]$/, ""));
       return;
     }
 
-    if (parseOutlineNumber(line)) {
+    if (isTopicTitleFollowedByDescription(line, nextLine, Boolean(currentSubject))) {
       flushLooseTopics();
-      outlineLines.push(record);
+      appendTopic(currentSubject, `${normalizeTopic(stripEnumerator(line))}: ${normalizeTopic(stripEnumerator(nextLine))}`, true, {
+        type: "title-description",
+        originalText: `${line}\n${nextLine}`,
+        parsedStructure: { type: "topic", text: normalizeTopic(stripEnumerator(line)), descriptions: [normalizeTopic(stripEnumerator(nextLine))] },
+      }, { sourceBlockType: "title-description" });
+      consumedSourceLines.add(nextRecord.sourceLine);
       return;
     }
 
@@ -2273,7 +2321,7 @@ function renderRowsLegacy() {
               <input class="row-check" data-field="estudar" type="checkbox" ${row.estudar === "Nao" ? "" : "checked"} aria-label="Incluir tema no ciclo" />
             </label>
             <input class="topic-order" data-field="ordem" type="number" min="1" value="${Number(row.ordem) || 1}" />
-            <div class="theme-card-main">
+          <div class="theme-card-main">
               ${topicFeedbackBadge(row)}
               <strong class="theme-title-text">${escapeHtml(themeTitle(row.assunto || ""))}</strong>
               <p class="theme-details-text">${escapeHtml(shortText(themeDetails(row.assunto || ""), 180))}</p>
@@ -2567,9 +2615,12 @@ function renderRows(options = {}) {
             <input class="row-check" data-field="estudar" type="checkbox" ${row.estudar === "Nao" ? "" : "checked"} aria-label="Incluir tema no ciclo" />
           </label>
           <input class="topic-order" data-field="ordem" type="number" min="1" value="${Number(row.ordem) || 1}" aria-label="Ordem do tema" />
-          <div class="theme-card-main">
+            <div class="theme-card-main">
             <div class="theme-card-heading">
-              <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
+              <div class="theme-title-with-outline">
+                ${row.outlineNumber ? '<span class="theme-outline-number">' + escapeHtml(row.outlineNumber) + '.</span>' : ""}
+                <strong class="theme-title-text">${highlightContentText(themeTitle(row.assunto || ""))}</strong>
+              </div>
               <div class="theme-card-badges">
                 ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
                 ${row.subarea ? '<span class="content-badge">Subárea · ' + escapeHtml(row.subarea) + '</span>' : ""}

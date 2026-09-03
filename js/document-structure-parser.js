@@ -37,10 +37,29 @@
     return letters.filter((letter) => letter === letter.toUpperCase()).length / letters.length >= 0.82;
   }
 
-  function isLikelySubject(value, node) {
+  function isAcronymLike(value) {
+    const text = clean(value);
+    const letters = (text.match(/[A-Za-zÀ-ÿ]/g) || []);
+    if (!letters.length || letters.length > 12) return false;
+    const uppercase = letters.filter((letter) => letter === letter.toUpperCase()).length / letters.length;
+    return uppercase >= 0.82 && text.split(/\s+/).length <= 3;
+  }
+
+  function hasSubjectLabelShape(value) {
+    const words = clean(value).split(/\s+/).filter(Boolean);
+    return words.length >= 2 && !isAcronymLike(value);
+  }
+
+  function isLikelySubject(value, node, { hasOpenSubject = false, nextNode = null, hasFollowingTopLevelItem = false } = {}) {
     const text = clean(value);
     if (!text || isGenericSection(text) || outlineInfo(text)) return false;
-    return Boolean(node?.kind === "heading" || node?.bold || isAllCaps(text));
+    if (node?.kind === "heading" || node?.bold) return !isAcronymLike(text) || !hasOpenSubject;
+    // Plain uppercase paragraphs are only a supporting signal. They need a
+    // section-shaped label and a following top-level item before they can open
+    // or switch a subject; short acronyms remain viable topic titles.
+    if (!isAllCaps(text) || !hasSubjectLabelShape(text)) return false;
+    if (!hasOpenSubject && hasFollowingTopLevelItem) return true;
+    return Boolean(nextNode && outlineInfo(nextNode.text)?.level === 1);
   }
 
   function documentNodesFromText(text) {
@@ -112,10 +131,13 @@
     const topLevel = numbered.filter((item) => item.outline.level === 1);
     const descriptions = numbered.filter(({ index }) => {
       const next = nodes[index + 1];
-      return next && !outlineInfo(next.text) && !isLikelySubject(next.text, next) && !isEditorialNote(next.text);
+      return next && !outlineInfo(next.text) && !isLikelySubject(next.text, next, { nextNode: nodes[index + 2] }) && !isEditorialNote(next.text);
     });
     const headingSignals = nodes.filter((node) => node.kind === "heading" || node.bold).length;
-    const subjectSignals = nodes.filter((node) => isLikelySubject(node.text, node)).length;
+    const subjectSignals = nodes.filter((node, index) => isLikelySubject(node.text, node, {
+      nextNode: nodes[index + 1],
+      hasFollowingTopLevelItem: nodes.slice(index + 1).some((entry) => outlineInfo(entry.text)?.level === 1),
+    })).length;
     const confidence = Math.min(1,
       (topLevel.length >= 2 ? 0.4 : topLevel.length ? 0.18 : 0)
       + (descriptions.length ? 0.3 : 0)
@@ -139,6 +161,8 @@
       subarea: subarea || "",
       conteudosOriginais: detailText.length ? detailText.slice() : [item.text],
       outlineNumber: item.number,
+      outlineLevel: item.level,
+      sourceBlockType: "numbered-item",
       origemEdital: {
         type: "documento-estruturado",
         structureSource: "user-structured",
@@ -189,11 +213,15 @@
         addTree("section", node);
         return;
       }
-      if (isLikelySubject(node.text, node) && !item) {
+      if (isLikelySubject(node.text, node, {
+        hasOpenSubject: Boolean(subject),
+        nextNode: nodes[index + 1],
+        hasFollowingTopLevelItem: nodes.slice(index + 1).some((entry) => outlineInfo(entry.text)?.level === 1),
+      }) && !item) {
         const next = nodes[index + 1];
         const followsTopic = Boolean(next && outlineInfo(next.text));
         const opensSubject = !subject
-          || isAllCaps(node.text)
+          || (isAllCaps(node.text) && followsTopic && hasSubjectLabelShape(node.text))
           || (node.kind === "heading" && subjectHeadingLevel && node.level <= subjectHeadingLevel);
         if (opensSubject) {
           finishTopic();

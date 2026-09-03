@@ -2887,6 +2887,20 @@ textarea:focus {
   gap: 10px;
 }
 
+.theme-title-with-outline {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 6px;
+}
+
+.theme-outline-number {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .theme-title-text {
   display: block;
   color: var(--text);
