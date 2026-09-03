@@ -6785,8 +6785,6 @@ function removeFocusedStudyOverlay() {
 function renderFocusedStudyOverlay() {
   removeFocusedStudyOverlay();
   if (focusedStudyIndex < 0 || !state.generatedBlocks[focusedStudyIndex]) return;
-  const panel = document.querySelector("#tab-continuar");
-  if (!panel || !panel.classList.contains("active")) return;
   const block = state.generatedBlocks[focusedStudyIndex];
   const session = focusedStudySession || state.activeFocusSession;
   const context = { context: session?.context || "estudo", reviewId: session?.reviewId || "" };
