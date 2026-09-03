@@ -12,6 +12,7 @@ assert.ok(app.includes("function saveStudyResult"), "O registro central de desem
 assert.ok(app.includes("function notebookThemeMatchesSearch"), "A busca local do Caderno de Resumos deve estar disponível.");
 assert.ok(index.includes('id="notebookSearch"'), "O Caderno de Resumos deve expor a busca de resumos.");
 assert.ok(index.includes("Meus Resumos") && index.includes("Buscar nos meus resumos"), "O Caderno deve usar a nova linguagem de consulta pessoal.");
+assert.ok(index.includes('id="notebookSubjectSelect"') && !index.includes('id="notebookSubjects"'), "O Caderno deve selecionar matéria no topo e reservar a lateral para temas.");
 assert.ok(app.includes("function setNotebookEditing") && app.includes("data-return-focused-study"), "O Caderno deve alternar entre leitura e edição sem perder o retorno ao estudo.");
 assert.ok(app.includes("data-open-review-notebook"), "Revisões devem consultar o mesmo resumo do tema.");
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");

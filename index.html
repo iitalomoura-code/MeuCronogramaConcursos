@@ -573,15 +573,14 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
               <h2>Meus Resumos</h2>
               <p>Suas anota&ccedil;&otilde;es organizadas pelos assuntos do edital.</p>
             </div>
-            <label class="notebook-search" for="notebookSearch"><i data-lucide="search" aria-hidden="true"></i><input id="notebookSearch" type="search" autocomplete="off" placeholder="Buscar nos meus resumos" /></label>
+            <div class="notebook-page-controls">
+              <label class="notebook-subject-select" for="notebookSubjectSelect"><span>Matéria atual</span><select id="notebookSubjectSelect" aria-label="Selecionar matéria"></select></label>
+              <label class="notebook-search" for="notebookSearch"><i data-lucide="search" aria-hidden="true"></i><input id="notebookSearch" type="search" autocomplete="off" placeholder="Buscar nos meus resumos" /></label>
+            </div>
           </div>
           <div class="notebook">
             <aside class="notebook-navigation" aria-label="Navegação dos resumos">
               <div class="notebook-columns">
-              <div class="notebook-col">
-                <h3>Mat&eacute;rias</h3>
-                <div id="notebookSubjects" class="notebook-list"></div>
-              </div>
               <div class="notebook-col">
                 <h3>Temas</h3>
                 <div id="notebookThemes" class="notebook-list"></div>

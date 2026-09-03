@@ -394,6 +394,7 @@ const els = {
   completedBody: document.querySelector("#completedBody"),
   reviewsBody: document.querySelector("#reviewsBody"),
   notebookSubjects: document.querySelector("#notebookSubjects"),
+  notebookSubjectSelect: document.querySelector("#notebookSubjectSelect"),
   notebookThemes: document.querySelector("#notebookThemes"),
   notebookSearch: document.querySelector("#notebookSearch"),
   notebookText: document.querySelector("#notebookText"),
@@ -10548,13 +10549,13 @@ function notebookThemeMatchesSearch(materia, theme, query) {
 }
 
 function renderErrors() {
-  if (!els.notebookSubjects) return;
+  if (!els.notebookThemes) return;
   const groups = notebookSubjectGroups();
   const materias = [...groups.keys()];
   const query = normalizeForMatch(els.notebookSearch?.value || "").trim();
 
   if (!materias.length) {
-    els.notebookSubjects.innerHTML = `<div class="empty-panel">Confirme o conte\u00fado program\u00e1tico para ver as mat\u00e9rias aqui.</div>`;
+    if (els.notebookSubjectSelect) els.notebookSubjectSelect.innerHTML = `<option>Sem matérias disponíveis</option>`;
     els.notebookThemes.innerHTML = "";
     els.notebookEditorHeader.innerHTML = "";
     els.notebookText.innerHTML = "";
@@ -10568,16 +10569,11 @@ function renderErrors() {
   }
 
   const visibleMaterias = materias.filter((materia) => groups.get(materia).some((theme) => notebookThemeMatchesSearch(materia, theme, query)));
-  els.notebookSubjects.innerHTML = visibleMaterias.length ? visibleMaterias.map((materia) => {
-    const subjectThemes = groups.get(materia);
-    const savedCount = subjectThemes.filter((theme) => notebookHasContent(state.notebook[notebookKey(materia, theme.assunto)] || "")).length;
-    return `
-    <button type="button" class="notebook-item ${materia === notebookSelection.materia ? "is-active" : ""}" data-notebook-subject="${escapeHtml(materia)}">
-      <span>${escapeHtml(materia)}</span>
-      <small>${subjectThemes.length} tema${subjectThemes.length === 1 ? "" : "s"}${savedCount ? ` · ${savedCount} resumo${savedCount === 1 ? "" : "s"}` : ""}</small>
-    </button>
-  `;
-  }).join("") : `<div class="empty-panel">Nenhum resumo ou tema encontrado.</div>`;
+  if (els.notebookSubjectSelect) {
+    els.notebookSubjectSelect.innerHTML = visibleMaterias.map((materia) => `<option value="${escapeHtml(materia)}">${escapeHtml(materia)}</option>`).join("");
+    els.notebookSubjectSelect.value = visibleMaterias.includes(notebookSelection.materia) ? notebookSelection.materia : visibleMaterias[0] || "";
+  }
+  if (!visibleMaterias.includes(notebookSelection.materia)) notebookSelection = { materia: visibleMaterias[0] || materias[0], assunto: "" };
 
   const themes = (groups.get(notebookSelection.materia) || []).filter((theme) => notebookThemeMatchesSearch(notebookSelection.materia, theme, query));
   els.notebookThemes.innerHTML = themes.length ? themes.map((theme) => {
@@ -10585,7 +10581,7 @@ function renderErrors() {
     return `
       <button type="button" class="notebook-item ${theme.title === themeTitle(notebookSelection.assunto) ? "is-active" : ""}" data-notebook-theme="${escapeHtml(theme.assunto)}">
         <span>${escapeHtml(theme.title)}</span>
-        ${hasNote ? `<small class="notebook-has-note"><i data-lucide="check"></i>resumo</small>` : ""}
+        ${hasNote ? `<small class="notebook-has-note" aria-label="Possui anotações" title="Possui anotações">●</small>` : ""}
       </button>
     `;
   }).join("") : `<div class="empty-panel">Nenhum tema nesta mat\u00e9ria.</div>`;
@@ -13809,6 +13805,12 @@ els.notebookSubjects?.addEventListener("click", (event) => {
   if (notebookSelection.assunto) saveNotebookEditor();
   notebookEditing = false;
   notebookSelection = { materia: button.dataset.notebookSubject, assunto: "" };
+  renderErrors();
+});
+els.notebookSubjectSelect?.addEventListener("change", () => {
+  if (notebookSelection.assunto) saveNotebookEditor();
+  notebookEditing = false;
+  notebookSelection = { materia: els.notebookSubjectSelect.value, assunto: "" };
   renderErrors();
 });
 els.notebookThemes?.addEventListener("click", (event) => {
