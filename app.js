@@ -10657,6 +10657,7 @@ function renderErrorNotebook() {
 function renderNotebookEditor() {
   if (!notebookSelection.assunto) {
     els.notebookEditorHeader.innerHTML = `<div class="notebook-empty-state"><i data-lucide="notebook-pen"></i><strong>Escolha um tema</strong><span>Selecione um assunto ao lado para consultar ou criar suas anotações.</span></div>`;
+    els.notebookText.closest(".notebook-editor")?.classList.add("is-reading");
     setNotebookEditorEnabled(false);
     if (quillEditor) {
       isLoadingNotebook = true;
