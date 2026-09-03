@@ -10576,6 +10576,8 @@ function renderErrors() {
   if (!visibleMaterias.includes(notebookSelection.materia)) notebookSelection = { materia: visibleMaterias[0] || materias[0], assunto: "" };
 
   const themes = (groups.get(notebookSelection.materia) || []).filter((theme) => notebookThemeMatchesSearch(notebookSelection.materia, theme, query));
+  const themesHeading = document.querySelector("#tab-erros .notebook-col h3");
+  if (themesHeading) themesHeading.textContent = `Temas · ${themes.length} assunto${themes.length === 1 ? "" : "s"}`;
   els.notebookThemes.innerHTML = themes.length ? themes.map((theme) => {
     const hasNote = notebookHasContent(state.notebook[notebookKey(notebookSelection.materia, theme.assunto)] || "");
     return `
@@ -10643,7 +10645,7 @@ function renderErrorNotebook() {
 
 function renderNotebookEditor() {
   if (!notebookSelection.assunto) {
-    els.notebookEditorHeader.innerHTML = `<span class="notebook-hint">Selecione um tema para consultar ou escrever suas anotações.</span>`;
+    els.notebookEditorHeader.innerHTML = `<div class="notebook-empty-state"><i data-lucide="notebook-pen"></i><strong>Escolha um tema</strong><span>Selecione um assunto ao lado para consultar ou criar suas anotações.</span></div>`;
     setNotebookEditorEnabled(false);
     if (quillEditor) {
       isLoadingNotebook = true;
@@ -10651,6 +10653,7 @@ function renderNotebookEditor() {
       isLoadingNotebook = false;
     }
     els.notebookStatus.textContent = "";
+    renderLucideIcons(els.notebookEditorHeader);
     return;
   }
   const title = themeTitle(notebookSelection.assunto);
