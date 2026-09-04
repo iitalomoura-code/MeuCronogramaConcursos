@@ -3937,7 +3937,34 @@ function entryDateValue(entry = {}) {
   ].filter(Boolean);
   for (const value of candidates) {
     const date = value instanceof Date ? value : new Date(value);
-    if (!Number.isNaN(date.getTime())) return date.getTime();
+    const timestamp = date.getTime();
+    // Datas de época vêm de campos legados vazios e não representam estudo.
+    if (!Number.isNaN(timestamp) && timestamp >= new Date(2000, 0, 1).getTime()) return timestamp;
+  }
+  return 0;
+}
+
+function entryHasRecordedStudyContact(entry = {}) {
+  const status = normalizeStatus(entry.status);
+  return status === "Concluído"
+    || status === "Em andamento"
+    || Number(entry.tempoEstudado) > 0
+    || Number(entry.questoes) > 0
+    || Number(entry.acertos) > 0;
+}
+
+function entryContactDateValue(entry = {}) {
+  if (!entryHasRecordedStudyContact(entry)) return 0;
+  const candidates = [
+    entry.completedAt,
+    entry.concluidoEm ? parseBrazilianDate(entry.concluidoEm) : null,
+    entry.savedAt,
+    entry.createdAt,
+  ].filter(Boolean);
+  for (const value of candidates) {
+    const date = value instanceof Date ? value : new Date(value);
+    const timestamp = date.getTime();
+    if (!Number.isNaN(timestamp) && timestamp >= new Date(2000, 0, 1).getTime()) return timestamp;
   }
   return 0;
 }
@@ -4175,7 +4202,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const initial = initialDiagnosisInfluence(materia);
   const errorSignals = errorSignalsForTarget(materia, assunto);
   const phase = currentExamPhaseState().profile;
-  const lastContact = selected.entries.map(entryDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
+  const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
   if (!engine?.diagnose) {
     const fallback = { available: false, level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
@@ -5386,7 +5413,7 @@ function activeCycleSubjectNames() {
 
 function lastSubjectContactAt(materia = "") {
   return adaptivePerformanceForSubject(materia)
-    .map((entry) => entryDateValue(entry))
+    .map((entry) => entryContactDateValue(entry))
     .filter(Boolean)
     .reduce((latest, value) => Math.max(latest, value), 0);
 }
@@ -5543,9 +5570,7 @@ function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } 
       lowResultCount,
       performanceDrop: recentPerformanceDrop(entries),
       highDifficulty: block.dificuldade === "Alta" || Number(subject.dominio) >= 4,
-      daysWithoutContact: subjectHistory.length
-        ? Math.max(0, Math.floor((Date.now() - subjectHistory.reduce((latest, entry) => Math.max(latest, entryDateValue(entry)), 0)) / (1000 * 60 * 60 * 24)))
-        : null,
+      daysWithoutContact: daysSinceLastSubjectContact(block.materia),
       incidenceApplied: Boolean(incidence?.applied),
       incidence: Math.min(1, (Number(incidence?.normalized) || 0) * phase.profile.incidenceMultiplier),
       examPhase: phase.effectivePhase,
