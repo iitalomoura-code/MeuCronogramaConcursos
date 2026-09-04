@@ -610,6 +610,12 @@ function themeDetails(value) {
   return colonIndex > 4 && colonIndex < 90 ? text.slice(colonIndex + 1).trim() : text;
 }
 
+function themeDetailsForRow(row = {}) {
+  if (Object.prototype.hasOwnProperty.call(row, "descricao")) return String(row.descricao || "").trim();
+  const legacyDetails = themeDetails(row.assunto || "");
+  return normalizeForMatch(legacyDetails) === normalizeForMatch(themeTitle(row.assunto || "")) ? "" : legacyDetails;
+}
+
 function estimateThemeSize(value) {
   const words = wordCount(value);
   const atoms = topicAtoms(value).length;
@@ -634,8 +640,12 @@ function estimateThemeDifficulty(value) {
 
 function enrichThemeRow(row) {
   const resumoTema = row.resumoTema && typeof row.resumoTema === "object" ? row.resumoTema : {};
+  const hasDescription = Object.prototype.hasOwnProperty.call(row, "descricao");
+  const descricao = String(row.descricao || "").trim();
+  const estimationText = [row.assunto, descricao].filter(Boolean).join(": ");
   return {
     ...row,
+    ...(hasDescription ? { descricao } : {}),
     estudar: row.estudar || "Sim",
     resumoTema: {
       focoPrincipal: resumoTema.focoPrincipal || "",
@@ -643,9 +653,9 @@ function enrichThemeRow(row) {
       checklistRevisao: resumoTema.checklistRevisao || "",
       sugestaoPratica: resumoTema.sugestaoPratica || "",
     },
-    tamanhoEstimado: row.tamanhoEstimado || estimateThemeSize(row.assunto),
-    blocosSugeridos: Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto),
-    dificuldadeEstimada: row.dificuldadeEstimada || estimateThemeDifficulty(row.assunto),
+    tamanhoEstimado: row.tamanhoEstimado || estimateThemeSize(estimationText),
+    blocosSugeridos: Number(row.blocosSugeridos) || estimateThemeBlocks(estimationText),
+    dificuldadeEstimada: row.dificuldadeEstimada || estimateThemeDifficulty(estimationText),
   };
 }
 
@@ -1911,7 +1921,7 @@ function contentProblemAnalysis(rows = state.rows) {
     const repeatedCount = titles.filter((title) => (titleCounts.get(title) || 0) > 1).length;
     group.rows.forEach((row) => {
       const title = themeTitle(row.assunto || "").trim();
-      const details = themeDetails(row.assunto || "").trim();
+      const details = themeDetailsForRow(row).trim();
       const reasons = [];
       const normalizedTitle = normalizeForMatch(title);
       const normalizedSubject = normalizeForMatch(row.materia || "");
@@ -1923,7 +1933,7 @@ function contentProblemAnalysis(rows = state.rows) {
       if (wordCount(details) > 44 || topicAtoms(details).length > 7) reasons.push("conteúdo extenso");
       if (reasons.length) problems.push({ row, rowIndex: rows.indexOf(row), subject: group.materia, title, reasons });
     });
-    if (group.rows.length === 1 && wordCount(themeDetails(group.rows[0].assunto || "")) > 44) {
+    if (group.rows.length === 1 && wordCount(themeDetailsForRow(group.rows[0])) > 44) {
       const item = problems.find((problem) => problem.row === group.rows[0]);
       const reason = "matéria com um único tema extenso";
       if (item) item.reasons.push(reason);
@@ -1943,7 +1953,7 @@ function contentProblemAnalysis(rows = state.rows) {
 
 function contentRowMatches(row, rowIndex, group, problemIndexes) {
   const term = normalizeForMatch(contentSearchTerm.trim());
-  const matchesSearch = !term || [group.materia, themeTitle(row.assunto), themeDetails(row.assunto)]
+  const matchesSearch = !term || [group.materia, themeTitle(row.assunto), themeDetailsForRow(row)]
     .some((value) => normalizeForMatch(value || "").includes(term));
   if (!matchesSearch) return false;
   if (contentFilter === "selected" && row.estudar === "Nao") return false;
@@ -1967,7 +1977,7 @@ function visibleContentGroups() {
 function renderContentSummary() {
   if (!els.contentSummary) return;
   const total = state.rows.filter((row) => row.assunto).length;
-  const contentItems = state.rows.reduce((sum, row) => sum + topicAtoms(themeDetails(row.assunto)).length, 0);
+  const contentItems = state.rows.reduce((sum, row) => sum + topicAtoms(themeDetailsForRow(row)).length, 0);
   const selected = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
   const problems = contentProblemAnalysis();
   els.contentSummary.innerHTML = state.rows.length ? summaryItems([
@@ -2324,7 +2334,7 @@ function renderRowsLegacy() {
           <div class="theme-card-main">
               ${topicFeedbackBadge(row)}
               <strong class="theme-title-text">${escapeHtml(themeTitle(row.assunto || ""))}</strong>
-              <p class="theme-details-text">${escapeHtml(shortText(themeDetails(row.assunto || ""), 180))}</p>
+              <p class="theme-details-text">${escapeHtml(shortText(themeDetailsForRow(row), 180))}</p>
             </div>
             <details class="topic-actions-menu">
               <summary aria-label="A\u00e7\u00f5es do tema">...</summary>
@@ -2341,7 +2351,7 @@ function renderRowsLegacy() {
                 <input class="topic-title-input theme-name-input" data-theme-title value="${escapeHtml(themeTitle(row.assunto || ""))}" aria-label="Nome do tema" />
               </label>
               <label>Assuntos inclu\u00eddos
-                <textarea data-theme-details placeholder="Assuntos inclu\u00eddos neste tema">${escapeHtml(themeDetails(row.assunto || ""))}</textarea>
+                <textarea data-theme-details placeholder="Assuntos inclu\u00eddos neste tema">${escapeHtml(themeDetailsForRow(row))}</textarea>
               </label>
               <label class="theme-notes-field">Observa\u00e7\u00f5es
                 <textarea data-field="observacoes" placeholder="Observa\u00e7\u00f5es sobre este tema">${escapeHtml(row.observacoes || "")}</textarea>
@@ -2452,7 +2462,7 @@ function editalMapSubjectPriority(materia = "") {
 function editalMapTopicMatchesFilter(topic) {
   const query = normalizeForMatch(editalMapSearchTerm);
   if (query) {
-    const searchable = normalizeForMatch(`${topic.materia} ${topic.assunto} ${themeDetails(topic.assunto)}`);
+    const searchable = normalizeForMatch(`${topic.materia} ${topic.assunto} ${themeDetailsForRow(topic)}`);
     if (!searchable.includes(query)) return false;
   }
   if (editalMapFilter === "not-started") return topic.status === "Não iniciado";
@@ -2527,7 +2537,7 @@ function renderEditalMap() {
               <article class="edital-map-topic ${topic.reviewPending ? "has-review" : ""}">
                 <div>
                   <strong>${escapeHtml(themeTitle(topic.assunto))}</strong>
-                  ${themeDetails(topic.assunto) ? `<span>${escapeHtml(shortText(themeDetails(topic.assunto), 150))}</span>` : ""}
+                  ${themeDetailsForRow(topic) ? `<span>${escapeHtml(shortText(themeDetailsForRow(topic), 150))}</span>` : ""}
                 </div>
                 <div class="edital-map-topic-meta">
                   ${editalMapStatusMarkup(topic)}
@@ -2560,7 +2570,7 @@ function renderRows(options = {}) {
       const subjectRows = group.rows.map((raw) => ({ raw, row: enrichThemeRow(raw) }));
       const fullSubject = allGroups.find((item) => normalizeForMatch(item.materia) === normalizeForMatch(group.materia)) || group;
       const studyCount = fullSubject.rows.filter((row) => row.estudar !== "Nao").length;
-      const contentCount = fullSubject.rows.reduce((sum, row) => sum + Math.max(1, topicAtoms(themeDetails(row.assunto)).length), 0);
+      const contentCount = fullSubject.rows.reduce((sum, row) => sum + Math.max(1, topicAtoms(themeDetailsForRow(row)).length), 0);
       const sourceSection = fullSubject.rows.map((row) => row?.origemEdital?.section).find(Boolean) || "";
       const key = normalizeForMatch(group.materia);
       const details = document.createElement("details");
@@ -2629,7 +2639,7 @@ function renderRows(options = {}) {
                 ${topicFeedbackBadge(row)}
               </div>
             </div>
-            <p class="theme-details-text">${highlightContentText(shortText(themeDetails(row.assunto || ""), 220))}</p>
+            <p class="theme-details-text">${highlightContentText(shortText(themeDetailsForRow(row), 220))}</p>
             ${groupingInfo ? '<p class="grouping-reason">' + escapeHtml(groupingInfo.reason) + '</p><details class="grouped-content-preview"' + (groupingInfo.confidence === "Alta" ? " open" : "") + '><summary>' + groupingInfo.items.length + ' conteúdos agrupados</summary><ul>' + groupingInfo.items.map((item, contentIndex) => '<li><span>' + escapeHtml(item) + '</span><button class="text-action" type="button" data-create-topic-from-content="' + contentIndex + '">Criar tema próprio</button><button class="text-action" type="button" data-move-grouped-content="' + contentIndex + '">Mover</button></li>').join("") + '</ul></details>' : ""}
             <div class="theme-meta">
               <span>${escapeHtml(row.tamanhoEstimado || estimateThemeSize(row.assunto))}</span>
@@ -2655,7 +2665,7 @@ function renderRows(options = {}) {
                 <input class="topic-title-input theme-name-input" data-theme-title value="${escapeHtml(themeTitle(row.assunto || ""))}" aria-label="Nome do tema" />
               </label>
               <label>Conte\u00fado do tema
-                <textarea data-theme-details placeholder="Assuntos inclu\u00eddos neste tema">${escapeHtml(themeDetails(row.assunto || ""))}</textarea>
+                <textarea data-theme-details placeholder="Assuntos inclu\u00eddos neste tema">${escapeHtml(themeDetailsForRow(row))}</textarea>
               </label>
               <label class="theme-notes-field">Observa\u00e7\u00f5es
                 <textarea data-field="observacoes" placeholder="Observa\u00e7\u00f5es sobre este tema">${escapeHtml(row.observacoes || "")}</textarea>
@@ -3506,6 +3516,7 @@ function uniqueSubjects(rows) {
       subject.assuntos.push(row.assunto);
       subject.temas.push({
         assunto: row.assunto,
+        ...(Object.prototype.hasOwnProperty.call(row, "descricao") ? { descricao: row.descricao || "" } : {}),
         conteudosOriginais: Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [],
         tamanhoEstimado: row.tamanhoEstimado || "",
         blocosSugeridos: Number(row.blocosSugeridos) || 0,
@@ -5051,6 +5062,7 @@ function blockRow(number, duration, item, type, estimate = {}) {
     duracao: duration,
     materia: item.materia,
     assunto: item.assunto,
+    descricao: item.descricao || "",
     metaId: item.metaId || "",
     metaTitulo: item.metaTitulo || themeTitle(item.assunto),
     metaConteudos: Array.isArray(item.metaConteudos) ? item.metaConteudos.slice() : [],
@@ -6911,7 +6923,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
         </header>
         <div class="focused-study-context ${isReview ? "is-review-context" : ""}">
           <strong>${isReview ? "Por que revisar agora" : "Conteúdo principal"}</strong>
-          <p>${escapeHtml(themeDetails(block.assunto) || block.assunto)}</p>
+          <p>${escapeHtml(block.conteudoBloco || block.descricao || themeDetails(block.assunto) || block.assunto)}</p>
           <span>${isReview ? escapeHtml(reviewReason) : `Bloco ${index + 1} de ${state.generatedBlocks.length}`} &middot; Tempo previsto: ${formatDuration(block.duracao)} &middot; ${priorityInfo(block.prioridade).label}</span>
           ${isReview ? `<small class="focused-review-sequence">Sugestão: revisar erros, reler pontos frágeis, resolver novas questões e registrar o resultado. ${Number(review?.questoesSugeridas) || 10} questões sugeridas.</small>` : ""}
         </div>
@@ -13242,10 +13254,11 @@ function saveManualTopicEdit(topic) {
     return false;
   }
   rememberContentUndo("Edição manual do tema.");
-  const assunto = title && details ? `${title}: ${details}` : title || details;
+  const assunto = title || details;
   state.rows[index] = enrichThemeRow({
     ...current,
     assunto,
+    descricao: details,
     conteudosOriginais: details ? topicAtoms(details) : [],
     agrupamentoPedagogico: undefined,
     editadoManualmente: true,

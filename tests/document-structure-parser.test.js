@@ -16,7 +16,8 @@ Sentido e emprego dos vocábulos; campos semânticos.
 assert.equal(portuguese.mode, "structured", "Taxonomia com título e descrição deve preservar a estrutura.");
 assert.equal(portuguese.rows.length, 2, "Cada título numerado deve gerar um tema.");
 assert.equal(portuguese.rows[0].conteudosOriginais.length, 1, "Ponto e vírgula em descrição estruturada não deve fragmentar o conteúdo.");
-assert.ok(portuguese.rows[0].assunto.includes("textos narrativos, descritivos e argumentativos"));
+assert.equal(portuguese.rows[0].assunto, "Interpretação, tipologia, gêneros e organização textual", "O título não pode receber a descrição do parágrafo seguinte.");
+assert.ok(portuguese.rows[0].descricao.includes("textos narrativos, descritivos e argumentativos"));
 assert.equal(portuguese.rows[0].outlineNumber, "1");
 
 const subareas = parser.analyze({ text: `
@@ -105,8 +106,8 @@ const sequentialDocxSubjects = parser.analyze({ nodes: [
 assert.equal(sequentialDocxSubjects.mode, "structured", "Sequência de matérias e listas do DOCX deve usar o modo estruturado.");
 assert.deepEqual([...new Set(sequentialDocxSubjects.rows.map((row) => row.materia))], ["LÍNGUA PORTUGUESA", "LÍNGUA INGLESA", "RACIOCÍNIO LÓGICO-MATEMÁTICO E ESTATÍSTICA"], "A reinicialização da lista deve delimitar matérias consecutivas.");
 assert.equal(sequentialDocxSubjects.rows.find((row) => row.materia === "LÍNGUA INGLESA" && row.outlineNumber === "1").sourceBlockType, "docx-numbered", "A lista automática do Word deve chegar ao row final com sua origem.");
-assert.ok(!sequentialDocxSubjects.rows.find((row) => row.materia === "LÍNGUA INGLESA").assunto.includes("Proposições"), "Conteúdo de Raciocínio Lógico não pode ser incorporado ao Inglês.");
-assert.ok(sequentialDocxSubjects.rows.find((row) => row.materia.startsWith("RACIOCÍNIO") && row.assunto.includes("Proposições; conectivos")), "A descrição deve permanecer no tema da matéria correta.");
+assert.ok(!sequentialDocxSubjects.rows.find((row) => row.materia === "LÍNGUA INGLESA").descricao.includes("Proposições"), "Conteúdo de Raciocínio Lógico não pode ser incorporado ao Inglês.");
+assert.ok(sequentialDocxSubjects.rows.find((row) => row.materia.startsWith("RACIOCÍNIO") && row.descricao.includes("Proposições; conectivos")), "A descrição deve permanecer no tema da matéria correta.");
 
 const acronymTopicsInDocx = parser.analyze({ nodes: [
   { type: "paragraph", text: "LEGISLAÇÃO TRIBUTÁRIA", sourceOrder: 0 },
@@ -117,5 +118,16 @@ const acronymTopicsInDocx = parser.analyze({ nodes: [
 ] });
 assert.deepEqual([...new Set(acronymTopicsInDocx.rows.map((row) => row.materia))], ["LEGISLAÇÃO TRIBUTÁRIA"], "Siglas em itens numerados devem permanecer na matéria aberta.");
 assert.deepEqual(acronymTopicsInDocx.rows.map((row) => row.assunto.split(":")[0]), ["CSLL", "IPI E IOF"]);
+
+const separatedStructuredFields = parser.analyze({ nodes: [
+  { type: "paragraph", text: "CONTABILIDADE GERAL", sourceOrder: 0 },
+  { type: "numbered-item", text: "Fundamentos, princípios e patrimônio", outlineNumber: "1", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 1 },
+  { type: "paragraph", text: "Conceito, objeto, objetivos e usuários da Contabilidade; princípios e normas brasileiras.", sourceOrder: 2 },
+  { type: "numbered-item", text: "Demonstrações contábeis", outlineNumber: "2", outlineLevel: 1, sourceBlockType: "docx-numbered", sourceOrder: 3 },
+  { type: "paragraph", text: "Balanço Patrimonial; DRE; DFC e notas explicativas.", sourceOrder: 4 },
+] });
+assert.equal(separatedStructuredFields.rows[0].assunto, "Fundamentos, princípios e patrimônio");
+assert.equal(separatedStructuredFields.rows[0].descricao, "Conceito, objeto, objetivos e usuários da Contabilidade; princípios e normas brasileiras.");
+assert.equal(separatedStructuredFields.rows[0].conteudosOriginais.length, 1, "Uma descrição estruturada continua sendo conteúdo interno de uma única meta.");
 
 console.log("OK - parser híbrido preserva estrutura, subáreas, notas editoriais e quebras de documento.");

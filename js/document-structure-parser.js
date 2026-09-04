@@ -133,20 +133,68 @@
         if (Number.isFinite(explicitValue) && explicitValue > 0) counter = explicitValue;
         const numberParts = ordered ? [...parentNumbers, counter] : parentNumbers;
         const outlineNumber = ordered ? numberParts.join(".") : "";
-        const text = clean(textWithBreaks(item, { withoutLists: true }));
-        if (text) {
+        const contentParts = [];
+        let inlineText = "";
+        let inlineBold = false;
+        const flushInline = () => {
+          const text = clean(inlineText);
+          if (text) contentParts.push({ text, bold: inlineBold });
+          inlineText = "";
+          inlineBold = false;
+        };
+        const appendLines = (value, bold = false) => {
+          String(value || "").split(/\n+/).map(clean).filter(Boolean).forEach((text) => contentParts.push({ text, bold }));
+        };
+        [...item.childNodes].forEach((child) => {
+          if (child.nodeType === 3) {
+            inlineText += child.textContent || "";
+            return;
+          }
+          if (child.nodeType !== 1) return;
+          const childTag = child.tagName.toLowerCase();
+          if (childTag === "br") {
+            flushInline();
+            return;
+          }
+          if (childTag === "ol" || childTag === "ul") {
+            flushInline();
+            return;
+          }
+          if (childTag === "p" || /^h[1-6]$/.test(childTag)) {
+            flushInline();
+            appendLines(textWithBreaks(child, { withoutLists: true }), Boolean(child.matches("strong,b") || child.querySelector("strong,b")));
+            return;
+          }
+          if (childTag === "strong" || childTag === "b") {
+            flushInline();
+            appendLines(textWithBreaks(child, { withoutLists: true }), true);
+            return;
+          }
+          inlineBold = inlineBold || childTag === "strong" || childTag === "b" || Boolean(child.querySelector("strong,b"));
+          inlineText += textWithBreaks(child, { withoutLists: true });
+        });
+        flushInline();
+        const [titlePart, ...descriptionParts] = contentParts;
+        if (titlePart?.text) {
           push({
             type: ordered ? "numbered-item" : "list-item",
             kind: "list",
-            text,
+            text: titlePart.text,
             outlineNumber,
             outlineLevel: ordered ? numberParts.length : 0,
             listIndex: counter,
             listLevel: parentNumbers.length,
-            bold: Boolean(item.querySelector("strong,b")),
+            bold: titlePart.bold,
             sourceBlockType: ordered ? "docx-numbered" : "docx-list",
           });
         }
+        descriptionParts.forEach((part) => push({
+          type: "paragraph",
+          kind: "paragraph",
+          text: part.text,
+          bold: part.bold,
+          sourceBlockType: "docx-item-description",
+        }));
         [...item.children].filter((child) => /^(OL|UL)$/i.test(child.tagName)).forEach((child) => walkList(child, numberParts));
         counter += 1;
       });
@@ -225,17 +273,18 @@
 
   function makeTopic(subject, section, subarea, item, descriptions, order) {
     const detailText = descriptions.map((entry) => entry.text).filter(Boolean);
-    const assunto = detailText.length ? `${item.text}: ${detailText.join(" ")}` : item.text;
+    const descricao = detailText.join(" ");
     return {
       materia: subject,
-      assunto,
+      assunto: item.text,
+      descricao,
       ordem: order,
       estudar: "Sim",
       observacoes: "",
       temaExplicito: true,
       structureSource: "user-structured",
       subarea: subarea || "",
-      conteudosOriginais: detailText.length ? detailText.slice() : [item.text],
+      conteudosOriginais: detailText.length ? detailText.slice() : [],
       outlineNumber: item.number,
       outlineLevel: item.level,
       sourceBlockType: item.sourceBlockType || "numbered-item",
@@ -251,7 +300,7 @@
         sourceBlockType: item.sourceBlockType || "numbered-item",
         sourceSubjectHeading: subject,
         originalText: [item.originalText, ...detailText].join("\n"),
-        parsedStructure: { type: "topic", number: item.number, text: item.text, descriptions: detailText.slice() },
+        parsedStructure: { type: "topic", number: item.number, text: item.text, description: descricao, descriptions: detailText.slice() },
       },
     };
   }
