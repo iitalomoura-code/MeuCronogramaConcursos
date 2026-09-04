@@ -7147,6 +7147,10 @@ body.auth-verified .auth-loading-screen {
   font-weight: 650;
 }
 
+.continue-phase-chip + .section-kicker {
+  margin-left: 12px;
+}
+
 .continue-phase-risk {
   display: block;
   max-width: 620px;

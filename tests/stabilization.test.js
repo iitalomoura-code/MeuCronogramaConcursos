@@ -18,7 +18,7 @@ assert.ok(app.includes("data-open-review-notebook"), "Revisões devem consultar 
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260903-notebook-recovery"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260903-phase-spacing"), "O CSS deve usar o cache-busting atual.");
 assert.ok(index.includes("app.js?v=20260903-topic-description"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/document-structure-parser.js?v=20260903-topic-description"), "O parser estrutural deve carregar antes do app.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
