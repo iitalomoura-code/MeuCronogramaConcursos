@@ -81,6 +81,7 @@ const THEME_GROUPS = [
 const state = {
   rows: [],
   contentOriginalRows: [],
+  contentDraftPendingConfirmation: false,
   pendingContentMigrationBackup: null,
   currentPlanId: "",
   activeStudyPlanId: "",
@@ -167,6 +168,7 @@ let contentFilter = "all";
 let contentUndoSnapshot = null;
 let contentSearchTimer = 0;
 let openSubjectKeys = new Set();
+let ignoredProgramValidationIssues = new Set();
 let editalMapSearchTerm = "";
 let editalMapFilter = "all";
 let editalMapOpenSubjects = new Set();
@@ -1966,7 +1968,7 @@ function highlightContentText(value, term = contentSearchTerm) {
   return escapeHtml(text.slice(0, originalStart)) + "<mark>" + escapeHtml(text.slice(originalStart, originalEnd)) + "</mark>" + escapeHtml(text.slice(originalEnd));
 }
 
-function contentProblemAnalysis(rows = state.rows) {
+function legacyContentProblemAnalysis(rows = state.rows) {
   const problems = [];
   subjectGroups(rows).forEach((group) => {
     const titles = group.rows.map((row) => normalizeForMatch(themeTitle(row.assunto || "")).trim()).filter(Boolean);
@@ -2004,6 +2006,57 @@ function contentProblemAnalysis(rows = state.rows) {
   return problems;
 }
 
+function programValidationResult(rows = state.rows) {
+  const validator = typeof window !== "undefined" ? window.ProgramValidator : null;
+  if (!validator?.analyze) return null;
+  return validator.analyze({
+    units: rows.map(canonicalProgramUnit),
+    subjectsWithoutTopics: lastProgramParseMeta.subjectsWithoutTopics || [],
+    parsingProblems: lastProgramParseMeta.parsingProblems || [],
+  });
+}
+
+function contentProblemAnalysis(rows = state.rows) {
+  const validation = programValidationResult(rows);
+  if (!validation) return legacyContentProblemAnalysis(rows);
+  return validation.issues
+    .filter((issue) => issue.severity === "error" || !ignoredProgramValidationIssues.has(issue.id))
+    .flatMap((issue) => {
+      const indexes = issue.affectedUnits.length ? issue.affectedUnits : [-1];
+      return indexes.map((rowIndex) => ({
+        row: rows[rowIndex] || null,
+        rowIndex,
+        subject: issue.materia,
+        title: issue.titulo,
+        severity: issue.severity,
+        issue,
+        reasons: [issue.message, issue.suggestion].filter(Boolean),
+      }));
+    });
+}
+
+function contentValidationIssues(rows = state.rows, { includeIgnored = false } = {}) {
+  const validation = programValidationResult(rows);
+  if (!validation) return [];
+  return validation.issues.filter((issue) => includeIgnored || issue.severity === "error" || !ignoredProgramValidationIssues.has(issue.id));
+}
+
+function applySafeProgramCorrections() {
+  const validator = typeof window !== "undefined" ? window.ProgramValidator : null;
+  if (!validator?.applySafeCorrections) return;
+  syncRowsFromTable();
+  const issues = contentValidationIssues(state.rows);
+  const fixable = issues.filter((issue) => issue.autoFix);
+  if (!fixable.length) {
+    notifyContent("N\u00e3o h\u00e1 corre\u00e7\u00f5es autom\u00e1ticas seguras neste momento.");
+    return;
+  }
+  rememberContentUndo("Corre\u00e7\u00f5es autom\u00e1ticas aplicadas.");
+  state.rows = validator.applySafeCorrections(state.rows, fixable).map(enrichThemeRow);
+  renderRows({ preserveState: true });
+  notifyContent(`${fixable.length} corre\u00e7\u00e3o${fixable.length === 1 ? "" : "\u00f5es"} segura${fixable.length === 1 ? "" : "s"} aplicada${fixable.length === 1 ? "" : "s"}.`);
+}
+
 function contentRowMatches(row, rowIndex, group, problemIndexes) {
   const term = normalizeForMatch(contentSearchTerm.trim());
   const matchesSearch = !term || [group.materia, themeTitle(row.assunto), themeDetailsForRow(row)]
@@ -2033,20 +2086,23 @@ function renderContentSummary() {
   const contentItems = state.rows.reduce((sum, row) => sum + topicAtoms(themeDetailsForRow(row)).length, 0);
   const selected = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
   const problems = contentProblemAnalysis();
+  const validationIssues = contentValidationIssues();
+  const pointCount = validationIssues.length || problems.length;
+  const errors = validationIssues.filter((issue) => issue.severity === "error").length;
   els.contentSummary.innerHTML = state.rows.length ? summaryItems([
     ["Mat\u00e9rias", subjectGroups().length],
     ["Temas", total],
     ["Itens identificados", contentItems],
-    ["Pontos para revisar", problems.length],
+    ["Pontos para revisar", pointCount],
   ]) : "";
   if (els.contentMatterCount) els.contentMatterCount.textContent = subjectGroups().length;
   if (els.contentThemeCount) els.contentThemeCount.textContent = total;
   if (els.contentSelectedCount) els.contentSelectedCount.textContent = selected;
-  if (els.contentProblemCount) els.contentProblemCount.textContent = problems.length;
+  if (els.contentProblemCount) els.contentProblemCount.textContent = pointCount;
   if (els.contentProblemSummary) {
-    els.contentProblemSummary.hidden = !problems.length;
-    els.contentProblemSummary.innerHTML = problems.length
-      ? "<i data-lucide=\"triangle-alert\"></i><strong>" + problems.length + " ponto" + (problems.length === 1 ? "" : "s") + " para revisar</strong><button class=\"text-action\" type=\"button\" data-show-content-problems>Revisar problemas</button>"
+    els.contentProblemSummary.hidden = !pointCount;
+    els.contentProblemSummary.innerHTML = pointCount
+      ? "<i data-lucide=\"triangle-alert\"></i><strong>" + pointCount + " ponto" + (pointCount === 1 ? "" : "s") + (errors ? " precisa" + (errors === 1 ? "" : "m") + " de corre\u00e7\u00e3o" : " para revisar") + "</strong><button class=\"text-action\" type=\"button\" data-show-content-problems>Revisar estrutura</button>"
       : "";
   }
   if (window.lucide) window.lucide.createIcons();
@@ -2622,7 +2678,17 @@ function renderRows(options = {}) {
   const allGroups = subjectGroups();
   const visibleGroups = visibleContentGroups();
   const problems = contentProblemAnalysis();
-  const problemByIndex = new Map(problems.map((problem) => [problem.rowIndex, problem]));
+  const problemByIndex = new Map();
+  problems.forEach((problem) => {
+    if (problem.rowIndex < 0) return;
+    const current = problemByIndex.get(problem.rowIndex);
+    if (!current) {
+      problemByIndex.set(problem.rowIndex, problem);
+      return;
+    }
+    current.reasons = [...new Set([...current.reasons, ...problem.reasons])];
+    if (problem.severity === "error") current.severity = "error";
+  });
   if (!openSubjectKeys.size && allGroups.length) openSubjectKeys.add(normalizeForMatch(allGroups[0].materia));
   if (contentSearchTerm.trim()) {
     visibleGroups.forEach((group) => openSubjectKeys.add(normalizeForMatch(group.materia)));
@@ -2700,7 +2766,7 @@ function renderRows(options = {}) {
                 ${row.editadoManualmente === true ? '<span class="content-badge edited">Editado</span>' : ""}
                 ${row.subarea ? '<span class="content-badge">Subárea · ' + escapeHtml(row.subarea) + '</span>' : ""}
                 ${groupingInfo ? '<span class="content-badge grouping">Agrupamento sugerido</span><span class="content-badge grouping-confidence ' + (groupingInfo.confidence === "Alta" ? "high" : "review") + '">' + (groupingInfo.confidence === "Alta" ? "Alta confiança" : "Revisar agrupamento") + '</span>' : ""}
-                ${problem ? '<span class="content-badge problem" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> Revisar</span>' : ""}
+                ${problem ? '<span class="content-badge problem' + (problem.severity === "error" ? " error" : "") + '" title="' + escapeHtml(problem.reasons.join("; ")) + '"><i data-lucide="triangle-alert"></i> ' + (problem.severity === "error" ? "Corrigir" : "Revisar") + '</span>' : ""}
                 ${topicFeedbackBadge(row)}
               </div>
             </div>
@@ -2719,9 +2785,10 @@ function renderRows(options = {}) {
               <button class="text-action" type="button" data-toggle-observation>Editar tema</button>
               <button class="text-action" type="button" data-split-topic>Dividir tema</button>
               <button class="text-action" type="button" data-move-topic>Mover para outra mat\u00e9ria</button>
-              <button class="text-action" type="button" data-promote-topic>Transformar em nova mat\u00e9ria</button>
-              <button class="text-action" type="button" data-duplicate-topic>Duplicar tema</button>
-              <button class="text-action danger" type="button" data-delete-topic>Excluir tema</button>
+               <button class="text-action" type="button" data-promote-topic>Transformar em nova mat\u00e9ria</button>
+               <button class="text-action" type="button" data-duplicate-topic>Duplicar tema</button>
+               ${problem?.issue && problem.issue.severity !== "error" ? '<button class="text-action" type="button" data-ignore-content-warning="' + escapeHtml(problem.issue.id) + '">Ignorar aviso</button>' : ""}
+               <button class="text-action danger" type="button" data-delete-topic>Excluir tema</button>
             </div>
           </details>
           <div class="topic-observation theme-edit-panel" hidden>
@@ -2802,6 +2869,7 @@ function clearImportedContent() {
   els.fileName.textContent = "Nenhum arquivo selecionado";
   state.rows = [];
   state.contentOriginalRows = [];
+  state.contentDraftPendingConfirmation = false;
   lastProgramParseMeta = { subjects: [], subjectsWithoutTopics: [] };
   showContentParserWarnings([]);
   markUnconfirmed();
@@ -2811,6 +2879,7 @@ function clearImportedContent() {
 }
 
 function markUnconfirmed() {
+  if (state.contentDraftPendingConfirmation) return;
   state.confirmed = false;
   updateExamPhaseStatus();
   state.planningBase = null;
@@ -3107,7 +3176,7 @@ async function applyPendingContentMigration() {
     };
   });
   state.rows = migrationRowsInSubjectOrder(nextRows);
-  if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
+  if (!state.contentDraftPendingConfirmation && (state.confirmed || state.planningBase)) refreshPlanningBaseFromRows({ preservePriorities: true });
   closePendingContentMigration({ restoreFocus: false });
   renderRows({ preserveState: true });
   await saveAppStateNow("Organização pedagógica aplicada");
@@ -3635,27 +3704,34 @@ function refreshPlanningBaseFromRows({ preservePriorities = true } = {}) {
   return validRows;
 }
 
-function openContentProblemsModal(count = contentProblemAnalysis().length) {
+function openContentProblemsModal(count = contentValidationIssues().length || contentProblemAnalysis().length) {
   if (!els.contentProblemsModal) return;
+  const issues = contentValidationIssues();
+  const errors = issues.filter((issue) => issue.severity === "error");
+  const fixable = issues.filter((issue) => issue.autoFix);
+  const canConfirm = !errors.length;
   els.contentProblemsModal.innerHTML = `
     <div class="content-problems-backdrop" data-close-content-problems></div>
     <div class="content-problems-dialog" role="dialog" aria-modal="true" aria-labelledby="contentProblemsTitle">
       <span class="content-problem-icon"><i data-lucide="triangle-alert"></i></span>
-      <h3 id="contentProblemsTitle">Confira o conteúdo antes de continuar</h3>
-      <p>Há ${count} ponto${count === 1 ? "" : "s"} que podem precisar de revisão. Você pode conferir agora ou confirmar mesmo assim.</p>
+      <h3 id="contentProblemsTitle">Confira a estrutura antes de continuar</h3>
+      <p>${errors.length ? "H\u00e1 uma estrutura que precisa de corre\u00e7\u00e3o antes da confirma\u00e7\u00e3o." : `H\u00e1 ${count} ponto${count === 1 ? "" : "s"} que pode${count === 1 ? "" : "m"} precisar de revis\u00e3o.`}</p>
       <div class="content-problems-dialog-actions">
         <button class="ghost-button" type="button" data-close-content-problems>Cancelar</button>
         <button class="ghost-button" type="button" data-review-content-problems>Conferir problemas</button>
-        <button class="primary-button" type="button" data-confirm-content-problems>Confirmar mesmo assim</button>
+        ${fixable.length ? '<button class="ghost-button" type="button" data-auto-correct-content>Corrigir automaticamente</button>' : ""}
+        ${canConfirm ? '<button class="primary-button" type="button" data-confirm-content-problems>Confirmar mesmo assim</button>' : ""}
       </div>
     </div>
   `;
   const title = els.contentProblemsModal.querySelector("#contentProblemsTitle");
   const message = els.contentProblemsModal.querySelector("p");
   const reviewButton = els.contentProblemsModal.querySelector("[data-review-content-problems]");
-  if (title) title.textContent = "Trechos para conferir";
-  if (message) message.textContent = `O leitor sinalizou ${count} trecho${count === 1 ? "" : "s"} que pode${count === 1 ? "" : "m"} precisar de ajuste na leitura do edital. Isso não é uma pendência de estudo e não impede a confirmação.`;
-  if (reviewButton) reviewButton.textContent = "Ver trechos sinalizados";
+  if (title) title.textContent = errors.length ? "Corrija a estrutura antes de continuar" : "Foi isso que o sistema entendeu";
+  if (message) message.textContent = errors.length
+    ? `${errors.length} problema${errors.length === 1 ? "" : "s"} impede${errors.length === 1 ? "" : "m"} a confirma\u00e7\u00e3o. Revise os itens marcados.`
+    : `A estrutura reconheceu ${programValidationResult()?.summary?.subjects || subjectGroups().length} mat\u00e9rias e ${programValidationResult()?.summary?.topics || state.rows.length} temas. ${count ? "Os avisos s\u00e3o apenas pontos para conferir e n\u00e3o alteram o conte\u00fado sozinhos." : "Estrutura reconhecida com boa confian\u00e7a."}`;
+  if (reviewButton) reviewButton.textContent = "Ver itens sinalizados";
   els.contentProblemsModal.hidden = false;
   if (window.lucide) window.lucide.createIcons();
   els.contentProblemsModal.querySelector("[data-review-content-problems]")?.focus();
@@ -3668,17 +3744,24 @@ function closeContentProblemsModal() {
 function confirmRows(options = {}) {
   syncRowsFromTable();
   renumberRows({ sync: false, preserveState: true });
+  const validationIssues = contentValidationIssues();
+  const blockingIssues = validationIssues.filter((issue) => issue.severity === "error");
+  if (blockingIssues.length) {
+    openContentProblemsModal(validationIssues.length);
+    return;
+  }
   const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
   if (!validRows.length) {
     void dialogAlert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
     return;
   }
-  const problems = contentProblemAnalysis();
+  const problems = validationIssues.length ? validationIssues : contentProblemAnalysis();
   if (problems.length && !options.force) {
     openContentProblemsModal(problems.length);
     return;
   }
 
+  state.contentDraftPendingConfirmation = false;
   refreshPlanningBaseFromRows({ preservePriorities: true });
   state.confirmed = true;
   updateExamPhaseStatus();
@@ -11745,6 +11828,7 @@ function captureAppState() {
     programText: els.programText.value,
     rows: state.rows,
     contentOriginalRows: state.contentOriginalRows,
+    contentDraftPendingConfirmation: state.contentDraftPendingConfirmation,
     pendingContentMigrationBackup: state.pendingContentMigrationBackup,
     confirmed: state.confirmed,
     planningBase: state.planningBase,
@@ -11790,6 +11874,7 @@ function applyAppSnapshot(saved = {}) {
   els.programText.value = saved.programText || "";
   state.rows = Array.isArray(saved.rows) ? saved.rows.map(enrichThemeRow) : [];
   state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows.map(enrichThemeRow) : [];
+  state.contentDraftPendingConfirmation = Boolean(saved.contentDraftPendingConfirmation);
   state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows
     ? saved.pendingContentMigrationBackup
     : null;
@@ -12317,6 +12402,7 @@ function blankAppSnapshot(name = "") {
     },
     programText: "",
     rows: [],
+    contentDraftPendingConfirmation: false,
     confirmed: false,
     planningBase: null,
     distribution: [],
@@ -13255,9 +13341,13 @@ els.processButton.addEventListener("click", async () => {
     : parsedRows;
   const warnings = programParserWarnings(pedagogicallyGroupedRows);
   state.rows = organizeRowsByTheme(pedagogicallyGroupedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  ignoredProgramValidationIssues = new Set();
+  state.contentDraftPendingConfirmation = true;
+  els.confirmationStatus.textContent = "Rascunho para confirma\u00e7\u00e3o";
+  els.confirmationStatus.classList.remove("confirmed");
   state.contentOriginalRows = copyContentRows(state.rows);
   showContentParserWarnings(warnings);
-  renderRows();
+  renderRows({ preserveState: true });
   notifyContent(warnings.length ? "Conte\u00fado organizado. Revise os avisos antes de confirmar." : "Conte\u00fado organizado para confer\u00eancia.", warnings.length ? "warning" : "success");
 });
 
@@ -13417,6 +13507,7 @@ function saveManualTopicEdit(topic) {
   const assunto = title || details;
   state.rows[index] = enrichThemeRow({
     ...current,
+    titulo: assunto,
     assunto,
     descricao: details,
     conteudosOriginais: details ? topicAtoms(details) : [],
@@ -13460,6 +13551,18 @@ els.topicsBody.addEventListener("click", async (event) => {
   if (event.target.closest("[data-confirm-content-problems]")) {
     closeContentProblemsModal();
     confirmRows({ force: true });
+    return;
+  }
+
+  const ignoredWarning = event.target.closest("[data-ignore-content-warning]");
+  if (ignoredWarning) {
+    const id = ignoredWarning.dataset.ignoreContentWarning;
+    if (!id) return;
+    ignoredProgramValidationIssues.add(id);
+    event.preventDefault();
+    ignoredWarning.closest(".topic-item")?.querySelector(".topic-actions-menu")?.removeAttribute("open");
+    renderRows({ preserveState: true });
+    notifyContent("Aviso ignorado nesta confer\u00eancia.");
     return;
   }
 
@@ -13600,7 +13703,7 @@ els.topicsBody.addEventListener("click", async (event) => {
       agrupamentoPedagogico: undefined,
       editadoManualmente: true,
     });
-    if (state.confirmed || state.planningBase) refreshPlanningBaseFromRows({ preservePriorities: true });
+    if (!state.contentDraftPendingConfirmation && (state.confirmed || state.planningBase)) refreshPlanningBaseFromRows({ preservePriorities: true });
     renderRows({ preserveState: true });
     void saveAppStateNow("Tema atualizado");
     notifyContent("Tema atualizado. A edição manual foi preservada.");
@@ -13773,6 +13876,11 @@ els.contentProblemsModal?.addEventListener("click", (event) => {
   if (event.target.closest("[data-confirm-content-problems]")) {
     closeContentProblemsModal();
     confirmRows({ force: true });
+    return;
+  }
+  if (event.target.closest("[data-auto-correct-content]")) {
+    closeContentProblemsModal();
+    applySafeProgramCorrections();
   }
 });
 
