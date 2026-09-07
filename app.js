@@ -5672,7 +5672,7 @@ function renderGeneratedSchedule() {
               <div class="goal-card-meta">
                 ${activityBadgeMarkup(block, "cycle-type-badge")}
                 ${display.isAdaptive ? `<span class="cycle-adaptive-label"><i data-lucide="sparkles"></i>Ajuste adaptativo</span>` : ""}
-                <label class="goal-duration-field">Dura\u00e7\u00e3o
+                <label class="goal-duration-field">
                   <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real do bloco ${block.bloco}" />
                 </label>
                 ${display.questions ? `<span class="cycle-question-count">${display.questions} quest\u00f5es</span>` : ""}

@@ -3971,9 +3971,9 @@ textarea:focus {
 }
 
 .semantic-activity.activity-study {
-  border-color: color-mix(in srgb, var(--color-positive) 35%, var(--border));
-  background: var(--surface-teal-soft);
-  color: var(--color-positive);
+  border-color: color-mix(in srgb, var(--color-intelligence) 35%, var(--border));
+  background: var(--surface-violet-soft);
+  color: var(--primary-soft-text);
 }
 
 .semantic-activity.activity-diagnostic {
@@ -3982,7 +3982,12 @@ textarea:focus {
   color: var(--primary-soft-text);
 }
 
-.semantic-activity.activity-questions,
+.semantic-activity.activity-questions {
+  border-color: color-mix(in srgb, var(--color-study) 38%, var(--border));
+  background: var(--surface-blue-soft);
+  color: var(--color-study);
+}
+
 .semantic-activity.activity-review {
   border-color: color-mix(in srgb, var(--color-review) 38%, var(--border));
   background: var(--surface-cyan-soft);
@@ -4045,11 +4050,13 @@ textarea:focus {
   border-color: color-mix(in srgb, var(--color-positive) 82%, var(--border));
   background: var(--color-positive);
   color: var(--primary-contrast);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-positive) 28%, transparent);
 }
 
 .primary-button.study-play-button:hover:not(:disabled) {
   border-color: var(--color-positive);
   background: color-mix(in srgb, var(--color-positive) 84%, var(--text));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--color-positive) 38%, transparent);
 }
 
 .review-badge {
@@ -8392,8 +8399,8 @@ textarea:focus {
 }
 
 .continue-meta-grid > .continue-meta-status {
-  border-color: color-mix(in srgb, var(--color-positive) 24%, var(--border));
-  background: var(--surface-teal-soft);
+  border-color: var(--border);
+  background: var(--soft);
 }
 
 .continue-meta-grid > .continue-meta-priority {
@@ -8408,6 +8415,19 @@ textarea:focus {
 .continue-meta-grid .priority-indicator {
   width: fit-content;
 }
+
+:is(.continue-meta-grid, .goal-card-meta) .priority-indicator.priority-level-1 { color: var(--color-positive); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-indicator.priority-level-2 { color: var(--color-review); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-indicator.priority-level-3,
+:is(.continue-meta-grid, .goal-card-meta) .priority-indicator.priority-level-4 { color: var(--badge-high-text); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-indicator.priority-level-5 { color: var(--color-critical); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-level-1 .dot.filled { background: var(--color-positive); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-level-2 .dot.filled { background: var(--color-review); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-level-3 .dot.filled,
+:is(.continue-meta-grid, .goal-card-meta) .priority-level-4 .dot.filled { background: var(--color-attention); }
+:is(.continue-meta-grid, .goal-card-meta) .priority-level-5 .dot.filled { background: var(--color-critical); }
+
+.continue-meta-cycle strong { color: var(--color-study); }
 
 .continue-meta-grid strong { font-size: 13px; font-weight: 650; }
 
@@ -9958,7 +9978,7 @@ textarea:focus {
 }
 
 .cycle-goal-card.cycle-activity-review { border-left-color: var(--color-review); }
-.cycle-goal-card.cycle-activity-study { border-left-color: var(--color-positive); }
+.cycle-goal-card.cycle-activity-study { border-left-color: var(--primary); }
 .cycle-goal-card.cycle-activity-questions { border-left-color: var(--color-study); }
 .cycle-goal-card.cycle-activity-diagnostic { border-left-color: var(--primary); }
 .cycle-goal-card.cycle-activity-reinforcement { border-left-color: var(--color-attention); }
@@ -10634,8 +10654,8 @@ textarea:focus {
 }
 
 .goal-status {
-  border-color: color-mix(in srgb, var(--color-positive) 25%, var(--border));
-  background: var(--surface-teal-soft);
+  border-color: var(--border);
+  background: var(--soft);
 }
 
 .goal-status .status-badge {
