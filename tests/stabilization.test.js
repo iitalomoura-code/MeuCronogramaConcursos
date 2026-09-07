@@ -19,13 +19,13 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260907-design-system-2"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260907-design-system"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260907-contact-date-fix"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260907-program-validator"), "O validador deve carregar depois do modelo canônico e antes do app.");
 assert.ok(index.includes("js/document-structure-parser.js?v=20260907-canonical-program"), "O parser estrutural deve carregar antes do app.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
 assert.ok(index.includes("js/continue-recommendation.js?v=20260902-diagnosis-override"), "O motor de recomendação deve carregar antes do app.");
-assert.ok(index.includes("js/study-alerts.js?v=20260902-unified-mastery"), "A central de alertas deve ser carregada antes do app.");
+assert.ok(index.includes("js/study-alerts.js?v=20260907-contact-date-fix"), "A central de alertas deve ser carregada antes do app.");
 assert.ok(styles.includes("overflow-x: hidden;\n  overflow-y: auto;"), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('id="signOutButton"'), "Tema, configurações e sair devem permanecer no rodapé da sidebar.");
 assert.ok(index.includes("js/incidence.js?v=20260805-incidence-fgv"), "A base de incidÃªncia deve ser carregada antes do app.");

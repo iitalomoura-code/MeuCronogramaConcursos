@@ -23,7 +23,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact };`;
 const noop = () => {};
 const context = {
   console,
@@ -44,6 +44,10 @@ assert.strictEqual(runtime.entryDateValue({ savedAt: "1970-01-01T00:00:00.000Z" 
 assert.strictEqual(runtime.entryHasRecordedStudyContact({ status: "Não iniciado", savedAt: "2026-09-03T12:00:00.000Z" }), false, "Bloco apenas criado não representa contato de estudo.");
 assert.strictEqual(runtime.entryContactDateValue({ status: "Não iniciado", savedAt: "1970-01-01T00:00:00.000Z" }), 0, "Bloco pendente não pode gerar dias sem contato.");
 assert.strictEqual(runtime.entryContactDateValue({ status: "Concluído", completedAt: "2026-09-02T12:00:00.000Z" }), Date.parse("2026-09-02T12:00:00.000Z"), "Conclusão real deve continuar registrando o último contato.");
+assert.strictEqual(runtime.evolutionEntryDate({ status: "Não iniciado", savedAt: "1970-01-01T00:00:00.000Z" }), null, "A evolução deve descartar datas de época legadas.");
+const untouchedEvolutionEntry = runtime.evolutionEntryFromBlock({ materia: "Nova", assunto: "Tema", status: "Não iniciado", savedAt: "1970-01-01T00:00:00.000Z" }, { current: true });
+assert.strictEqual(untouchedEvolutionEntry.hasContact, false, "Bloco apenas criado não pode ser tratado como contato no painel.");
+assert.strictEqual(runtime.alertDaysWithoutContact("Nova", [untouchedEvolutionEntry]), null, "Tema novo deve permanecer sem contagem de dias até o primeiro contato real.");
 runtime.state.rows = [
   { materia: "Alta", assunto: "Tema curto", estudar: "Sim", tamanhoEstimado: "Curto", blocosSugeridos: 1 },
   { materia: "Baixa", assunto: "Tema longo com vários itens e exceções", estudar: "Sim", tamanhoEstimado: "Longo", blocosSugeridos: 2 },

@@ -6682,10 +6682,11 @@ function continueAvailableReviews() {
 }
 
 function alertDaysWithoutContact(materia, entries = evolutionEntries()) {
+  const minimumValidContact = new Date(2000, 0, 1).getTime();
   const latest = entries
-    .filter((entry) => normalizeForMatch(entry.materia) === normalizeForMatch(materia))
+    .filter((entry) => entry.hasContact === true && normalizeForMatch(entry.materia) === normalizeForMatch(materia))
     .map((entry) => entry.date instanceof Date ? entry.date : new Date(entry.date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .filter((date) => !Number.isNaN(date.getTime()) && date.getTime() >= minimumValidContact)
     .sort((a, b) => b - a)[0];
   return latest ? Math.max(0, Math.floor((Date.now() - latest.getTime()) / 86400000)) : null;
 }
@@ -6734,18 +6735,22 @@ function refreshStudyAlerts() {
   const subjects = evolutionSubjectData(entries, progress, projection);
   const predictive = buildPredictiveEvolution(progress, subjects);
   const reviewLoad = alertReviewLoad();
-  const inputSubjects = subjects.map((subject) => ({
-    name: subject.materia,
-    coverage: subject.progress,
-    performance: subject.performance.percentual,
-    questions: subject.performance.questoes,
-    performanceTrend: subject.performance.trend.label,
-    priority: subject.priority.percent,
-    openReviews: Number(reviewLoad.bySubject?.[normalizeForMatch(subject.materia)]) || 0,
-    reprograms: subject.reprogramacoes,
-    daysWithoutContact: alertDaysWithoutContact(subject.materia, entries),
-    diagnosis: masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 }),
-  }));
+  const inputSubjects = subjects.map((subject) => {
+    const daysWithoutContact = alertDaysWithoutContact(subject.materia, entries);
+    return {
+      name: subject.materia,
+      coverage: subject.progress,
+      performance: subject.performance.percentual,
+      questions: subject.performance.questoes,
+      performanceTrend: subject.performance.trend.label,
+      priority: subject.priority.percent,
+      openReviews: Number(reviewLoad.bySubject?.[normalizeForMatch(subject.materia)]) || 0,
+      reprograms: subject.reprogramacoes,
+      daysWithoutContact,
+      hasContact: daysWithoutContact !== null,
+      diagnosis: masteryDiagnosisForTarget({ materia: subject.materia, prioridade: (Number(subject.priority?.percent) || 0) / 100 }),
+    };
+  });
   const next = engine.build({
     subjects: inputSubjects,
     priorityReviews: reviewLoad.count,
@@ -8931,10 +8936,11 @@ function evolutionActivityLabel(value = "") {
 }
 
 function evolutionEntryDate(block = {}, fallback = "", isCurrent = false) {
+  const minimumValidContact = new Date(2000, 0, 1).getTime();
   const candidates = [block.atualizadoEm, block.completedAt, block.savedAt, block.concluidoEm, fallback].filter(Boolean);
   for (const candidate of candidates) {
     const date = candidate instanceof Date ? candidate : parseBrazilianDate(candidate) || new Date(candidate);
-    if (!Number.isNaN(date.getTime())) return date;
+    if (!Number.isNaN(date.getTime()) && date.getTime() >= minimumValidContact) return date;
   }
   return isCurrent && (Number(block.questoes) > 0 || Number(block.tempoEstudado) > 0) ? new Date() : null;
 }
@@ -8964,6 +8970,7 @@ function evolutionEntryFromBlock(block = {}, meta = {}) {
     metaConteudos: Array.isArray(block.metaConteudos) ? block.metaConteudos.slice() : Array.isArray(block.conteudosOriginais) ? block.conteudosOriginais.slice() : [],
     conteudoBloco: block.conteudoBloco || "",
     date,
+    hasContact: Boolean(meta.completed) || entryHasRecordedStudyContact(block),
     source: meta.source || "unknown",
     completed: status === "Concluído" || Boolean(meta.completed),
   };

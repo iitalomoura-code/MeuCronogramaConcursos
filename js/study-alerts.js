@@ -22,7 +22,14 @@
     const coverage = Number(subject.coverage);
     const performance = Number(subject.performance);
     const questions = Number(subject.questions) || 0;
-    const daysWithoutContact = Number(subject.daysWithoutContact);
+    const rawDaysWithoutContact = subject.daysWithoutContact;
+    const hasContact = subject.hasContact !== false
+      && rawDaysWithoutContact !== null
+      && typeof rawDaysWithoutContact !== "undefined"
+      && rawDaysWithoutContact !== "";
+    const daysWithoutContact = hasContact && Number.isFinite(Number(rawDaysWithoutContact))
+      ? Math.max(0, Number(rawDaysWithoutContact))
+      : null;
     const reviews = Number(subject.openReviews) || 0;
     const reprograms = Number(subject.reprograms) || 0;
     const diagnosis = subject.diagnosis || {};
@@ -40,7 +47,7 @@
       score += 3;
     }
     if (diagnosis.trend?.label === "falling" || (!hasDiagnosis && questions >= 30 && subject.performanceTrend === "Queda")) { reasons.push("PERFORMANCE_DROP"); score += 2; }
-    if (Number.isFinite(daysWithoutContact) && daysWithoutContact >= (isImportant ? 10 : 14)) { reasons.push("LONG_TIME_NO_CONTACT"); score += isImportant ? 2 : 1; }
+    if (hasContact && Number.isFinite(daysWithoutContact) && daysWithoutContact >= (isImportant ? 10 : 14)) { reasons.push("LONG_TIME_NO_CONTACT"); score += isImportant ? 2 : 1; }
     if (!hasDiagnosis && reprograms >= 2) { reasons.push("REINFORCEMENT_REQUIRED"); score += 1; }
     if (isImportant && coverage === 0 && Number(exam.weeksToExam) <= 8) { reasons.push("CONTENT_NOT_STARTED"); score += 2; }
     if (isImportant && coverage < .50 && exam.coverageRisk) { reasons.push("COVERAGE_RISK"); score += 1; }
@@ -53,7 +60,7 @@
       severity: severityFor(score),
       score,
       reasonCodes: reasons,
-      metrics: { coverage, performance, questions, daysWithoutContact, reviews, reprograms, priority, diagnosisLevel: diagnosis.level || "", diagnosisConfidence: Number(diagnosis.confidence) || 0, diagnosisTrend: diagnosis.trend?.label || "", diagnosisReasons: diagnosis.reasons || [], diagnosisAction: diagnosis.action?.kind || "" },
+      metrics: { coverage, performance, questions, daysWithoutContact, hasContact, reviews, reprograms, priority, diagnosisLevel: diagnosis.level || "", diagnosisConfidence: Number(diagnosis.confidence) || 0, diagnosisTrend: diagnosis.trend?.label || "", diagnosisReasons: diagnosis.reasons || [], diagnosisAction: diagnosis.action?.kind || "" },
     };
   }
 

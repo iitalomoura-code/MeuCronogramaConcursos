@@ -59,6 +59,24 @@ assert.ok(diagnosedSubject.reasonCodes.includes("MASTERY_ATTENTION"), "Alertas d
 assert.ok(diagnosedSubject.reasonCodes.includes("PERFORMANCE_DROP"), "Alertas devem ler trend.label corretamente.");
 assert.ok(!diagnosedSubject.reasonCodes.includes("LOW_PERFORMANCE"), "Com diagnóstico disponível, não deve haver uma régua paralela de desempenho.");
 
+const neverContacted = engine.build({
+  now,
+  exam: { weeksToExam: 6, coverageRisk: false, confident: false },
+  subjects: [{
+    name: "Direito Constitucional",
+    coverage: 0,
+    performance: 0,
+    questions: 0,
+    priority: 80,
+    daysWithoutContact: 20703,
+    hasContact: false,
+  }],
+});
+const firstContactAlert = neverContacted.find((item) => item.subjectName === "Direito Constitucional");
+assert.ok(firstContactAlert, "Tema prioritário ainda sem contato pode continuar recebendo alerta de cobertura.");
+assert.ok(!firstContactAlert.reasonCodes.includes("LONG_TIME_NO_CONTACT"), "Tema nunca estudado não pode herdar dias desde 1970.");
+assert.strictEqual(firstContactAlert.metrics.daysWithoutContact, null, "A métrica sem contato real deve permanecer nula.");
+
 const dismissed = first.map((item) => item.type === "SUBJECT_ATTENTION" ? { ...item, dismissedAt: now.toISOString() } : item);
 const unchanged = engine.build({ ...baseline, existing: dismissed, now: new Date("2026-08-19T12:00:00.000Z") });
 assert.ok(unchanged.find((item) => item.type === "SUBJECT_ATTENTION").dismissedAt, "Um alerta dispensado deve permanecer oculto enquanto a situação não mudar.");
