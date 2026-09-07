@@ -106,6 +106,7 @@ const state = {
   interventionHistory: [],
   notebook: {},
   activeFocusSession: null,
+  adaptiveSelection: null,
   locked: false,
   setup: { status: "complete", flowVersion: 2, currentStep: 6, completedSteps: [1, 2, 3, 4, 5, 6] },
 };
@@ -4395,6 +4396,8 @@ function adaptivePriorityAdjustment(target = {}) {
   const mastery = masteryDiagnosisForTarget(target);
   const reviewAttention = mastery.reviewAttention || reviewAttentionFor(materia, assunto);
   const adaptiveReview = adaptiveReviewFor(materia, assunto);
+  const intervention = learningInterventionFor(materia, assunto);
+  const planning = window.AdaptiveLearningPolicy?.decision?.({ diagnosis: mastery, intervention }) || null;
   const adjustment = Number(mastery.priorityAdjustment) || 0;
   const reasons = mastery.reasons || [];
 
@@ -4409,6 +4412,7 @@ function adaptivePriorityAdjustment(target = {}) {
     reviewAttention,
     adaptiveReview,
     mastery,
+    planning,
     basis: mastery.basis,
     hasContact: mastery.hasContact,
   };
@@ -4527,16 +4531,20 @@ function renderLearningDiagnosis() {
 }
 
 function reinforceLearningDiagnosisTopic(materia = "", assunto = "") {
-  const topic = learningRecoveryQueue().find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia) && topicMatches({ materia: item.materia, assunto: item.assunto }, materia, assunto));
+  const topic = learningRecoveryQueue().find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia) && normalizeForMatch(item.assunto) === normalizeForMatch(assunto));
   if (!topic) return;
   continueManualOverride = {
+    id: `adaptive-selection:${programUnitKey(topic)}`,
     materia: topic.materia,
+    subarea: topic.subarea || "",
     assunto: topic.assunto,
     diagnosis: topic.diagnosis,
     action: topic.action,
     origin: "diagnostico",
     createdAt: new Date().toISOString(),
   };
+  state.adaptiveSelection = continueManualOverride;
+  scheduleAutoSave();
   switchTab("continuar");
 }
 
@@ -4834,10 +4842,10 @@ function estimateBlockDuration({ subject = {}, topic = "", activityType = "Teori
   }
 
   const subjectDifficulty = Number(subject.dominio) || 0;
-  const lowPerformance = recentAccuracy !== null && recentAccuracy < 0.6;
+  const lowPerformance = ["critical", "deficiency"].includes(adaptive?.mastery?.level);
   if (!review && !questionsOnly && (topicDifficulty === "Alta" || subjectDifficulty >= 4 || lowPerformance)) {
     minutes = Math.max(minutes, 90);
-    reasons.push(lowPerformance ? `acerto recente de ${Math.round(recentAccuracy * 100)}%` : "dificuldade alta");
+    reasons.push(lowPerformance ? (adaptive?.mastery?.action?.label || "diagnóstico pede reforço") : "dificuldade alta");
   }
 
   if (history.samples >= DURATION_HISTORY_MIN_SAMPLES) {
@@ -5175,15 +5183,14 @@ function activityForQueueItem(item = {}) {
   const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
   const diagnosedActivity = window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
   const entries = adaptivePerformanceForTopic(item.materia, item.assunto);
-  const answered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
-  const recentAccuracy = accuracyFromEntries(answered);
+  const diagnosis = masteryDiagnosisForTarget({ materia: item.materia, assunto: item.assunto });
   const phase = currentExamPhaseState();
   return window.ExamPhaseEngine?.suggestActivity({
     phase: phase.effectivePhase,
     examDate: els.examDate?.value,
     currentActivity: diagnosedActivity,
     hasContact: entries.some((entry) => normalizeStatus(entry.status) !== "Não iniciado" || Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0 || Boolean(entry.concluidoEm || entry.completedAt)),
-    lowPerformance: recentAccuracy !== null && recentAccuracy < 0.75,
+    lowPerformance: ["critical", "deficiency", "attention"].includes(diagnosis.level),
     reviewAvailable: review.overdue.length > 0 || review.today.length > 0,
   }) || diagnosedActivity;
 }
@@ -5763,10 +5770,6 @@ function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } 
     const subjectHistory = subjectEntries(block.materia);
     const topicEntries = subjectHistory.filter((entry) => topicMatches(entry, block.materia, block.assunto));
     const entries = topicEntries.length ? topicEntries : subjectHistory;
-    const answered = entries.filter((entry) => Number(entry.questoes) > 0).slice(-6);
-    const recentAccuracy = accuracyFromEntries(answered);
-    const recentQuestions = answered.reduce((sum, entry) => sum + Number(entry.questoes || 0), 0);
-    const lowResultCount = answered.slice(-4).filter((entry) => Number(entry.questoes) >= 5 && Number(entry.percentual) < 0.75).length;
     const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
     const subject = subjectPlanningData(block.materia);
     const scheduling = schedulingPriorityForTarget({ ...block, subject, prioridadeBase: block.prioridadeBase ?? block.prioridade });
@@ -5778,16 +5781,12 @@ function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } 
       assunto: block.assunto,
       minutes: Math.min(45, Math.max(30, Math.round((Number(block.duracao) || 0.5) * 60))),
       priority: scheduling.adjusted,
-      recentAccuracy,
-      recentQuestions,
-      lowResultCount,
-      performanceDrop: recentPerformanceDrop(entries),
-      highDifficulty: block.dificuldade === "Alta" || Number(subject.dominio) >= 4,
       daysWithoutContact: daysSinceLastSubjectContact(block.materia),
       incidenceApplied: Boolean(incidence?.applied),
       incidence: Math.min(1, (Number(incidence?.normalized) || 0) * phase.profile.incidenceMultiplier),
       examPhase: phase.effectivePhase,
       diagnosis: masteryDiagnosisForTarget({ materia: block.materia, assunto: block.assunto, prioridade: scheduling.adjusted }),
+      intervention: learningInterventionFor(block.materia, block.assunto),
     };
   });
   return window.StudyPlanComposer?.composeAdaptiveCandidates?.({ candidates, plannedHours, examContext: examContext || weeklyExamContext() }) || candidates;
@@ -6142,8 +6141,8 @@ function continueDerivedSnapshot() {
     const weeklyReinforcement = weeklyReinforcementForBlock(block);
     const weeklyAdjustment = weeklyAdjustmentForBlock(block);
     const level = adaptive.mastery?.level || "";
-    const diagnosticRecovery = ["critical", "deficiency", "attention", "insufficient"].includes(level)
-      ? { level, action: adaptive.mastery?.action || {}, confidence: Number(adaptive.mastery?.confidence) || 0 }
+    const diagnosticRecovery = adaptive.planning?.active
+      ? { level, action: adaptive.mastery?.action || {}, confidence: Number(adaptive.mastery?.confidence) || 0, planning: adaptive.planning }
       : null;
     return {
       adaptive,
@@ -6208,7 +6207,9 @@ function manualOverrideEntry() {
 
 function clearContinueManualOverride() {
   continueManualOverride = null;
+  state.adaptiveSelection = null;
   continueSuggestionOffset = 0;
+  scheduleAutoSave();
   renderContinuePanel();
 }
 
@@ -6295,25 +6296,22 @@ function buildPerformanceInsights(skipReason = "") {
     const answered = entries.filter((entry) => Number(entry.questoes) > 0);
     const recent = answered.slice(-6);
     const recentAccuracy = accuracyFromEntries(recent);
-    const highDifficulty = entries.slice(-6).filter((entry) => entry.dificuldade === "Alta").length;
     const reprograms = entries.filter((entry) => normalizeStatus(entry.status) === "Reprogramar").length;
     const adaptive = adaptivePriorityAdjustment({ materia });
     const trend = splitPerformanceGroups(answered);
 
-    if (recentAccuracy !== null && (recentAccuracy < 0.6 || highDifficulty > 0 || adaptive.adjustment >= 0.18)) {
-      const details = [];
-      if (recentAccuracy !== null) details.push(`${Math.round(recentAccuracy * 100)}% de acerto recente`);
-      if (highDifficulty > 0) details.push("dificuldade alta");
+    if (["critical", "deficiency"].includes(adaptive.mastery?.level)) {
+      const details = adaptive.mastery.reasons || [];
       addInsight({
         type: "reinforcement",
         rank: 90 + (adaptive.adjustment * 100),
         title: `${materia} precisa de refor\u00e7o`,
-        detail: `${details.join(" e ")}.`,
+        detail: `${details.join(" e ") || adaptive.mastery.action?.text || "O diagn\u00f3stico recomenda refor\u00e7o."}.`,
         subject: materia,
       });
     }
 
-    if (trend && trend.recentAccuracy - trend.previousAccuracy >= 0.12 && trend.recentAccuracy >= 0.75) {
+    if (adaptive.mastery?.trend?.label === "improving" && trend) {
       addInsight({
         type: "evolving",
         rank: 74 + ((trend.recentAccuracy - trend.previousAccuracy) * 100),
@@ -6323,7 +6321,7 @@ function buildPerformanceInsights(skipReason = "") {
       });
     }
 
-    if (recentAccuracy !== null && recentAccuracy >= 0.75 && recent.length >= 3 && !recentPerformanceDrop(entries)) {
+    if (recentAccuracy !== null && ["adequate", "strong"].includes(adaptive.mastery?.level) && adaptive.mastery?.trend?.label !== "falling") {
       addInsight({
         type: "stable",
         rank: 40 + recentAccuracy * 10,
@@ -6775,6 +6773,8 @@ function normalizeActiveFocusSession(session) {
     createdAt: session.createdAt || new Date().toISOString(),
     lastUpdatedAt: session.lastUpdatedAt || new Date().toISOString(),
     draft: normalizeFocusDraft(session.draft || session, block),
+    standaloneReview: Boolean(session.standaloneReview),
+    persistStandalone: Boolean(session.persistStandalone),
   };
 }
 
@@ -6846,7 +6846,7 @@ function ensureFocusedSessionPeriodicSave() {
 }
 
 function persistFocusedSession({ immediate = false, label = "Sessão atualizada" } = {}) {
-  if (focusedStudySession?.standaloneReview) return Promise.resolve(true);
+  if (focusedStudySession?.standaloneReview && !focusedStudySession?.persistStandalone) return Promise.resolve(true);
   if (!syncFocusedSessionToState() || isRestoring || !state.currentPlanId) return Promise.resolve(false);
   clearTimeout(focusedStudyPersistenceTimer);
   if (immediate) return saveAppStateNow(label);
@@ -6974,7 +6974,7 @@ function suspendFocusedStudy({ silent = false } = {}) {
 
   // Sessões de revisão temporárias existem somente enquanto o modo focado está aberto.
   // As sessões de estudo normais permanecem no estado e podem ser retomadas pela tela Continuar.
-  if (session.standaloneReview) {
+  if (session.standaloneReview && !session.persistStandalone) {
     void closeFocusedStudy({ discard: true });
     return;
   }
@@ -6992,7 +6992,7 @@ function clearOrphanedFocusedSession() {
   if (!session) return false;
   const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
   const block = state.generatedBlocks[index];
-  const temporaryReview = Boolean(session.standaloneReview || block?.reviewSessionOnly);
+  const temporaryReview = Boolean((session.standaloneReview || block?.reviewSessionOnly) && !session.persistStandalone);
   const linkedBlock = Boolean(block) && (!session.blockId || focusBlockKey(block, index) === session.blockId);
   if (!temporaryReview && linkedBlock) return false;
 
@@ -7013,12 +7013,23 @@ async function closeFocusedStudy(options = {}) {
   const session = focusedStudySession || state.activeFocusSession;
   const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
   const standaloneReview = Boolean(session?.standaloneReview || state.generatedBlocks[index]?.reviewSessionOnly);
-  if (!options.discard && !standaloneReview) {
+  const persistentStandalone = Boolean(session?.persistStandalone);
+  if (!options.discard && persistentStandalone) {
+    syncFocusedSessionToState();
+    void persistFocusedSession({ immediate: true, label: "Sessão salva" });
+    stopFocusedTimerInterval();
+    removeFocusedStudyOverlay();
+    focusedStudyIndex = -1;
+    focusedStudySession = null;
+    if (!options.silent) renderContinuePanel();
+    return;
+  }
+  if (!options.discard && (!standaloneReview || persistentStandalone)) {
     // The overlay must disappear before any local serialization or cloud request.
     void persistFocusedSession({ immediate: true, label: "Sessão salva" });
   }
   stopFocusedTimerInterval();
-  if (standaloneReview && index >= 0) {
+  if (standaloneReview && !persistentStandalone && index >= 0) {
     state.generatedBlocks.splice(index, 1);
     focusedStudyDrafts.delete(index);
   }
@@ -7305,11 +7316,12 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
       lastUpdatedAt: new Date().toISOString(),
       draft,
       standaloneReview: Boolean(context.standaloneReview),
+      persistStandalone: Boolean(context.persistStandalone),
     };
-    state.activeFocusSession = context.standaloneReview ? null : focusedStudySession;
+    state.activeFocusSession = context.standaloneReview && !context.persistStandalone ? null : focusedStudySession;
     focusedStudyIndex = index;
     focusedStudyDrafts.set(index, draft);
-    if (!context.standaloneReview) void persistFocusedSession({ label: "Sessão iniciada" });
+    if (!context.standaloneReview || context.persistStandalone) void persistFocusedSession({ immediate: Boolean(context.persistStandalone), label: "Sessão iniciada" });
   }
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
@@ -7436,7 +7448,10 @@ async function saveFocusedStudy() {
   if (standaloneReview) state.generatedBlocks.splice(index, 1);
   state.activeFocusSession = null;
   focusedStudySession = null;
-  if (context.context === "diagnostico") continueManualOverride = null;
+  if (context.context === "diagnostico") {
+    continueManualOverride = null;
+    state.adaptiveSelection = null;
+  }
   focusedStudyDrafts.delete(focusedStudyIndex);
   stopFocusedTimerInterval();
   clearFocusedSessionPersistenceTimers();
@@ -7533,6 +7548,7 @@ async function discardFocusedStudySession() {
   const confirmed = await dialogConfirm("Descartar esta sessão? O tempo e o rascunho preenchido serão removidos, sem registrar desempenho.", { title: "Descartar sessão", variant: "danger", confirmLabel: "Descartar sem salvar" });
   if (!confirmed) return;
   const index = resolveFocusedBlockIndex(session);
+  if (index >= 0 && state.generatedBlocks[index]?.reviewSessionOnly) state.generatedBlocks.splice(index, 1);
   state.activeFocusSession = null;
   focusedStudySession = null;
   if (index >= 0) focusedStudyDrafts.delete(index);
@@ -10039,12 +10055,15 @@ function reviewTypeLabel(record) {
 
 function reviewReasonText(record) {
   if (!isAdaptiveReview(record)) return "Revis\u00e3o programada a partir do ciclo conclu\u00eddo.";
+  const diagnosisLevel = record.diagnostico?.level || "";
+  if (diagnosisLevel === "critical") return "O diagn\u00f3stico central indica necessidade de recupera\u00e7\u00e3o aprofundada.";
+  if (diagnosisLevel === "deficiency") return "O diagn\u00f3stico central indica necessidade de refor\u00e7o direcionado.";
+  if (diagnosisLevel === "attention") return "O diagn\u00f3stico central recomenda uma retomada leve deste tema.";
+  if (diagnosisLevel === "insufficient") return "Ainda faltam dados para avaliar este tema com seguran\u00e7a.";
   const motive = record.motivo || {};
   const percent = Number(motive.percentual);
   if (Number.isFinite(percent) && Number(motive.totalQuestoes) > 0) {
-    if (percent <= 0.4) return "Desempenho igual ou inferior ao limite de dom\u00ednio.";
-    if (percent <= 0.6) return "Desempenho abaixo do esperado para este tema.";
-    return "Desempenho pede uma retomada curta antes de avan\u00e7ar.";
+    return `O registro de ${formatPercent(percent)} ser\u00e1 considerado no pr\u00f3ximo diagn\u00f3stico.`;
   }
   return record.sugestao || "Revis\u00e3o criada a partir do desempenho registrado.";
 }
@@ -11819,7 +11838,7 @@ function captureAppState() {
   // o estado já foi atualizado pelos listeners e não precisa ser relido.
   if (activeTab === "conteudo") syncRowsFromTable();
   if (activeTab === "pesos" || planningSettingsContextTab === "pesos") syncPlanningSliders();
-  if (!focusedStudySession?.standaloneReview) syncFocusedSessionToState();
+  if (!focusedStudySession?.standaloneReview || focusedStudySession?.persistStandalone) syncFocusedSessionToState();
   return {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -11833,7 +11852,7 @@ function captureAppState() {
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
-    generatedBlocks: state.generatedBlocks.filter((block) => !block.reviewSessionOnly),
+    generatedBlocks: state.generatedBlocks.filter((block) => !block.reviewSessionOnly || block.manualAdaptiveSession),
     completedHistory: state.completedHistory,
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
@@ -11845,6 +11864,7 @@ function captureAppState() {
     interventionHistory: state.interventionHistory,
     notebook: state.notebook,
     activeFocusSession: state.activeFocusSession,
+    adaptiveSelection: state.adaptiveSelection,
     locked: state.locked,
     setup: normalizedSetupState(state.setup),
     showPendingOnly,
@@ -11926,6 +11946,8 @@ function applyAppSnapshot(saved = {}) {
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.interventionHistory = Array.isArray(saved.interventionHistory) ? saved.interventionHistory : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
+  state.adaptiveSelection = saved.adaptiveSelection?.materia && saved.adaptiveSelection?.assunto ? saved.adaptiveSelection : null;
+  continueManualOverride = state.adaptiveSelection;
   restoreFocusedSessionFromSnapshot(saved.activeFocusSession);
   state.locked = Boolean(saved.locked);
   state.setup = normalizedSetupState(saved.setup, { legacy: !Object.prototype.hasOwnProperty.call(saved, "setup") });
@@ -12416,6 +12438,7 @@ function blankAppSnapshot(name = "") {
     reviews: [],
     errors: [],
     activeFocusSession: null,
+    adaptiveSelection: null,
     setup: { status: "incomplete", flowVersion: SETUP_FLOW_VERSION, currentStep: 1, completedSteps: [] },
     showPendingOnly: false,
   };
@@ -13175,10 +13198,14 @@ document.addEventListener("click", (event) => {
     if (continueManualOverride) {
       const entry = manualOverrideEntry();
       if (!entry) return;
-      const temporary = { ...entry.block, reviewSessionOnly: true, diagnosticInterventionOnly: true, interventionOrigin: "diagnostico" };
-      state.generatedBlocks.push(temporary);
-      const temporaryIndex = state.generatedBlocks.length - 1;
-      openFocusedStudy(temporaryIndex, { context: "diagnostico", standaloneReview: true });
+      const selectionId = continueManualOverride.id || `adaptive-selection:${programUnitKey(continueManualOverride)}`;
+      let temporaryIndex = state.generatedBlocks.findIndex((block) => block.manualAdaptiveSession === selectionId);
+      if (temporaryIndex < 0) {
+        const temporary = { ...entry.block, id: selectionId, reviewSessionOnly: true, diagnosticInterventionOnly: true, manualAdaptiveSession: selectionId, interventionOrigin: "diagnostico" };
+        state.generatedBlocks.push(temporary);
+        temporaryIndex = state.generatedBlocks.length - 1;
+      }
+      openFocusedStudy(temporaryIndex, { context: "diagnostico", standaloneReview: true, persistStandalone: true });
       return;
     }
     const block = state.generatedBlocks[index];

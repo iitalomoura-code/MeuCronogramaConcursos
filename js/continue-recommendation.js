@@ -19,11 +19,7 @@
     total += data.rotation?.score || 0;
     if (data.weeklyReinforcement) total += 72;
     if (data.weeklyAdjustment) total += Math.min(95, Math.max(20, Number(data.weeklyAdjustment.weight) || 0));
-    const recoveryLevel = data.diagnosticRecovery?.level;
-    if (recoveryLevel === "critical") total += 118;
-    else if (recoveryLevel === "deficiency") total += 82;
-    else if (recoveryLevel === "attention") total += 38;
-    else if (recoveryLevel === "insufficient") total += 16;
+    total += Number(data.diagnosticRecovery?.planning?.score) || 0;
     return { ...data, score: total };
   }
 

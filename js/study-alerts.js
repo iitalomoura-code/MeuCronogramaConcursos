@@ -41,7 +41,6 @@
     }
     if (diagnosis.trend?.label === "falling" || (!hasDiagnosis && questions >= 30 && subject.performanceTrend === "Queda")) { reasons.push("PERFORMANCE_DROP"); score += 2; }
     if (Number.isFinite(daysWithoutContact) && daysWithoutContact >= (isImportant ? 10 : 14)) { reasons.push("LONG_TIME_NO_CONTACT"); score += isImportant ? 2 : 1; }
-    if (reviews >= 2) { reasons.push("REVISION_BACKLOG"); score += 2; }
     if (!hasDiagnosis && reprograms >= 2) { reasons.push("REINFORCEMENT_REQUIRED"); score += 1; }
     if (isImportant && coverage === 0 && Number(exam.weeksToExam) <= 8) { reasons.push("CONTENT_NOT_STARTED"); score += 2; }
     if (isImportant && coverage < .50 && exam.coverageRisk) { reasons.push("COVERAGE_RISK"); score += 1; }

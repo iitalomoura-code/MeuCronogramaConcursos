@@ -61,6 +61,16 @@
 
   function actionFor(level, data) {
     const errorSignals = data.errorSignals || {};
+    const errorTypes = (errorSignals.types || []).map((value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
+    const hasAttentionPattern = errorTypes.some((value) => /distracao|leitura do enunciado|interpretacao/.test(value));
+    const hasConceptPattern = errorTypes.some((value) => /conteudo nao dominado|confusao conceitual|memoria|calculo/.test(value));
+    if (hasAttentionPattern && !hasConceptPattern && ["attention", "deficiency"].includes(level)) return {
+      kind: "attention-training",
+      label: "Treino de atenção",
+      minutes: 30,
+      questions: 10,
+      text: "Refaça questões com leitura controlada do enunciado e confira cada alternativa antes de responder.",
+    };
     if (Number(errorSignals.postInterventionErrors) >= 2 && ["deficiency", "critical", "attention"].includes(level)) return {
       kind: "deep-recovery",
       label: "Revisão aprofundada",
@@ -99,7 +109,7 @@
     if (level === "attention") return {
       kind: "light-reinforcement",
       label: "Reforço leve",
-      minutes: 25,
+      minutes: 30,
       questions: 10,
       text: "Faça questões direcionadas e revise os erros antes do próximo contato.",
     };
@@ -152,8 +162,8 @@
       if (errorSignals.trend === "improving") errorPatternPressure -= 0.025;
       pressure += Math.max(-0.025, Math.min(0.14, errorPatternPressure));
     }
-    if (Number(review.overdue) > 0) pressure += 0.14;
-    else if (Number(review.available) > 0) pressure += 0.07;
+    // A agenda temporal de revisão disputa espaço no planejamento, mas não é
+    // evidência de deficiência. Apenas o resultado obtido na revisão altera domínio.
     if (daysWithoutContact !== null && daysWithoutContact >= 10) pressure += Math.min(0.10, 0.04 + Math.floor((daysWithoutContact - 10) / 7) * 0.02);
     pressure += initialInfluence;
     pressure = Math.max(0, pressure);
@@ -174,7 +184,6 @@
     if (errorSignals.available && errorSignals.recurrence === "high") reasons.push("erros recorrentes em sessões diferentes");
     if (errorSignals.available && Number(errorSignals.postInterventionErrors) >= 2) reasons.push("erros persistentes após reforço");
     if (errorSignals.available && Number(errorSignals.concentration) >= 0.35) reasons.push("o tema concentra boa parte dos erros recentes da matéria");
-    if (Number(review.overdue) > 0) reasons.push("revisão pendente há mais tempo");
     if (needsDiagnostic) reasons.unshift("ainda há poucas questões registradas");
     if (!reasons.length && level === "strong") reasons.push("desempenho consistente e sem queda recente");
 

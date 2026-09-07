@@ -1,6 +1,8 @@
 (function (global) {
   "use strict";
 
+  const AdaptivePolicy = global.AdaptiveLearningPolicy || (typeof module !== "undefined" && module.exports ? require("./adaptive-learning-policy.js") : null);
+
   function asDate(value) {
     if (value instanceof Date) return new Date(value.getTime());
     if (!value) return null;
@@ -50,6 +52,9 @@
   }
 
   function reinforcementReasons(candidate = {}) {
+    if (candidate.diagnosis?.level && AdaptivePolicy?.decision) {
+      return AdaptivePolicy.decision({ diagnosis: candidate.diagnosis, intervention: candidate.intervention }).reasons;
+    }
     const reasons = [];
     const accuracy = Number.isFinite(candidate.recentAccuracy) ? Number(candidate.recentAccuracy) : null;
     const questions = Number(candidate.recentQuestions) || 0;
@@ -68,6 +73,9 @@
     return candidates
       .map((candidate) => {
         const reasons = reinforcementReasons(candidate);
+        const central = candidate.diagnosis?.level && AdaptivePolicy?.decision
+          ? AdaptivePolicy.decision({ diagnosis: candidate.diagnosis, intervention: candidate.intervention })
+          : null;
         let score = 0;
         const accuracy = Number.isFinite(candidate.recentAccuracy) ? Number(candidate.recentAccuracy) : null;
         if (Number(candidate.recentQuestions) >= 10 && accuracy !== null) score += accuracy < 0.6 ? 80 : accuracy < 0.75 ? 48 : 0;
@@ -77,7 +85,8 @@
         if (Number(candidate.daysWithoutContact) >= 14 && Number(candidate.priority) >= 0.6) score += Math.min(24, 10 + Math.floor((candidate.daysWithoutContact - 14) / 4) * 2);
         if (candidate.incidenceApplied && Number(candidate.incidence) >= 0.5 && reasons.length) score += 10;
         score += Number(candidate.adaptiveScore) || 0;
-        return { ...candidate, reasons, score };
+        if (central) score = central.score;
+        return { ...candidate, reasons, score, adaptiveType: central?.kind || candidate.adaptiveType };
       })
       .filter((candidate) => candidate.key && candidate.reasons.length && candidate.score > 0)
       .sort((a, b) => b.score - a.score || Number(b.priority || 0) - Number(a.priority || 0))

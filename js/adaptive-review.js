@@ -28,7 +28,7 @@
     const total = Math.max(0, Number(totalQuestoes) || 0);
     const percent = clamp(Number(percentual) || 0, 0, 1);
     if (total < 10) return { automatic: false, percent, total, reason: "Amostra insuficiente para criar uma revisão automaticamente." };
-    if (percent > 0.8) return { automatic: false, percent, total, reason: "Desempenho acima de 80%; não é necessária uma revisão extraordinária." };
+    if (percent >= 0.85) return { automatic: false, percent, total, reason: "Desempenho na referência de domínio; não é necessária uma revisão extraordinária." };
     if (percent >= 0.61) return { automatic: true, percent, total, intensity: "curta" };
     if (percent >= 0.41) return { automatic: true, percent, total, intensity: "prioritaria" };
     return { automatic: true, percent, total, intensity: "reforcada" };
