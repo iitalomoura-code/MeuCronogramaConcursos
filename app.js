@@ -7944,7 +7944,7 @@ function syncPendingFilterControl() {
 function statusBadge(status) {
   const normalized = normalizeStatus(status);
   const className = normalizeForMatch(normalized).replace(/\s+/g, "-");
-  return `<span class="status-badge ${className}">${normalized}</span>`;
+  return `<span class="ds-badge status-badge ${className}">${normalized}</span>`;
 }
 
 function cycleBlockDisplayInfo(block = {}) {
@@ -8022,8 +8022,8 @@ function setBlockReviewCycles(block, cycles = []) {
 
 function reviewBadge(block) {
   const cycles = reviewCyclesFromBlock(block);
-  if (!cycles.length) return `<span class="review-badge muted">Sem revis\u00e3o</span>`;
-  return `<span class="review-badge">${cycles.map(reviewShortLabel).join(" + ")}</span>`;
+  if (!cycles.length) return `<span class="ds-badge review-badge muted">Sem revis\u00e3o</span>`;
+  return `<span class="ds-badge review-badge">${cycles.map(reviewShortLabel).join(" + ")}</span>`;
 }
 
 function unitDetailCard(block) {
