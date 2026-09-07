@@ -5681,7 +5681,6 @@ function renderGeneratedSchedule() {
                   ${statusBadge(block.status)}
                 </div>
                 <div class="goal-priority">
-                  <span>Prioridade</span>
                   ${priorityDots(block.prioridade)}
                 </div>
               </div>
@@ -7885,7 +7884,7 @@ function renderContinuePanel() {
           <div class="continue-meta-cycle"><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
           <div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: manualEntry?.override?.action?.label || suggested.block.atividadeSugerida || recommendationResult.activityType }, "continue-activity-badge")}</div>
           <div class="continue-meta-status"><span>Status</span>${statusBadge(suggested.block.status)}</div>
-          <div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
+          <div class="continue-meta-priority">${priorityDots(suggested.block.prioridade)}</div>
         </div>
         <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-duration=\"" + suggested.index + "\" data-duration-minutes=\"" + minutes + "\">" + formatMinutesShort(minutes) + "</button>").join("")}</div></div>
         ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
@@ -8194,7 +8193,7 @@ function performancePanel(block, index) {
 
 function priorityDots(priority) {
   const level = Math.max(1, Math.min(5, Math.ceil((Number(priority) || 0) * 5)));
-  return `<span class="priority-indicator priority-level-${level}" aria-label="Prioridade ${level} de 5"><span class="priority-dots">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span><span class="priority-indicator-label">Prioridade ${level}</span></span>`;
+  return `<span class="priority-indicator priority-level-${level}" aria-label="Prioridade ${level} de 5"><span class="priority-dots">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span></span>`;
 }
 
 function formatPercent(value) {
