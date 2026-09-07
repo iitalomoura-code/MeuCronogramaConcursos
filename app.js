@@ -5654,9 +5654,9 @@ function renderGeneratedSchedule() {
         const isPerformanceOpen = index === performanceEditIndex;
         const isDetailOpen = index === unitDetailIndex;
         const isCompleted = normalizeStatus(block.status) === "Conclu\u00eddo";
-        const display = cycleBlockDisplayInfo(block);
+        const display = activityVisual(block);
         return `
-          <article class="cycle-goal-card ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""} ${display.isAdaptive ? "has-adaptive-adjustment" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}" data-cycle-adaptive="${display.isAdaptive}" data-block-index="${index}">
+          <article class="cycle-goal-card cycle-activity-${display.kind} ${isCompleted ? "is-completed" : ""} ${normalizeStatus(block.status) === "Em andamento" ? "is-in-progress" : ""} ${display.isAdaptive ? "has-adaptive-adjustment" : ""}" data-cycle-status="${escapeHtml(normalizeStatus(block.status))}" data-cycle-adaptive="${display.isAdaptive}" data-block-index="${index}">
             <div class="goal-card-index">
               <span>Bloco</span>
               <strong>${block.bloco}</strong>
@@ -5670,7 +5670,7 @@ function renderGeneratedSchedule() {
                 ${goalTimerMarkup(block, index)}
               </div>
               <div class="goal-card-meta">
-                <span class="cycle-type-badge cycle-type-${display.kind}">${escapeHtml(display.label)}</span>
+                ${activityBadgeMarkup(block, "cycle-type-badge")}
                 ${display.isAdaptive ? `<span class="cycle-adaptive-label"><i data-lucide="sparkles"></i>Ajuste adaptativo</span>` : ""}
                 <label class="goal-duration-field">Dura\u00e7\u00e3o
                   <input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Dura\u00e7\u00e3o real do bloco ${block.bloco}" />
@@ -5680,9 +5680,13 @@ function renderGeneratedSchedule() {
                   <span>Status</span>
                   ${statusBadge(block.status)}
                 </div>
+                <div class="goal-priority">
+                  <span>Prioridade</span>
+                  ${priorityDots(block.prioridade)}
+                </div>
               </div>
               <div class="goal-card-actions">
-                ${isCompleted ? "" : `<button class="primary-button compact-button cycle-start-button" type="button" data-start-cycle="${index}"><i data-lucide="play"></i><span>${normalizeStatus(block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button>`}
+                ${isCompleted ? "" : `<button class="primary-button compact-button cycle-start-button study-play-button" type="button" data-start-cycle="${index}"><i data-lucide="play"></i><span>${normalizeStatus(block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button>`}
                 <button class="text-action" type="button" data-toggle-unit="${index}">${isDetailOpen ? "Ocultar detalhes" : display.detailsLabel}</button>
                 ${isCompleted ? `<button class="ghost-button compact-button" type="button" data-reopen-block="${index}"><i data-lucide="rotate-ccw"></i><span>Reabrir meta</span></button>` : ""}
                 <button class="ghost-button compact-button" type="button" data-toggle-performance="${index}">
@@ -7785,6 +7789,13 @@ function weeklyDetailsMarkup(goal, progress) {
     </section>`;
 }
 
+function phaseVisualFor(phaseState = {}, config = {}) {
+  if (phaseState.configuredPhase === window.ExamPhaseEngine?.PRE_NOTICE) return "phase-pre-notice";
+  if (phaseState.configuredPhase !== window.ExamPhaseEngine?.POST_NOTICE) return "phase-neutral";
+  const urgency = window.ExamPhaseEngine?.postNoticeUrgency?.({ phase: phaseState.configuredPhase, examDate: config.dataProva });
+  return urgency?.available && urgency.daysRemaining <= 30 ? "phase-urgent" : "phase-post-notice";
+}
+
 function renderContinuePanel() {
   // A sessão em andamento deve continuar disponível após F5, mas o modo foco
   // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
@@ -7859,6 +7870,7 @@ function renderContinuePanel() {
       ? `Ritmo atual pede atenção: cerca de ${Math.ceil(phaseCoverageRisk.weeksNeeded)} semanas para a primeira cobertura.`
       : `Ritmo atual compatível com a primeira cobertura antes da prova.`
     : "";
+  const phaseVisual = phaseVisualFor(phaseState, config);
 
   els.continuePanel.innerHTML = `
     ${activeFocusSessionMarkup()}
@@ -7866,19 +7878,19 @@ function renderContinuePanel() {
     <div class="continue-primary-column">
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
-        <div><span class="continue-phase-chip">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(programUnitDescription(suggested.block) || suggested.block.conteudoBloco || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
+        <div><span class="continue-phase-chip ${phaseVisual}">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(programUnitDescription(suggested.block) || suggested.block.conteudoBloco || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
       ${suggested ? `
-        <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
+        <div class="continue-reason-box"><div class="continue-reason-heading"><i data-lucide="sparkles"></i><strong>Por que este tema agora?</strong></div><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
-          <div><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
-          <div><span>Atividade sugerida</span><strong>${escapeHtml(manualEntry?.override?.action?.label || recommendationResult.activityType)}</strong></div>
-          <div><span>Status</span><strong>${escapeHtml(normalizeStatus(suggested.block.status))}</strong></div>
-          <div><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
+          <div class="continue-meta-cycle"><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
+          <div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: manualEntry?.override?.action?.label || suggested.block.atividadeSugerida || recommendationResult.activityType }, "continue-activity-badge")}</div>
+          <div class="continue-meta-status"><span>Status</span>${statusBadge(suggested.block.status)}</div>
+          <div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
         </div>
         <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-duration=\"" + suggested.index + "\" data-duration-minutes=\"" + minutes + "\">" + formatMinutesShort(minutes) + "</button>").join("")}</div></div>
         ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
         ${manualEntry ? `<div class="continue-manual-override"><strong>Reforço selecionado</strong><span>Escolhido no Diagnóstico · ${escapeHtml(manualEntry.override.action?.label || "Intervenção")}${Number(manualEntry.override.action?.questions) ? ` · ${manualEntry.override.action.questions} questões` : ""}</span><button class="text-action" type="button" data-clear-manual-override>Voltar à recomendação automática</button></div>` : ""}
-        <div class="continue-actions"><button class="primary-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
+        <div class="continue-actions"><button class="primary-button study-play-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
@@ -7947,9 +7959,38 @@ function syncPendingFilterControl() {
 }
 
 function statusBadge(status) {
-  const normalized = normalizeStatus(status);
-  const className = normalizeForMatch(normalized).replace(/\s+/g, "-");
-  return `<span class="ds-badge status-badge ${className}">${normalized}</span>`;
+  const visual = statusVisual(status);
+  return `<span class="ds-badge status-badge ${visual.className}">${visual.label}</span>`;
+}
+
+function statusVisual(status) {
+  const label = normalizeStatus(status);
+  const className = normalizeForMatch(label).replace(/\s+/g, "-");
+  const semantic = {
+    "nao-iniciado": "neutral",
+    "em-andamento": "active",
+    "concluido": "positive",
+    "reprogramar": "attention",
+  }[className] || "neutral";
+  return { label, className: `${className} status-${semantic}` };
+}
+
+function activityVisual(block = {}) {
+  const display = cycleBlockDisplayInfo(block);
+  const icons = {
+    study: "book-open",
+    questions: "circle-help",
+    review: "repeat-2",
+    diagnostic: "sparkles",
+    reinforcement: "zap",
+    recovery: "heart-pulse",
+  };
+  return { ...display, icon: icons[display.kind] || "book-open", className: `semantic-activity activity-${display.kind}` };
+}
+
+function activityBadgeMarkup(block = {}, className = "") {
+  const visual = activityVisual(block);
+  return `<span class="${visual.className} ${className}" aria-label="Atividade sugerida: ${escapeHtml(visual.label)}"><i data-lucide="${visual.icon}"></i><span>${escapeHtml(visual.label)}</span></span>`;
 }
 
 function cycleBlockDisplayInfo(block = {}) {
@@ -8153,7 +8194,7 @@ function performancePanel(block, index) {
 
 function priorityDots(priority) {
   const level = Math.max(1, Math.min(5, Math.ceil((Number(priority) || 0) * 5)));
-  return `<span class="priority-dots" aria-label="Prioridade ${level} de 5">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span>`;
+  return `<span class="priority-indicator priority-level-${level}" aria-label="Prioridade ${level} de 5"><span class="priority-dots">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span><span class="priority-indicator-label">Prioridade ${level}</span></span>`;
 }
 
 function formatPercent(value) {

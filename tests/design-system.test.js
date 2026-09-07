@@ -24,6 +24,10 @@ assert.ok(css.includes("--primary: #695CFF"), "o modo claro deve usar violeta co
 assert.ok(css.includes("--color-study: #3B82F6") && css.includes("--color-review: #06B6D4"), "estudo e revisão devem ter cores semânticas próprias");
 assert.ok(css.includes(':root[data-theme="night"]') && css.includes("--bg-main: #0B1020"), "o modo escuro deve possuir tokens próprios");
 assert.ok(css.includes("--sidebar: #111827"), "a sidebar deve adotar a superfície midnight");
+assert.ok(css.includes(".semantic-activity.activity-study") && css.includes(".semantic-activity.activity-recovery"), "tipos de atividade devem usar indicadores semânticos reutilizáveis");
+assert.ok(css.includes(".priority-level-1") && css.includes(".priority-level-5"), "prioridades devem ter gradação visual de 1 a 5");
+assert.ok(css.includes(".continue-phase-chip.phase-pre-notice") && css.includes(".continue-phase-chip.phase-urgent"), "a fase do concurso deve comunicar contexto e urgência visualmente");
+assert.ok(css.includes(".study-play-button"), "a ação de iniciar estudo deve ter tratamento semântico próprio");
 assert.ok(css.includes("@media (max-width: 560px)"), "deve existir comportamento mobile");
 assert.ok(/@media \(max-width: 680px\)[\s\S]*min-height: 44px/.test(css), "ações mobile precisam de alvo de toque confortável");
 assert.ok(/@media \(max-width: 620px\)[\s\S]*min-height: 44px/.test(plansCss), "lista de cronogramas precisa de alvos de toque confortáveis");
