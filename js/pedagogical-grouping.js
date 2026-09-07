@@ -1,6 +1,8 @@
 (function (global) {
   "use strict";
 
+  const ProgramModel = global.ProgramModel || (typeof module !== "undefined" && module.exports ? require("./program-model.js") : null);
+
   function normalize(value) {
     return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   }
@@ -111,18 +113,20 @@
   }
 
   function isProtectedTopic(row, taxonomy) {
-    const value = normalize(row?.assunto);
+    const value = normalize(ProgramModel?.programUnitTitle ? ProgramModel.programUnitTitle(row) : row?.assunto);
     return taxonomy.preserveSeparate.some((term) => value === term || value.startsWith(`${term}:`) || value.includes(`${term}:`));
   }
 
   function matchingMacrotheme(row, taxonomy) {
-    if (!row?.assunto || isProtectedTopic(row, taxonomy)) return null;
-    const value = normalize(row.assunto);
+    const unit = ProgramModel?.canonicalProgramUnit ? ProgramModel.canonicalProgramUnit(row) : row;
+    if (!unit?.assunto || isProtectedTopic(unit, taxonomy)) return null;
+    const value = normalize([unit.titulo, unit.descricao, ...(unit.conteudosOriginais || [])].filter(Boolean).join("; "));
     const matches = taxonomy.macrothemes.filter((macrotheme) => macrotheme.terms.some((term) => contains(value, term)));
     return matches.length === 1 ? matches[0] : null;
   }
 
   function sourceItems(row) {
+    if (ProgramModel?.programUnitContents) return ProgramModel.programUnitContents(row);
     const stored = Array.isArray(row?.conteudosOriginais) ? row.conteudosOriginais : [];
     return stored.length ? stored : [String(row?.assunto || "").trim()].filter(Boolean);
   }
@@ -134,28 +138,40 @@
 
     TAXONOMY.forEach((taxonomy) => {
       taxonomy.macrothemes.forEach((macrotheme) => {
-        const indexes = rows.map((row, index) => ({ row, index }))
-          .filter(({ row, index }) => !consumed.has(index) && row?.structureSource !== "user-structured" && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title)
-          .map(({ index }) => index);
-        if (indexes.length < 2) return;
-        const selected = indexes.map((index) => rows[index]);
-        const originalItems = selected.flatMap(sourceItems);
-        const origins = selected.map((row) => row.origemEdital).filter(Boolean);
-        const base = selected[0];
-        groupsAtIndex.set(indexes[0], {
-          ...base,
-          assunto: `${macrotheme.title}: ${originalItems.join("; ")}`,
-          temaExplicito: true,
-          conteudosOriginais: originalItems,
-          agrupamentoPedagogico: {
-            materia: taxonomy.id,
-            macrotema: macrotheme.title,
-            motivo: `Conteúdos correlatos de ${macrotheme.title.toLowerCase()} foram reunidos para estudo conjunto.`,
-            originalItems: originalItems.slice(),
-          },
-          origemEdital: origins.length ? { type: "agrupamento-pedagogico", sources: origins } : base.origemEdital || null,
+        const candidates = rows.map((row, index) => ({ row, index }))
+          .filter(({ row, index }) => !consumed.has(index) && row?.structureSource !== "user-structured" && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title);
+        const bySubarea = new Map();
+        candidates.forEach((candidate) => {
+          const key = normalize(candidate.row?.subarea || "");
+          const bucket = bySubarea.get(key) || [];
+          bucket.push(candidate);
+          bySubarea.set(key, bucket);
         });
-        indexes.forEach((index) => consumed.add(index));
+        bySubarea.forEach((bucket) => {
+          const indexes = bucket.map(({ index }) => index);
+          if (indexes.length < 2) return;
+          const selected = indexes.map((index) => rows[index]);
+          const originalItems = [...new Set(selected.flatMap(sourceItems))];
+          const origins = selected.map((row) => row.origemEdital).filter(Boolean);
+          const base = selected[0];
+          const grouped = {
+            ...base,
+            titulo: macrotheme.title,
+            assunto: macrotheme.title,
+            descricao: originalItems.join("; "),
+            temaExplicito: true,
+            conteudosOriginais: originalItems,
+            agrupamentoPedagogico: {
+              materia: taxonomy.id,
+              macrotema: macrotheme.title,
+              motivo: `Conteúdos correlatos de ${macrotheme.title.toLowerCase()} foram reunidos para estudo conjunto.`,
+              originalItems: originalItems.slice(),
+            },
+            origemEdital: origins.length ? { type: "agrupamento-pedagogico", sources: origins } : base.origemEdital || {},
+          };
+          groupsAtIndex.set(indexes[0], ProgramModel?.canonicalProgramUnit ? ProgramModel.canonicalProgramUnit(grouped) : grouped);
+          indexes.forEach((index) => consumed.add(index));
+        });
       });
     });
 
@@ -168,7 +184,8 @@
       const key = normalize(row.materia);
       const ordem = (counters.get(key) || 0) + 1;
       counters.set(key, ordem);
-      return { ...row, ordem };
+      const ordered = { ...row, ordem };
+      return ProgramModel?.canonicalProgramUnit ? ProgramModel.canonicalProgramUnit(ordered) : ordered;
     });
   }
 

@@ -1,6 +1,8 @@
 (function (global) {
   "use strict";
 
+  const ProgramModel = global.ProgramModel || (typeof module !== "undefined" && module.exports ? require("./program-model.js") : null);
+
   const GENERIC_SECTIONS = [
     "conhecimentos gerais", "conhecimentos especificos", "conhecimentos basicos",
     "conhecimentos complementares", "prova objetiva", "conteudos programaticos",
@@ -274,8 +276,10 @@
   function makeTopic(subject, section, subarea, item, descriptions, order) {
     const detailText = descriptions.map((entry) => entry.text).filter(Boolean);
     const descricao = detailText.join(" ");
-    return {
+    const topic = {
+      section: section || "",
       materia: subject,
+      titulo: item.text,
       assunto: item.text,
       descricao,
       ordem: order,
@@ -303,6 +307,7 @@
         parsedStructure: { type: "topic", number: item.number, text: item.text, description: descricao, descriptions: detailText.slice() },
       },
     };
+    return ProgramModel?.canonicalProgramUnit ? ProgramModel.canonicalProgramUnit(topic) : topic;
   }
 
   function parseStructured(nodes) {

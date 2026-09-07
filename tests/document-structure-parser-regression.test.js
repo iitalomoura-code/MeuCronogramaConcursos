@@ -26,6 +26,7 @@ function assertStructuredRows(result) {
   result.rows.forEach((row) => {
     assert.ok(row.materia, "Toda linha estruturada precisa manter a matéria.");
     assert.ok(row.assunto, "Toda linha estruturada precisa manter o título do tema.");
+    assert.equal(row.titulo, row.assunto, "Título e assunto precisam usar a mesma unidade canônica.");
     assert.ok(row.sourceBlockType, "Toda linha estruturada precisa manter a origem do bloco.");
     assert.ok(Number.isInteger(row.outlineLevel) && row.outlineLevel >= 1, "Toda linha estruturada precisa manter o nível da numeração.");
     if (row.descricao) assert.ok(!row.assunto.includes(row.descricao), "Título e descrição precisam permanecer em campos separados.");

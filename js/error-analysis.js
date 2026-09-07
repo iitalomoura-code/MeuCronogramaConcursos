@@ -1,6 +1,7 @@
 "use strict";
 
 (function initErrorAnalysis(global) {
+  const ProgramModel = global.ProgramModel || (typeof module !== "undefined" && module.exports ? require("./program-model.js") : null);
   const DAY = 24 * 60 * 60 * 1000;
   let cached = null;
   let cachedRevision = -1;
@@ -18,16 +19,23 @@
     return Math.max(0, Number(record.quantidade ?? record.errors ?? record.erros ?? record.count) || 0);
   }
 
+  function unitKey(materia = "", assunto = "", subarea = "") {
+    if (ProgramModel?.programUnitKey) return ProgramModel.programUnitKey({ materia, assunto, subarea });
+    return `${normalized(materia)}::${normalized(assunto)}`;
+  }
+
   function normalizeRecord(record = {}, index = 0) {
     const materia = record.materia || record.subject || record.subjectName || "";
     const assunto = record.assunto || record.topic || record.topicName || "";
+    const subarea = record.subarea || "";
     const recordedAt = record.registradaEm || record.createdAt || record.data || record.date || record.atualizadaEm || "";
     const sessionId = record.sessaoId || record.sessionId || record.origemSessao || record.sourceKey || `${recordedAt}:${index}`;
     return {
       id: record.id || `legacy-error:${index}`,
       materia,
       assunto,
-      key: `${normalized(materia)}::${normalized(assunto)}`,
+      subarea,
+      key: unitKey(materia, assunto, subarea),
       subjectKey: normalized(materia),
       macrotema: record.macrotema || record.macroTopic || "",
       count: errorCount(record),
@@ -48,7 +56,7 @@
     records.forEach((record) => {
       const materia = record.materia || "";
       const assunto = record.assunto || "";
-      const key = `${normalized(materia)}::${normalized(assunto)}`;
+      const key = unitKey(materia, assunto, record.subarea || "");
       const intervention = record.intervencao || record.intervention || {};
       const time = dateValue(intervention.createdAt || intervention.initialDiagnosis?.recordedAt || record.criadaEm || record.createdAt);
       if (!key || !time) return;
@@ -137,8 +145,8 @@
     return cached;
   }
 
-  function signalsFor(snapshotValue, materia = "", assunto = "") {
-    const key = `${normalized(materia)}::${normalized(assunto)}`;
+  function signalsFor(snapshotValue, materia = "", assunto = "", subarea = "") {
+    const key = unitKey(materia, assunto, subarea);
     const item = snapshotValue?.byTopic?.get(key);
     if (!item) return { available: false, recentErrors: 0, recurrence: "low", sessionsWithErrors: 0, postInterventionErrors: 0, concentration: 0, trend: "insufficient", types: [] };
     return {

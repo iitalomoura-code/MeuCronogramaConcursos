@@ -1,15 +1,21 @@
 (function (global) {
   "use strict";
 
+  const ProgramModel = global.ProgramModel || (typeof module !== "undefined" && module.exports ? require("./program-model.js") : null);
+
   function normalize(value) {
     return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   }
 
   function titleOf(value) {
-    return String(value || "").split(/\s*:\s*/, 1)[0].trim();
+    return ProgramModel?.programUnitTitle ? ProgramModel.programUnitTitle(typeof value === "object" ? value : { assunto: value }) : String(value || "").split(/\s*:\s*/, 1)[0].trim();
   }
 
   function contentItems(row) {
+    if (ProgramModel?.programUnitContents) {
+      const contents = ProgramModel.programUnitContents(row);
+      if (contents.length) return contents;
+    }
     const stored = Array.isArray(row?.conteudosOriginais) ? row.conteudosOriginais : [];
     if (stored.length) return stored.map((item) => String(item || "").trim()).filter(Boolean);
     const detail = String(row?.assunto || "").split(/\s*:\s*/).slice(1).join(":").trim();
@@ -45,9 +51,12 @@
     const usable = groups.filter((group) => group.items.length);
     if (usable.length < 2) return null;
 
-    return usable.map((group, index) => ({
+    return usable.map((group, index) => {
+      const next = {
       ...row,
-      assunto: `${group.title}: ${group.items.join("; ")}`,
+      titulo: group.title,
+      assunto: group.title,
+      descricao: group.items.join("; "),
       conteudosOriginais: group.items.slice(),
       metaId: stableMetaId,
       metaTitulo: "Despesa pública",
@@ -59,11 +68,13 @@
         temaOriginal: row.assunto,
         motivo: "Tema amplo dividido em unidades estudáveis, preservando a mesma meta temática.",
       },
-    }));
+      };
+      return ProgramModel?.canonicalProgramUnit ? ProgramModel.canonicalProgramUnit(next) : next;
+    });
   }
 
   function stableMetaId(row) {
-    return row.metaId || `tema::${normalize(row.materia)}::${normalize(titleOf(row.assunto))}`;
+    return row.metaId || `tema::${ProgramModel?.programUnitKey ? ProgramModel.programUnitKey(row) : `${normalize(row.materia)}::${normalize(titleOf(row))}`}`;
   }
 
   function annotateGroupedRows(rows) {
@@ -74,8 +85,8 @@
       return {
         ...row,
         conteudosOriginais: items,
-        metaId: stableMetaId({ ...row, assunto: grouped.macrotema || titleOf(row.assunto) }),
-        metaTitulo: grouped.macrotema || titleOf(row.assunto),
+        metaId: stableMetaId({ ...row, titulo: grouped.macrotema || titleOf(row), assunto: grouped.macrotema || titleOf(row) }),
+        metaTitulo: grouped.macrotema || titleOf(row),
         metaPartKey: "1",
         metaRequiredBlocks: Math.max(1, Number(row.blocosSugeridos) || 1),
       };

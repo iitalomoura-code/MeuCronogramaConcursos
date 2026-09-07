@@ -596,24 +596,73 @@ function topicAtoms(value) {
     .filter(Boolean);
 }
 
-function themeTitle(value) {
-  const text = normalizeTopic(String(value || ""));
+function programModelApi() {
+  return typeof window !== "undefined" ? window.ProgramModel || null : null;
+}
+
+function fallbackProgramUnitTitle(unit = {}) {
+  const text = normalizeTopic(String(unit?.titulo || unit?.assunto || unit?.tema || unit?.nome || ""));
   const colonIndex = text.indexOf(":");
-  if (colonIndex > 4 && colonIndex < 90) return text.slice(0, colonIndex).trim();
-  const words = text.split(/\s+/).filter(Boolean);
-  return words.length > 11 ? `${words.slice(0, 11).join(" ")}...` : text;
+  return colonIndex > 4 && colonIndex < 90 ? text.slice(0, colonIndex).trim() : text;
+}
+
+function fallbackProgramUnitDescription(unit = {}) {
+  const explicit = String(unit?.descricao || "").trim();
+  if (explicit) return explicit;
+  const text = normalizeTopic(String(unit?.assunto || unit?.tema || unit?.nome || ""));
+  const colonIndex = text.indexOf(":");
+  return colonIndex > 4 && colonIndex < 90 ? text.slice(colonIndex + 1).trim() : "";
+}
+
+function canonicalProgramUnit(unit = {}) {
+  const api = programModelApi();
+  if (api?.canonicalProgramUnit) return api.canonicalProgramUnit(unit);
+  const titulo = fallbackProgramUnitTitle(unit);
+  const descricao = fallbackProgramUnitDescription(unit);
+  return {
+    ...unit,
+    titulo,
+    assunto: titulo,
+    descricao,
+    conteudosOriginais: Array.isArray(unit.conteudosOriginais) ? unit.conteudosOriginais.filter(Boolean) : descricao ? [descricao] : [],
+  };
+}
+
+function programUnitTitle(unit = {}) {
+  const api = programModelApi();
+  return api?.programUnitTitle ? api.programUnitTitle(unit) : fallbackProgramUnitTitle(unit);
+}
+
+function programUnitDescription(unit = {}) {
+  const api = programModelApi();
+  return api?.programUnitDescription ? api.programUnitDescription(unit) : fallbackProgramUnitDescription(unit);
+}
+
+function programUnitContents(unit = {}) {
+  const api = programModelApi();
+  if (api?.programUnitContents) return api.programUnitContents(unit);
+  return canonicalProgramUnit(unit).conteudosOriginais;
+}
+
+function programUnitKey(unit = {}) {
+  const api = programModelApi();
+  if (api?.programUnitKey) return api.programUnitKey(unit);
+  const subject = normalizeForMatch(unit.materia || "");
+  const subarea = normalizeForMatch(unit.subarea || "");
+  const title = normalizeForMatch(programUnitTitle(unit));
+  return subarea ? [subject, subarea, title].join("::") : [subject, title].join("::");
+}
+
+function themeTitle(value) {
+  return programUnitTitle(typeof value === "object" ? value : { assunto: value });
 }
 
 function themeDetails(value) {
-  const text = normalizeTopic(String(value || ""));
-  const colonIndex = text.indexOf(":");
-  return colonIndex > 4 && colonIndex < 90 ? text.slice(colonIndex + 1).trim() : text;
+  return programUnitDescription(typeof value === "object" ? value : { assunto: value });
 }
 
 function themeDetailsForRow(row = {}) {
-  if (Object.prototype.hasOwnProperty.call(row, "descricao")) return String(row.descricao || "").trim();
-  const legacyDetails = themeDetails(row.assunto || "");
-  return normalizeForMatch(legacyDetails) === normalizeForMatch(themeTitle(row.assunto || "")) ? "" : legacyDetails;
+  return programUnitDescription(row);
 }
 
 function estimateThemeSize(value) {
@@ -639,23 +688,21 @@ function estimateThemeDifficulty(value) {
 }
 
 function enrichThemeRow(row) {
-  const resumoTema = row.resumoTema && typeof row.resumoTema === "object" ? row.resumoTema : {};
-  const hasDescription = Object.prototype.hasOwnProperty.call(row, "descricao");
-  const descricao = String(row.descricao || "").trim();
-  const estimationText = [row.assunto, descricao].filter(Boolean).join(": ");
+  const unit = canonicalProgramUnit(row);
+  const resumoTema = unit.resumoTema && typeof unit.resumoTema === "object" ? unit.resumoTema : {};
+  const estimationText = [unit.titulo, unit.descricao, ...unit.conteudosOriginais].filter(Boolean).join(": ");
   return {
-    ...row,
-    ...(hasDescription ? { descricao } : {}),
-    estudar: row.estudar || "Sim",
+    ...unit,
+    estudar: unit.estudar || "Sim",
     resumoTema: {
       focoPrincipal: resumoTema.focoPrincipal || "",
       pontosAtencao: resumoTema.pontosAtencao || "",
       checklistRevisao: resumoTema.checklistRevisao || "",
       sugestaoPratica: resumoTema.sugestaoPratica || "",
     },
-    tamanhoEstimado: row.tamanhoEstimado || estimateThemeSize(estimationText),
-    blocosSugeridos: Number(row.blocosSugeridos) || estimateThemeBlocks(estimationText),
-    dificuldadeEstimada: row.dificuldadeEstimada || estimateThemeDifficulty(estimationText),
+    tamanhoEstimado: unit.tamanhoEstimado || estimateThemeSize(estimationText),
+    blocosSugeridos: Number(unit.blocosSugeridos) || estimateThemeBlocks(estimationText),
+    dificuldadeEstimada: unit.dificuldadeEstimada || estimateThemeDifficulty(estimationText),
   };
 }
 
@@ -821,8 +868,8 @@ function buildStudyUnits(topics, analysis) {
   return units.length ? units : ["Selecionar tema"];
 }
 
-function topicKey(materia, assunto) {
-  return `${normalizeForMatch(String(materia || ""))}::${normalizeForMatch(String(assunto || ""))}`;
+function topicKey(materia, assunto, subarea = "") {
+  return programUnitKey({ materia, subarea, assunto });
 }
 
 function historicalCompletedBlocks() {
@@ -836,10 +883,10 @@ function historicalCompletedBlocks() {
 function completedUnitKeys() {
   const keys = new Set();
   historicalCompletedBlocks()
-    .forEach((item) => keys.add(topicKey(item.materia, item.assunto)));
+    .forEach((item) => keys.add(topicKey(item.materia, item.assunto, item.subarea)));
   state.generatedBlocks
     .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo" && isMetaComplete(block))
-    .forEach((block) => keys.add(topicKey(block.materia, block.assunto)));
+    .forEach((block) => keys.add(topicKey(block.materia, block.assunto, block.subarea)));
   return keys;
 }
 
@@ -878,7 +925,7 @@ function pruneHistoricalDuplicatesFromCurrentCycle() {
   state.generatedBlocks = state.generatedBlocks.filter((block) => {
     if (normalizeStatus(block.status) !== "Não iniciado") return true;
     if (normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "").includes("revis")) return true;
-    return !completed.has(topicKey(block.materia, block.assunto))
+    return !completed.has(topicKey(block.materia, block.assunto, block.subarea))
       && !historical.some((item) => historicalCompletionMatches(block, item));
   });
   return before - state.generatedBlocks.length;
@@ -897,10 +944,11 @@ function prunePrematureReviewBlocksFromCurrentCycle() {
 
 function generatedBlockDeduplicationKey(block = {}) {
   const subject = normalizeForMatch(block.materia || "");
+  const subarea = normalizeForMatch(block.subarea || "");
   const topic = normalizeForMatch(themeTitle(block.assunto) || block.assunto || "");
   const content = normalizeForMatch(block.conteudoBloco || block.assunto || "");
   const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
-  return [subject, topic, block.metaId || "", block.metaPartKey || "", content, activity].join("::");
+  return [subject, subarea, topic, block.metaId || "", block.metaPartKey || "", content, activity].join("::");
 }
 
 function pruneDuplicatePendingCycleBlocks() {
@@ -922,11 +970,11 @@ function pruneDuplicatePendingCycleBlocks() {
 }
 
 function availableStudyUnits(item, analysis) {
-  const units = item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
+  const units = item.temas?.length ? item.temas : item.assuntos?.length ? item.assuntos : buildStudyUnits(item.assuntos || [], analysis);
   const completed = completedUnitKeys();
   const reviewUnits = reviewAttentionUnitsForSubject(item.materia);
-  const pending = units.filter((unit) => !isThemeCompleteForPlanning(item.materia, unit, completed));
-  const merged = [...reviewUnits, ...pending].filter((unit, index, list) => list.findIndex((candidate) => topicKey(item.materia, candidate) === topicKey(item.materia, unit)) === index);
+  const pending = units.filter((unit) => !isThemeCompleteForPlanning(item.materia, programUnitTitle(unit), completed, unit?.subarea || ""));
+  const merged = [...reviewUnits, ...pending].filter((unit, index, list) => list.findIndex((candidate) => topicKey(item.materia, programUnitTitle(candidate), candidate?.subarea || "") === topicKey(item.materia, programUnitTitle(unit), unit?.subarea || "")) === index);
   return merged.length ? merged : ["Revis\u00e3o geral e quest\u00f5es da mat\u00e9ria"];
 }
 
@@ -1297,6 +1345,7 @@ function parseProgramContent(rawText) {
   const parsedStructure = [];
   let outlineLines = [];
   let currentSubject = "";
+  let currentSection = "";
 
   const registerSubject = (subject) => {
     currentSubject = normalizeTopic(subject);
@@ -1311,7 +1360,7 @@ function parseProgramContent(rawText) {
       return;
     }
     const order = rows.filter((row) => normalizeForMatch(row.materia || "") === normalizeForMatch(materia || "")).length + 1;
-    rows.push(enrichThemeRow({ materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit, origemEdital, ...structuralMeta }));
+    rows.push(enrichThemeRow({ section: currentSection, materia, assunto: topic, ordem: order, estudar: "Sim", observacoes: "", temaExplicito: explicit, structureSource: "parser", origemEdital, ...structuralMeta }));
   };
   const flushLooseTopics = () => {
     if (!looseTopics.length) return;
@@ -1353,6 +1402,7 @@ function parseProgramContent(rawText) {
     if (isIgnoredProgramModule(line)) {
       flushOutline();
       flushLooseTopics();
+      if (/^conhecimentos|^prova objetiva|^conteudo programatico/i.test(normalizeForMatch(line))) currentSection = normalizeTopic(stripEnumerator(line));
       genericLabelsIgnored.push(line);
       return;
     }
@@ -1844,7 +1894,10 @@ function rowFromInputs(container) {
   const themeName = container.querySelector("[data-theme-title]")?.value.trim();
   const themeSubjects = container.querySelector("[data-theme-details]")?.value.trim();
   if (themeName || themeSubjects) {
-    row.assunto = themeName && themeSubjects ? `${themeName}: ${themeSubjects}` : themeName || themeSubjects;
+    row.titulo = themeName || themeSubjects;
+    row.assunto = row.titulo;
+    row.descricao = themeSubjects;
+    row.conteudosOriginais = themeSubjects ? topicAtoms(themeSubjects) : [];
   }
   row.ordem = Number(row.ordem) || 0;
   row.blocosSugeridos = Number(row.blocosSugeridos) || estimateThemeBlocks(row.assunto);
@@ -2136,7 +2189,7 @@ function topicSplitSuggestion(row) {
   if (groupedItems.length > 1) {
     return groupedItems.map((part, index) => `Tema ${index + 1}: ${part}`).join("\n");
   }
-  const details = themeDetails(row.assunto || "");
+  const details = themeDetailsForRow(row);
   const source = details || row.assunto || "";
   const parts = splitTopics(source);
   const suggested = parts.length > 1 ? parts : topicAtoms(source);
@@ -2200,12 +2253,14 @@ function groupedRowWithoutContent(row, contentIndex) {
   const remaining = items.filter((_, index) => index !== contentIndex);
   if (!remaining.length) return null;
   if (remaining.length === 1) {
-    return enrichThemeRow({ ...row, assunto: remaining[0], conteudosOriginais: undefined, agrupamentoPedagogico: undefined, editadoManualmente: true });
+    return enrichThemeRow({ ...row, titulo: remaining[0], assunto: remaining[0], descricao: "", conteudosOriginais: [], agrupamentoPedagogico: undefined, editadoManualmente: true });
   }
   const title = row.agrupamentoPedagogico?.macrotema || themeTitle(row.assunto);
   return enrichThemeRow({
     ...row,
-    assunto: `${title}: ${remaining.join("; ")}`,
+    titulo: title,
+    assunto: title,
+    descricao: remaining.join("; "),
     conteudosOriginais: remaining,
     agrupamentoPedagogico: { ...row.agrupamentoPedagogico, originalItems: remaining },
     editadoManualmente: true,
@@ -2221,7 +2276,9 @@ function createTopicFromGroupedContent(rowIndex, contentIndex) {
   const remaining = groupedRowWithoutContent(row, contentIndex);
   const standalone = enrichThemeRow({
     ...row,
+    titulo: content,
     assunto: content,
+    descricao: "",
     conteudosOriginais: undefined,
     agrupamentoPedagogico: undefined,
     observacoes: "",
@@ -2249,9 +2306,17 @@ async function moveGroupedContentToTopic(rowIndex, contentIndex) {
   if (!target) return;
   rememberContentUndo("Conteúdo movido para outro tema.");
   const targetIndex = state.rows.indexOf(target);
-  const targetDetails = themeDetails(target.assunto);
+  const targetDetails = themeDetailsForRow(target);
   state.rows[rowIndex] = groupedRowWithoutContent(row, contentIndex);
-  state.rows[targetIndex] = enrichThemeRow({ ...target, assunto: `${themeTitle(target.assunto)}: ${[targetDetails, content].filter(Boolean).join("; ")}`, editadoManualmente: true });
+  const targetContents = programUnitContents(target);
+  state.rows[targetIndex] = enrichThemeRow({
+    ...target,
+    titulo: themeTitle(target.assunto),
+    assunto: themeTitle(target.assunto),
+    descricao: [targetDetails, content].filter(Boolean).join("; "),
+    conteudosOriginais: [...targetContents, content],
+    editadoManualmente: true,
+  });
   state.rows = state.rows.filter(Boolean);
   renumberRows({ sync: false });
   notifyContent("Conteúdo movido para o tema selecionado.");
@@ -2778,7 +2843,7 @@ function rememberContentUndo(message) {
 
 function restoreContentUndo() {
   if (!contentUndoSnapshot) return;
-  state.rows = JSON.parse(JSON.stringify(contentUndoSnapshot));
+  state.rows = JSON.parse(JSON.stringify(contentUndoSnapshot)).map(enrichThemeRow);
   contentUndoSnapshot = null;
   renderRows();
   notifyContent("A última alteração foi desfeita.");
@@ -2814,7 +2879,7 @@ async function mergeSelectedTopicItems(items) {
   }
 
   const titles = [...new Set(selectedRowsForMerge.map((row) => themeTitle(row.assunto)).filter(Boolean))];
-  const details = selectedRowsForMerge.map((row) => themeDetails(row.assunto)).filter(Boolean);
+  const details = selectedRowsForMerge.map((row) => themeDetailsForRow(row)).filter(Boolean);
   const notes = selectedRowsForMerge.map((row) => row.observacoes).filter(Boolean);
   const firstIndex = selectedIndexes[0];
   const base = selectedRowsForMerge[0];
@@ -2825,7 +2890,10 @@ async function mergeSelectedTopicItems(items) {
 
   const mergedRow = enrichThemeRow({
     ...base,
-    assunto: mergedDetails ? `${mergedTitle}: ${mergedDetails}` : mergedTitle,
+    titulo: mergedTitle,
+    assunto: mergedTitle,
+    descricao: mergedDetails,
+    conteudosOriginais: selectedRowsForMerge.flatMap((row) => programUnitContents(row)),
     observacoes: notes.join("\n"),
   });
   rememberContentUndo("Temas juntados.");
@@ -2951,7 +3019,7 @@ function pendingMigrationPreviewMarkup(plan) {
   const preservedSubjects = pendingMigrationSubjectSummary(plan.preserved.map((item) => item.row));
   els.pendingContentMigrationList.innerHTML = `
     ${rows.length ? `<div class="pending-migration-section"><h3>Conteúdos reorganizados</h3>${rows.map(({ row, index }) => {
-      const items = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais : [themeDetails(row.assunto)].filter(Boolean);
+      const items = Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais : [themeDetailsForRow(row)].filter(Boolean);
       return `<article class="pending-migration-item" data-migration-row="${index}">
         <span class="pending-migration-subject">${escapeHtml(row.materia)}</span>
         <label>Tema / unidade de estudo<input data-migration-title="${index}" value="${escapeHtml(themeTitle(row.assunto))}" /></label>
@@ -3024,13 +3092,15 @@ async function applyPendingContentMigration() {
     const newTitle = String(titleInput?.value || themeTitle(row.assunto)).trim();
     const contents = Array.isArray(row.conteudosOriginais) && row.conteudosOriginais.length
       ? row.conteudosOriginais.slice()
-      : topicAtoms(themeDetails(row.assunto));
+      : topicAtoms(themeDetailsForRow(row));
     const studied = [...(els.pendingContentMigrationList?.querySelectorAll(`[data-migration-studied="${index}"]:checked`) || [])].map((input) => input.value);
     const remaining = contents.filter((item) => !studied.includes(item));
     const details = remaining.length ? remaining.join("; ") : contents.join("; ");
     return {
       ...row,
-      assunto: details ? `${newTitle}: ${details}` : newTitle,
+      titulo: newTitle,
+      assunto: newTitle,
+      descricao: details,
       conteudosOriginais: remaining.length ? remaining : contents,
       estudar: remaining.length ? row.estudar || "Sim" : "Nao",
       migracaoMarcadoComoEstudado: studied,
@@ -3506,18 +3576,27 @@ function summaryItems(items) {
 
 function uniqueSubjects(rows) {
   const map = new Map();
-  rows.filter((row) => row.estudar !== "Nao" && row.materia).forEach((row) => {
+  rows.filter((row) => row.estudar !== "Nao" && row.materia).map(canonicalProgramUnit).forEach((row) => {
     const key = normalizeForMatch(row.materia);
     if (!map.has(key)) {
       map.set(key, { materia: row.materia, assuntos: [], temas: [], peso: 3, dominio: 3, prioridade: 0 });
     }
-    if (row.assunto) {
+    if (row.titulo) {
       const subject = map.get(key);
-      subject.assuntos.push(row.assunto);
+      subject.assuntos.push(row.titulo);
       subject.temas.push({
-        assunto: row.assunto,
-        ...(Object.prototype.hasOwnProperty.call(row, "descricao") ? { descricao: row.descricao || "" } : {}),
-        conteudosOriginais: Array.isArray(row.conteudosOriginais) ? row.conteudosOriginais.slice() : [],
+        section: row.section || "",
+        subarea: row.subarea || "",
+        titulo: row.titulo,
+        assunto: row.titulo,
+        descricao: row.descricao || "",
+        conteudosOriginais: programUnitContents(row),
+        outlineNumber: row.outlineNumber || "",
+        outlineLevel: Number(row.outlineLevel) || 0,
+        structureSource: row.structureSource || "",
+        sourceBlockType: row.sourceBlockType || "",
+        origemEdital: row.origemEdital || {},
+        programUnitKey: programUnitKey(row),
         tamanhoEstimado: row.tamanhoEstimado || "",
         blocosSugeridos: Number(row.blocosSugeridos) || 0,
         dificuldadeEstimada: row.dificuldadeEstimada || "",
@@ -3533,7 +3612,7 @@ function uniqueSubjects(rows) {
 }
 
 function refreshPlanningBaseFromRows({ preservePriorities = true } = {}) {
-  const validRows = state.rows.filter((row) => row.materia && row.assunto && row.estudar !== "Nao");
+  const validRows = state.rows.map(enrichThemeRow).filter((row) => row.materia && row.titulo && row.estudar !== "Nao");
   const previous = new Map((state.planningBase?.materias || []).map((subject) => [normalizeForMatch(subject.materia), subject]));
   const materias = uniqueSubjects(validRows).map((subject) => {
     const previousSubject = previous.get(normalizeForMatch(subject.materia));
@@ -4139,8 +4218,8 @@ function errorAnalysisSnapshot() {
   }) || null;
 }
 
-function errorSignalsForTarget(materia = "", assunto = "") {
-  return window.ErrorAnalysis?.signalsFor?.(errorAnalysisSnapshot(), materia, assunto) || { available: false };
+function errorSignalsForTarget(materia = "", assunto = "", subarea = "") {
+  return window.ErrorAnalysis?.signalsFor?.(errorAnalysisSnapshot(), materia, assunto, subarea) || { available: false };
 }
 
 function errorAnalysisInsights() {
@@ -4182,7 +4261,8 @@ function masteryDiagnosisForTarget(target = {}) {
   const engine = window.MasteryDiagnosis;
   const materia = target.materia || "";
   const assunto = target.assunto || "";
-  const cacheKey = [normalizeForMatch(materia), normalizeForMatch(assunto), Number(target.prioridadeBase ?? target.prioridade) || ""].join("::");
+  const subarea = target.subarea || "";
+  const cacheKey = [programUnitKey({ materia, subarea, assunto }), Number(target.prioridadeBase ?? target.prioridade) || ""].join("::");
   if (masteryDiagnosisCache.has(cacheKey)) return masteryDiagnosisCache.get(cacheKey);
   const subjectEntries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
   const topicEntries = assunto ? uniqueDiagnosticEntries(adaptivePerformanceForTopic(materia, assunto)) : [];
@@ -4200,7 +4280,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
   const initial = initialDiagnosisInfluence(materia);
-  const errorSignals = errorSignalsForTarget(materia, assunto);
+  const errorSignals = errorSignalsForTarget(materia, assunto, subarea);
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
@@ -4299,8 +4379,8 @@ function learningDiagnosisTopics() {
   state.rows
     .filter((row) => row.estudar !== "Nao" && row.materia && row.assunto)
     .forEach((row) => {
-      const key = topicKey(row.materia, row.assunto);
-      if (!unique.has(key)) unique.set(key, { materia: row.materia, assunto: row.assunto });
+      const key = topicKey(row.materia, row.assunto, row.subarea);
+      if (!unique.has(key)) unique.set(key, { materia: row.materia, subarea: row.subarea || "", assunto: row.assunto });
     });
   return [...unique.values()];
 }
@@ -4312,6 +4392,7 @@ function learningDiagnosisModel() {
     const diagnosis = masteryDiagnosisForTarget({
       materia: topic.materia,
       assunto: topic.assunto,
+      subarea: topic.subarea,
       prioridade: priorityScore(subject),
     });
     return {
@@ -4319,7 +4400,7 @@ function learningDiagnosisModel() {
       assuntoOriginal: topic.assunto,
       assunto: themeTitle(topic.assunto),
       diagnosis,
-      errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto),
+      errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
       intervention: learningInterventionFor(topic.materia, topic.assunto),
       daysWithoutContact: daysSinceLastSubjectContact(topic.materia),
     };
@@ -4334,6 +4415,7 @@ function learningRecoveryQueue() {
     .filter((topic) => ["critical", "deficiency", "attention", "insufficient"].includes(topic.diagnosis?.level))
     .map((topic) => ({
       materia: topic.materia,
+      subarea: topic.subarea || "",
       assunto: topic.assuntoOriginal || topic.assunto,
       diagnosis: topic.diagnosis,
       confidence: Number(topic.diagnosis?.confidence) || 0,
@@ -4375,28 +4457,33 @@ function reinforceLearningDiagnosisTopic(materia = "", assunto = "") {
   switchTab("continuar");
 }
 
-function topicPlanningData(materia = "", assunto = "") {
+function topicPlanningData(materia = "", assunto = "", subarea = "") {
   const subject = subjectPlanningData(materia);
-  const storedTopic = (subject.temas || []).find((topic) => topicMatches({ materia, assunto: topic.assunto }, materia, assunto));
+  const sameSubarea = (topic) => !subarea || normalizeForMatch(topic.subarea || "") === normalizeForMatch(subarea);
+  const sameTopic = (topic) => topicMatches({ materia, assunto: topic.assunto }, materia, assunto)
+    || normalizeForMatch(themeTitle(topic.assunto)) === normalizeForMatch(themeTitle(assunto));
+  const storedTopic = (subject.temas || []).find((topic) => sameSubarea(topic) && sameTopic(topic));
   if (storedTopic) return storedTopic;
   const matching = state.rows
-    .map(enrichThemeRow)
-    .filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(materia));
-  return matching.find((row) => topicMatches({ materia: row.materia, assunto: row.assunto }, materia, assunto)) || {};
+    .map((row) => typeof enrichThemeRow === "function" ? enrichThemeRow(row) : row)
+    .filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(materia) && sameSubarea(row));
+  return matching.find((row) => sameTopic(row)) || {};
 }
 
-function pedagogicalMetaId(materia = "", assunto = "") {
-  const topic = topicPlanningData(materia, assunto);
-  return topic.metaId || `tema::${topicKey(materia, themeTitle(assunto) || assunto)}`;
+function pedagogicalMetaId(materia = "", assunto = "", subarea = "") {
+  const topic = topicPlanningData(materia, assunto, subarea);
+  return topic.metaId || `tema::${topicKey(materia, themeTitle(assunto) || assunto, subarea)}`;
 }
 
-function themeContentItems(materia = "", assunto = "") {
-  const topic = topicPlanningData(materia, assunto);
-  const stored = Array.isArray(topic.conteudosOriginais) ? topic.conteudosOriginais : [];
+function themeContentItems(materia = "", assunto = "", subarea = "") {
+  const topic = topicPlanningData(materia, assunto, subarea);
+  const stored = typeof programUnitContents === "function"
+    ? programUnitContents(topic)
+    : Array.isArray(topic.conteudosOriginais) ? topic.conteudosOriginais.filter(Boolean) : [];
   const explicitItems = stored.map(normalizeTopic).filter(Boolean);
   if (explicitItems.length) return [...new Set(explicitItems)];
 
-  const details = themeDetails(assunto);
+  const details = (typeof programUnitDescription === "function" ? programUnitDescription(topic) : topic.descricao) || themeDetails(assunto);
   const atoms = topicAtoms(details).map(normalizeTopic).filter(Boolean);
   return atoms.length > 1 ? [...new Set(atoms)] : [details || themeTitle(assunto) || "Selecionar tema"];
 }
@@ -4411,11 +4498,16 @@ function historicalIncidenceForTarget({ materia = "", assunto = "", subject = nu
   if (!engine?.resolve || !materia || planningBoard() !== "FGV") return { available: false, applied: false, normalized: 0, adjustment: 0 };
 
   const resolveTopic = (topic) => engine.resolve({
+    ...(() => {
+      const unit = typeof topic === "object" ? canonicalProgramUnit(topic) : topicPlanningData(materia, topic);
+      return {
+        title: programUnitTitle(unit) || themeTitle(topic),
+        details: programUnitDescription(unit),
+        contents: themeContentItems(materia, programUnitTitle(unit) || topic, unit.subarea || ""),
+      };
+    })(),
     board: planningBoard(),
     subject: materia,
-    title: themeTitle(topic),
-    details: themeDetails(topic),
-    contents: themeContentItems(materia, topic),
   });
 
   if (assunto) {
@@ -4519,9 +4611,9 @@ function isMetaPartCompleted(metaId = "", partKey = "") {
   return allKnownMetaBlocks(metaId).some((block) => String(block.metaPartKey || "1") === String(partKey || "1") && normalizeStatus(block.status) === "Conclu\u00eddo");
 }
 
-function isThemeCompleteForPlanning(materia = "", assunto = "", completed = completedUnitKeys()) {
-  const metaId = pedagogicalMetaId(materia, assunto);
-  const topic = topicPlanningData(materia, assunto);
+function isThemeCompleteForPlanning(materia = "", assunto = "", completed = completedUnitKeys(), subarea = "") {
+  const metaId = pedagogicalMetaId(materia, assunto, subarea);
+  const topic = topicPlanningData(materia, assunto, subarea);
   const required = Math.max(1, Number(topic.blocosSugeridos) || estimateThemeBlocks(assunto));
   const historicalCandidate = {
     materia,
@@ -4529,34 +4621,61 @@ function isThemeCompleteForPlanning(materia = "", assunto = "", completed = comp
     metaId,
     metaPartKey: topic.metaPartKey || "1",
     metaRequiredBlocks: required,
-    metaConteudos: themeContentItems(materia, assunto),
+    subarea,
+    metaConteudos: themeContentItems(materia, assunto, subarea),
   };
   if (historicalCompletedBlocks().some((item) => historicalCompletionMatches(historicalCandidate, item))) return true;
   if (required > 1 || allKnownMetaBlocks(metaId).length) {
     return metaProgressForBlock({ metaId, metaRequiredBlocks: required }).completed;
   }
-  return completed.has(topicKey(materia, assunto));
+  return completed.has(topicKey(materia, assunto, subarea));
 }
 
 function operationalStudyUnits(item, analysis) {
   const reviewTopics = reviewAttentionUnitsForSubject(item.materia);
-  return availableStudyUnits(item, analysis).flatMap((assunto) => {
-    const topic = topicPlanningData(item.materia, assunto);
-    const contents = themeContentItems(item.materia, assunto);
-    const size = topic.tamanhoEstimado || estimateThemeSize(assunto);
+  return availableStudyUnits(item, analysis).flatMap((unit) => {
+    // Estas adaptações ficam locais para que o compositor de metas também
+    // continue utilizável em contextos isolados e por planejamentos legados.
+    const titleOf = (value) => typeof programUnitTitle === "function"
+      ? programUnitTitle(value)
+      : themeTitle(typeof value === "object" ? value?.assunto || value?.titulo || "" : value);
+    const descriptionOf = (value) => typeof programUnitDescription === "function"
+      ? programUnitDescription(value)
+      : String(value?.descricao || themeDetails(value?.assunto || value?.titulo || "")).trim();
+    const contentsOf = (value) => typeof programUnitContents === "function"
+      ? programUnitContents(value)
+      : Array.isArray(value?.conteudosOriginais) && value.conteudosOriginais.length
+        ? value.conteudosOriginais.filter(Boolean)
+        : descriptionOf(value) ? [descriptionOf(value)] : [];
+    const assunto = titleOf(unit);
+    const subarea = unit?.subarea || "";
+    const topic = topicPlanningData(item.materia, assunto, subarea);
+    const contents = themeContentItems(item.materia, assunto, subarea);
+    const size = topic.tamanhoEstimado || estimateThemeSize([assunto, descriptionOf(topic)].filter(Boolean).join(": "));
     const requestedBlocks = Math.max(1, Number(topic.blocosSugeridos) || estimateThemeBlocks(assunto));
     const reviewPending = reviewTopics.some((candidate) => topicMatches({ materia: item.materia, assunto: candidate }, item.materia, assunto));
     const partsNeeded = reviewPending ? 1 : size === "Longo"
       ? Math.min(3, Math.max(requestedBlocks, Math.ceil(contents.length / 3)))
       : requestedBlocks;
-    const metaId = topic.metaId || pedagogicalMetaId(item.materia, assunto);
+    const metaId = topic.metaId || pedagogicalMetaId(item.materia, assunto, subarea);
     const firstPart = Math.max(1, Number(topic.metaPartKey) || 1);
     const requiredMetaBlocks = Math.max(firstPart, Number(topic.metaRequiredBlocks) || 0, partsNeeded);
     return splitThemeContents(contents, partsNeeded)
       .map((part, index, parts) => ({
-        assunto,
+        section: topic.section || "",
+        materia: item.materia,
+        subarea: topic.subarea || subarea,
+        titulo: titleOf(topic),
+        assunto: titleOf(topic),
+        descricao: descriptionOf(topic),
+        conteudosOriginais: contentsOf(topic),
+        outlineNumber: topic.outlineNumber || "",
+        outlineLevel: Number(topic.outlineLevel) || 0,
+        structureSource: topic.structureSource || "",
+        sourceBlockType: topic.sourceBlockType || "",
+        origemEdital: topic.origemEdital || {},
         metaId,
-        metaTitulo: themeTitle(assunto),
+        metaTitulo: titleOf(topic),
         metaConteudos: contents,
         metaPartKey: String(firstPart + index),
         metaRequiredBlocks: Math.max(requiredMetaBlocks, firstPart + parts.length - 1),
@@ -5084,14 +5203,25 @@ function rebalanceGoalDurations(blocks, weeklyHours, baseDuration) {
 }
 
 function blockRow(number, duration, item, type, estimate = {}) {
+  const unit = canonicalProgramUnit(item);
   return {
     bloco: number,
     duracao: duration,
-    materia: item.materia,
-    assunto: item.assunto,
-    descricao: item.descricao || "",
+    section: unit.section || "",
+    materia: unit.materia,
+    subarea: unit.subarea || "",
+    titulo: unit.titulo,
+    assunto: unit.titulo,
+    descricao: unit.descricao || "",
+    conteudosOriginais: programUnitContents(unit),
+    outlineNumber: unit.outlineNumber || "",
+    outlineLevel: Number(unit.outlineLevel) || 0,
+    structureSource: unit.structureSource || "",
+    sourceBlockType: unit.sourceBlockType || "",
+    origemEdital: unit.origemEdital || {},
+    programUnitKey: programUnitKey(unit),
     metaId: item.metaId || "",
-    metaTitulo: item.metaTitulo || themeTitle(item.assunto),
+    metaTitulo: item.metaTitulo || unit.titulo,
     metaConteudos: Array.isArray(item.metaConteudos) ? item.metaConteudos.slice() : [],
     metaPartKey: item.metaPartKey || "1",
     metaRequiredBlocks: Math.max(1, Number(item.metaRequiredBlocks) || 1),
@@ -7522,7 +7652,7 @@ function renderContinuePanel() {
     <div class="continue-primary-column">
     <section class="continue-main-card continue-recommendation-card">
       <div class="continue-card-header">
-        <div><span class="continue-phase-chip">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block.assunto)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(themeDetails(suggested.block.assunto) || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
+        <div><span class="continue-phase-chip">${escapeHtml(phaseLabel)}</span>${phaseCoverageText ? `<small class="continue-phase-risk">${escapeHtml(phaseCoverageText)}</small>` : ""}<span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${suggested ? escapeHtml(suggested.block.materia) : "Ciclo concluído"}</span><h3>${suggested ? escapeHtml(themeTitle(suggested.block)) : "Todos os blocos deste ciclo foram concluídos."}</h3><p>${suggested ? escapeHtml(shortText(programUnitDescription(suggested.block) || suggested.block.conteudoBloco || suggested.block.assunto, 180)) : "Você pode revisar o ciclo completo ou iniciar o próximo quando estiver pronto."}</p></div>${suggested ? "<span class=\"continue-duration\">" + formatDuration(suggested.block.duracao) + "</span>" : ""}</div>
       ${suggested ? `
         <div class="continue-reason-box"><strong>Por que este tema agora?</strong><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
@@ -7839,6 +7969,7 @@ function focusedErrorContext() {
     block,
     draft,
     materia: block.materia,
+    subarea: block.subarea || "",
     assunto: block.assunto,
     macrotema: macroTopicFor(block.materia, block.assunto),
     sessaoId: String(draft.sessionId || focusedStudySession?.id || createStudySessionId()),
@@ -7881,6 +8012,7 @@ function registerFocusedError({ quick = false } = {}) {
   state.errors.push({
     id: createErrorRecordId(),
     materia: context.materia,
+    subarea: context.subarea,
     assunto: context.assunto,
     macrotema: context.macrotema,
     registradaEm: new Date().toISOString(),
@@ -7913,11 +8045,14 @@ function recordStudyErrors(block = {}, { sessionId = "", source = "", questions 
   if (!count || !block.materia || !block.assunto) return false;
   state.errors = Array.isArray(state.errors) ? state.errors : [];
   const stableSessionId = String(sessionId || block.lastSavedSessionId || `${source}:${block.id || block.materia}:${block.assunto}`);
-  const existing = state.errors.find((item) => !item.registroManual && String(item.sessaoId || item.sessionId || "") === stableSessionId && topicMatches(item, block.materia, block.assunto));
+  const existing = state.errors.find((item) => !item.registroManual
+    && String(item.sessaoId || item.sessionId || "") === stableSessionId
+    && programUnitKey(item) === programUnitKey(block));
   const intervention = learningInterventionFor(block.materia, block.assunto);
   const next = {
     id: existing?.id || `error-session:${stableSessionId}`,
     materia: block.materia,
+    subarea: block.subarea || "",
     assunto: block.assunto,
     macrotema: macroTopicFor(block.materia, block.assunto),
     registradaEm: new Date().toISOString(),
@@ -11653,8 +11788,8 @@ function applyAppSnapshot(saved = {}) {
   resetPlanningAccess();
   applyFormState(saved.form);
   els.programText.value = saved.programText || "";
-  state.rows = Array.isArray(saved.rows) ? saved.rows : [];
-  state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows : [];
+  state.rows = Array.isArray(saved.rows) ? saved.rows.map(enrichThemeRow) : [];
+  state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows.map(enrichThemeRow) : [];
   state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows
     ? saved.pendingContentMigrationBackup
     : null;
@@ -13456,10 +13591,11 @@ els.topicsBody.addEventListener("click", async (event) => {
       return;
     }
     rememberContentUndo("Edição manual do tema.");
-    const assunto = title && details ? `${title}: ${details}` : title || details;
     state.rows[index] = enrichThemeRow({
       ...current,
-      assunto,
+      titulo: title || details,
+      assunto: title || details,
+      descricao: details,
       conteudosOriginais: details ? topicAtoms(details) : [],
       agrupamentoPedagogico: undefined,
       editadoManualmente: true,
@@ -13551,7 +13687,10 @@ els.topicsBody.addEventListener("click", async (event) => {
     rememberContentUndo("Temas juntados.");
     state.rows[previousIndex] = enrichThemeRow({
       ...previous,
-      assunto: `${themeTitle(previous.assunto)} + ${themeTitle(row.assunto)}: ${[themeDetails(previous.assunto), themeDetails(row.assunto)].filter(Boolean).join("; ")}`,
+      titulo: `${themeTitle(previous.assunto)} + ${themeTitle(row.assunto)}`,
+      assunto: `${themeTitle(previous.assunto)} + ${themeTitle(row.assunto)}`,
+      descricao: [themeDetailsForRow(previous), themeDetailsForRow(row)].filter(Boolean).join("; "),
+      conteudosOriginais: [...programUnitContents(previous), ...programUnitContents(row)],
       observacoes: [previous.observacoes, row.observacoes].filter(Boolean).join("\n"),
     });
     state.rows.splice(index, 1);
@@ -13602,7 +13741,7 @@ els.topicsBody.addEventListener("click", async (event) => {
     if (!row) return;
     rememberContentUndo("Tema duplicado.");
     syncRowsFromTable();
-    state.rows.splice(index + 1, 0, enrichThemeRow({ ...row, assunto: themeTitle(row.assunto) + " (cópia): " + themeDetails(row.assunto), ordem: (Number(row.ordem) || 1) + 1, editadoManualmente: true }));
+    state.rows.splice(index + 1, 0, enrichThemeRow({ ...row, titulo: `${themeTitle(row.assunto)} (cópia)`, assunto: `${themeTitle(row.assunto)} (cópia)`, descricao: themeDetailsForRow(row), conteudosOriginais: programUnitContents(row), ordem: (Number(row.ordem) || 1) + 1, editadoManualmente: true }));
     renderRows();
     return;
   }

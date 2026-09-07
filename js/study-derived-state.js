@@ -1,6 +1,7 @@
 "use strict";
 
 (function initStudyDerivedState(global) {
+  const ProgramModel = global.ProgramModel || (typeof module !== "undefined" && module.exports ? require("./program-model.js") : null);
   let cachedSnapshot = null;
   let cachedRevision = -1;
   let cachedEntries = null;
@@ -32,7 +33,10 @@
     derivedEntries.forEach((entry) => {
       const block = entry.block || {};
       const subjectKey = String(block.materia || "").trim().toLowerCase();
-      const topicKey = `${subjectKey}::${String(block.assunto || "").trim().toLowerCase()}`;
+      const hasSubarea = Boolean(String(block.subarea || "").trim());
+      const topicKey = hasSubarea && ProgramModel?.programUnitKey
+        ? ProgramModel.programUnitKey(block)
+        : `${subjectKey}::${String(block.assunto || "").trim().toLowerCase()}`;
       const diagnosis = entry.derived?.adaptive?.mastery || null;
       if (diagnosis && topicKey !== "::") diagnosisByTopic.set(topicKey, diagnosis);
       if (diagnosis && subjectKey && !diagnosisBySubject.has(subjectKey)) diagnosisBySubject.set(subjectKey, diagnosis);
