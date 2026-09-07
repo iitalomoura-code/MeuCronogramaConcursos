@@ -11412,6 +11412,43 @@ textarea:focus {
   .edital-map-topic > div:first-child span { white-space: normal; }
 }
 
+.program-comparison-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.program-comparison-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 0;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.program-comparison-counts strong { color: var(--text); }
+.program-comparison-reorder { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+.program-comparison-list { display: grid; gap: 8px; margin: 14px 0; }
+.program-comparison-item { border: 1px solid var(--divider); border-radius: 8px; padding: 11px 13px; }
+.program-comparison-item.is-review { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.program-comparison-item-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.program-comparison-item-head strong { color: var(--text); }
+.program-comparison-badge { color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.program-comparison-old, .program-comparison-item-meta { display: block; color: var(--muted); font-size: 12px; margin-top: 5px; }
+.program-comparison-decision { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin-top: 10px; }
+.program-comparison-decision select { min-width: 220px; }
+.program-comparison-empty { color: var(--muted); font-size: 13px; margin: 14px 0; }
+.program-comparison-actions { position: sticky; bottom: 0; background: var(--card); padding-top: 10px; }
+
+@media (max-width: 560px) {
+  .program-comparison-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .program-comparison-decision { align-items: stretch; flex-direction: column; }
+  .program-comparison-decision select { min-width: 0; width: 100%; }
+}
+
 .pending-content-migration-dialog {
   width: min(760px, calc(100vw - 32px));
   max-height: min(780px, calc(100vh - 32px));

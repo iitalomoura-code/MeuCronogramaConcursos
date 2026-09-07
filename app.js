@@ -83,6 +83,8 @@ const state = {
   contentOriginalRows: [],
   contentDraftPendingConfirmation: false,
   pendingContentMigrationBackup: null,
+  programVersions: [],
+  currentProgramVersionId: "",
   currentPlanId: "",
   activeStudyPlanId: "",
   plans: [],
@@ -144,6 +146,8 @@ let showPendingOnly = false;
 let continueSuggestionOffset = 0;
 let continueRecommendationFilters = { minutes: 0, activity: "" };
 let continueManualOverride = null;
+let pendingProgramComparison = null;
+let pendingProgramVersionChange = null;
 let animatedMetricPanels = new Set();
 let goalTimerInterval = null;
 let lastProgramParseMeta = {
@@ -337,6 +341,13 @@ const els = {
   clearContentSearch: document.querySelector("#clearContentSearch"),
   contentProblemSummary: document.querySelector("#contentProblemSummary"),
   contentProblemsModal: document.querySelector("#contentProblemsModal"),
+  programComparisonModal: document.querySelector("#programComparisonModal"),
+  programComparisonSummary: document.querySelector("#programComparisonSummary"),
+  programComparisonList: document.querySelector("#programComparisonList"),
+  programComparisonNotice: document.querySelector("#programComparisonNotice"),
+  applyProgramComparisonButton: document.querySelector("#applyProgramComparisonButton"),
+  cancelProgramComparisonButton: document.querySelector("#cancelProgramComparisonButton"),
+  cancelProgramComparisonBackdrop: document.querySelector("#cancelProgramComparisonBackdrop"),
   contentMatterCount: document.querySelector("#contentMatterCount"),
   contentThemeCount: document.querySelector("#contentThemeCount"),
   contentSelectedCount: document.querySelector("#contentSelectedCount"),
@@ -3742,6 +3753,96 @@ function closeContentProblemsModal() {
   if (els.contentProblemsModal) els.contentProblemsModal.hidden = true;
 }
 
+function closeProgramComparison() {
+  pendingProgramComparison = null;
+  if (!els.programComparisonModal) return;
+  els.programComparisonModal.hidden = true;
+  els.programComparisonModal.setAttribute("aria-hidden", "true");
+}
+
+function renderProgramComparisonPreview(diff) {
+  if (!els.programComparisonModal || !diff) return;
+  const summaryLabels = [
+    ["ADDED", "novos"], ["REMOVED", "removidos"], ["MODIFIED", "alterados"],
+    ["MOVED", "movidos"], ["RENAMED", "renomeados"], ["POSSIBLE_MATCH", "possíveis correspondências"],
+  ];
+  const summary = summaryLabels
+    .filter(([key]) => diff.summary[key])
+    .map(([key, label]) => `<span><strong>${diff.summary[key]}</strong> ${label}</span>`)
+    .join("");
+  els.programComparisonSummary.innerHTML = `<div class="program-comparison-counts">${summary || "Nenhuma diferença estrutural encontrada."}</div>${diff.reordered ? `<p class="program-comparison-reorder">A ordem mudou em parte do conteúdo, mas isso não altera o histórico.</p>` : ""}`;
+  els.programComparisonList.innerHTML = diff.units
+    .filter((item) => item.type !== "UNCHANGED")
+    .map((item, index) => {
+      const title = item.next?.titulo || item.current?.titulo || "Tema sem título";
+      const oldTitle = item.current?.titulo && item.current.titulo !== title ? `<span class="program-comparison-old">Antes: ${escapeHtml(item.current.titulo)}</span>` : "";
+      const labels = { ADDED: "Novo", REMOVED: "Saiu da leitura", MODIFIED: "Conteúdo alterado", MOVED: "Tema movido", RENAMED: "Tema renomeado", POSSIBLE_MATCH: "Revisar correspondência" };
+      const contents = [
+        item.retainedContents?.length ? `<span>= ${item.retainedContents.length} preservado${item.retainedContents.length === 1 ? "" : "s"}</span>` : "",
+        item.addedContents?.length ? `<span>+ ${item.addedContents.length} conteúdo${item.addedContents.length === 1 ? "" : "s"}</span>` : "",
+        item.removedContents?.length ? `<span>− ${item.removedContents.length} conteúdo${item.removedContents.length === 1 ? "" : "s"}</span>` : "",
+      ].filter(Boolean).join("");
+      const possible = item.type === "POSSIBLE_MATCH" ? `<label class="program-comparison-decision">Como tratar este item?
+        <select data-program-comparison-decision="${escapeHtml(item.next.key)}">
+          <option value="review">Escolher depois</option>
+          <option value="preserve">Manter correspondência sugerida</option>
+          <option value="treat-as-new">Tratar como novo tema</option>
+          ${(item.candidates || []).map((candidate) => `<option value="match:${escapeHtml(candidate.key)}">Vincular a “${escapeHtml(candidate.title)}”</option>`).join("")}
+        </select>
+      </label>` : "";
+      return `<article class="program-comparison-item ${item.type === "POSSIBLE_MATCH" ? "is-review" : ""}" data-comparison-item="${index}">
+        <div class="program-comparison-item-head"><span class="program-comparison-badge">${labels[item.type] || item.type}</span><strong>${escapeHtml(title)}</strong></div>
+        ${oldTitle}<div class="program-comparison-item-meta">${escapeHtml(item.next?.materia || item.current?.materia || "")} ${contents}</div>${possible}
+      </article>`;
+    }).join("") || `<p class="program-comparison-empty">Os temas permanecem iguais. A nova leitura só reorganizou a ordem.</p>`;
+  els.programComparisonNotice.hidden = true;
+  els.applyProgramComparisonButton.disabled = false;
+  els.programComparisonModal.hidden = false;
+  els.programComparisonModal.setAttribute("aria-hidden", "false");
+}
+
+function openProgramComparison(nextRows, originalText) {
+  const comparator = window.ProgramVersionComparator;
+  if (!comparator?.compare || !state.confirmed || !state.rows.length) return false;
+  const diff = comparator.compare(state.rows, nextRows, { sourceType: "text", sourceName: "colagem manual" });
+  pendingProgramComparison = { diff, nextRows, originalText };
+  renderProgramComparisonPreview(diff);
+  return true;
+}
+
+function applyProgramComparisonPreview() {
+  if (!pendingProgramComparison || !window.ProgramVersionComparator) return;
+  const decisions = {};
+  els.programComparisonList?.querySelectorAll("[data-program-comparison-decision]").forEach((select) => {
+    decisions[select.dataset.programComparisonDecision] = select.value;
+  });
+  const unresolved = pendingProgramComparison.diff.units.some((item) => item.type === "POSSIBLE_MATCH" && (!decisions[item.next.key] || decisions[item.next.key] === "review"));
+  if (unresolved) {
+    els.programComparisonNotice.textContent = "Há uma correspondência que precisa de uma decisão antes de aplicar a atualização.";
+    els.programComparisonNotice.hidden = false;
+    return;
+  }
+  const currentRows = copyContentRows(pendingProgramComparison.diff.currentSnapshot);
+  const applied = window.ProgramVersionComparator.applyDiff(pendingProgramComparison.diff, decisions);
+  pendingProgramVersionChange = {
+    previous: { id: `program-version:${Date.now()}:previous`, planId: state.currentPlanId, createdAt: new Date().toISOString(), sourceName: "Leitura anterior", sourceType: "snapshot", unitsSnapshot: currentRows, appliedAt: null },
+    next: { id: `program-version:${Date.now()}:next`, planId: state.currentPlanId, createdAt: new Date().toISOString(), sourceName: "Colagem manual", sourceType: "text", unitsSnapshot: copyContentRows(applied.rows), appliedAt: null },
+    correspondences: applied.correspondences,
+    removed: applied.removed,
+  };
+  state.rows = applied.rows.map(enrichThemeRow);
+  state.contentOriginalRows = copyContentRows(state.rows);
+  state.contentDraftPendingConfirmation = true;
+  state.confirmed = false;
+  ignoredProgramValidationIssues = new Set();
+  els.confirmationStatus.textContent = "Rascunho atualizado para confirmação";
+  els.confirmationStatus.classList.remove("confirmed");
+  closeProgramComparison();
+  showContentParserWarnings(programParserWarnings(state.rows));
+  renderRows({ preserveState: true });
+  notifyContent("Atualização comparada. Confira a estrutura e confirme para salvar.", "success");
+}
+
 function confirmRows(options = {}) {
   syncRowsFromTable();
   renumberRows({ sync: false, preserveState: true });
@@ -3760,6 +3861,15 @@ function confirmRows(options = {}) {
   if (problems.length && !options.force) {
     openContentProblemsModal(problems.length);
     return;
+  }
+
+  if (pendingProgramVersionChange) {
+    const committedAt = new Date().toISOString();
+    pendingProgramVersionChange.previous.appliedAt = committedAt;
+    pendingProgramVersionChange.next.appliedAt = committedAt;
+    state.programVersions = [...(Array.isArray(state.programVersions) ? state.programVersions : []), pendingProgramVersionChange.previous, pendingProgramVersionChange.next];
+    state.currentProgramVersionId = pendingProgramVersionChange.next.id;
+    pendingProgramVersionChange = null;
   }
 
   state.contentDraftPendingConfirmation = false;
@@ -11849,6 +11959,8 @@ function captureAppState() {
     contentOriginalRows: state.contentOriginalRows,
     contentDraftPendingConfirmation: state.contentDraftPendingConfirmation,
     pendingContentMigrationBackup: state.pendingContentMigrationBackup,
+    programVersions: state.programVersions,
+    currentProgramVersionId: state.currentProgramVersionId,
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
@@ -11898,6 +12010,8 @@ function applyAppSnapshot(saved = {}) {
   state.pendingContentMigrationBackup = saved.pendingContentMigrationBackup?.rows
     ? saved.pendingContentMigrationBackup
     : null;
+  state.programVersions = Array.isArray(saved.programVersions) ? saved.programVersions : [];
+  state.currentProgramVersionId = saved.currentProgramVersionId || "";
   updateContentFlowSteps();
 
   state.confirmed = Boolean(saved.confirmed);
@@ -12425,6 +12539,8 @@ function blankAppSnapshot(name = "") {
     programText: "",
     rows: [],
     contentDraftPendingConfirmation: false,
+    programVersions: [],
+    currentProgramVersionId: "",
     confirmed: false,
     planningBase: null,
     distribution: [],
@@ -13367,7 +13483,9 @@ els.processButton.addEventListener("click", async () => {
     ? window.PedagogicalContentGrouping.groupRows(parsedRows)
     : parsedRows;
   const warnings = programParserWarnings(pedagogicallyGroupedRows);
-  state.rows = organizeRowsByTheme(pedagogicallyGroupedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  const nextRows = organizeRowsByTheme(pedagogicallyGroupedRows).map((row) => enrichThemeRow({ ...row, estudar: "Sim" }));
+  if (openProgramComparison(nextRows, originalText)) return;
+  state.rows = nextRows;
   ignoredProgramValidationIssues = new Set();
   state.contentDraftPendingConfirmation = true;
   els.confirmationStatus.textContent = "Rascunho para confirma\u00e7\u00e3o";
@@ -13385,6 +13503,9 @@ els.cancelPendingContentMigrationButton?.addEventListener("click", () => closePe
 els.cancelPendingContentMigrationBackdrop?.addEventListener("click", () => closePendingContentMigration());
 els.confirmPendingContentMigrationButton?.addEventListener("click", () => void applyPendingContentMigration());
 els.restorePendingContentMigrationButton?.addEventListener("click", () => void restorePendingContentMigrationBackup());
+els.applyProgramComparisonButton?.addEventListener("click", applyProgramComparisonPreview);
+els.cancelProgramComparisonButton?.addEventListener("click", closeProgramComparison);
+els.cancelProgramComparisonBackdrop?.addEventListener("click", closeProgramComparison);
 
 if (els.historySelect) els.historySelect.addEventListener("change", () => {
   const entry = state.originalHistory.find((item) => item.id === els.historySelect.value);
