@@ -1,0 +1,9 @@
+FLUÊNCIA EM DADOS
+
+1. Ciência de Dados e Big Data
+Fundamentos de Ciência de Dados e Big Data.
+
+Para o seu sistema: Estatística e Fluência em Dados devem permanecer como matérias diferentes.
+
+2. Estatística descritiva
+Medidas de posição e dispersão.
