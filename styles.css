@@ -258,6 +258,10 @@ summary:focus-visible {
     min-height: 44px;
   }
 
+  body .tab-panel button:is(.primary-button, .ghost-button, .compact-button, .text-action, .continue-filter-chip) {
+    min-height: 44px;
+  }
+
   body .tab-panel .icon-button,
   body .plan-delete-modal .icon-button,
   body .focused-study-modal .icon-button,
