@@ -27,9 +27,9 @@
       this.shadowRoot.innerHTML = `
         <style>
           :host {
-            --brand-logo-ink: var(--text, #26323A);
-            --brand-logo-muted: var(--muted, #697783);
-            --brand-logo-accent: var(--primary, #D97706);
+            --brand-logo-ink: var(--text, #202938);
+            --brand-logo-muted: var(--muted, #667085);
+            --brand-logo-accent: var(--primary, #695CFF);
             display: inline-block;
             min-width: 0;
             color: var(--brand-logo-ink);

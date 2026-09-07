@@ -1,16 +1,17 @@
 :root {
   color-scheme: light;
-  --bg: #FCFBF8;
+  --bg: #F6F7FB;
   --card: #FFFFFF;
-  --text: #26323A;
-  --muted: #697783;
-  --border: #E8E3DA;
-  --divider: #F0ECE5;
-  --primary: #D97706;
-  --primary-hover: #B45309;
-  --primary-soft: #FEF3E2;
-  --danger: #B3261E;
-  --shadow: 0 12px 30px rgba(32, 42, 48, .07);
+  --text: #202938;
+  --muted: #667085;
+  --border: #E5E7EE;
+  --divider: #EEF0F5;
+  --primary: #695CFF;
+  --primary-hover: #5848EE;
+  --primary-soft: #F0EEFF;
+  --study: #3B82F6;
+  --danger: #F43F5E;
+  --shadow: 0 12px 30px rgba(49, 46, 129, .09);
   --color-bg: var(--bg);
   --color-surface: var(--card);
   --color-surface-soft: var(--primary-soft);
@@ -29,24 +30,25 @@
   --radius-md: 10px;
   --radius-lg: 14px;
   --shadow-soft: var(--shadow);
-  --shadow-floating: 0 24px 60px rgba(7, 12, 10, .25);
+  --shadow-floating: 0 24px 60px rgba(49, 46, 129, .22);
   --font-body: Inter, "Segoe UI", Arial, sans-serif;
 }
 
 :root[data-theme="night"] {
   color-scheme: dark;
-  --bg: #171E1D;
-  --card: #202826;
-  --text: #E9EFEC;
-  --muted: #AAB6B0;
-  --border: #38433F;
-  --divider: #2E3835;
-  --primary: #E1A043;
-  --primary-hover: #F0B35C;
-  --primary-soft: #3A2C1A;
-  --danger: #F1A39C;
-  --shadow: 0 16px 34px rgba(7, 12, 10, .24);
-  --shadow-floating: 0 24px 60px rgba(7, 12, 10, .42);
+  --bg: #0B1020;
+  --card: #12192B;
+  --text: #F1F5F9;
+  --muted: #94A3B8;
+  --border: #26324A;
+  --divider: #202B42;
+  --primary: #8B7DFF;
+  --primary-hover: #A69DFF;
+  --primary-soft: #292449;
+  --study: #60A5FA;
+  --danger: #FB7185;
+  --shadow: 0 16px 34px rgba(3, 7, 18, .3);
+  --shadow-floating: 0 24px 60px rgba(3, 7, 18, .54);
 }
 
 * { box-sizing: border-box; }
@@ -56,7 +58,7 @@ html, body { min-height: 100%; }
 
 body {
   margin: 0;
-  background: var(--color-bg);
+  background: radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 30%), var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-body);
 }
@@ -265,8 +267,8 @@ body.auth-verified .plans-auth-loading { display: none; }
 .plans-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .plans-button { min-height: 40px; padding: 0 15px; border-radius: 10px; font-weight: 600; }
 .plans-button.secondary { border: 1px solid var(--border); background: var(--card); color: var(--text); }
-.plans-button.primary { border: 1px solid var(--primary); background: var(--primary); color: #fff; }
-.plans-button.primary:hover { border-color: var(--primary-hover); background: var(--primary-hover); }
+.plans-button.primary { border: 1px solid var(--primary); background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 72%, var(--study))); color: #fff; }
+.plans-button.primary:hover { border-color: var(--primary-hover); background: linear-gradient(135deg, var(--primary-hover), color-mix(in srgb, var(--primary-hover) 72%, var(--study))); }
 .plans-button.danger { border-color: var(--danger); background: var(--danger); color: #fff; }
 
 @keyframes plans-spin { to { transform: rotate(360deg); } }

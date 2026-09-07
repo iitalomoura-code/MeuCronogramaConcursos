@@ -9,6 +9,8 @@ const html = fs.readFileSync("index.html", "utf8");
   "--color-bg", "--color-surface", "--color-text", "--color-text-muted",
   "--color-border", "--color-accent", "--space-1", "--space-10",
   "--radius-sm", "--radius-md", "--radius-lg", "--shadow-soft", "--shadow-floating",
+  "--color-intelligence", "--color-study", "--color-review", "--color-positive", "--color-attention", "--color-critical",
+  "--surface-violet-soft", "--surface-blue-soft", "--surface-cyan-soft", "--surface-teal-soft", "--surface-amber-soft", "--surface-coral-soft",
 ].forEach((token) => assert.ok(css.includes(token), `token ausente: ${token}`));
 
 [".ds-page-header", ".ds-section-header", ".ds-surface", ".ds-list-row", ".ds-badge", ".ds-search", ".ds-empty-state", ".ds-metric"].forEach((component) => {
@@ -18,6 +20,10 @@ const html = fs.readFileSync("index.html", "utf8");
 assert.ok((html.match(/ds-page-header/g) || []).length >= 10, "principais headers devem usar o padrão de página");
 assert.ok(!css.includes("var(--accent)"), "componentes não podem depender de token inexistente");
 assert.ok(css.includes("button:focus-visible"), "controles precisam de foco visível");
+assert.ok(css.includes("--primary: #695CFF"), "o modo claro deve usar violeta como cor principal");
+assert.ok(css.includes("--color-study: #3B82F6") && css.includes("--color-review: #06B6D4"), "estudo e revisão devem ter cores semânticas próprias");
+assert.ok(css.includes(':root[data-theme="night"]') && css.includes("--bg-main: #0B1020"), "o modo escuro deve possuir tokens próprios");
+assert.ok(css.includes("--sidebar: #111827"), "a sidebar deve adotar a superfície midnight");
 assert.ok(css.includes("@media (max-width: 560px)"), "deve existir comportamento mobile");
 assert.ok(/@media \(max-width: 680px\)[\s\S]*min-height: 44px/.test(css), "ações mobile precisam de alvo de toque confortável");
 assert.ok(/@media \(max-width: 620px\)[\s\S]*min-height: 44px/.test(plansCss), "lista de cronogramas precisa de alvos de toque confortáveis");
