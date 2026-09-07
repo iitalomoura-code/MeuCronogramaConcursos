@@ -279,11 +279,12 @@ body.auth-verified .plans-auth-loading { display: none; }
   .plans-shell { width: min(100% - 30px, 520px); padding-top: 18px; }
   .plans-topbar { margin-bottom: 44px; padding-top: 50px; }
   .plans-account-button span { display: none; }
-  .plans-account-button { width: 38px; padding: 0; }
+  .plans-icon-button,
+  .plans-account-button { width: 44px; min-height: 44px; padding: 0; }
   .plans-grid { grid-template-columns: 1fr; gap: 13px; }
   .plan-card, .create-plan-card, .plans-loading-card, .plan-card-open { min-height: 218px; }
   .plans-modal-actions { flex-direction: column-reverse; }
-  .plans-button { width: 100%; }
+  .plans-button { width: 100%; min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

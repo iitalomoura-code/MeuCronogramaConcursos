@@ -248,6 +248,25 @@ summary:focus-visible {
   outline-offset: 2px;
 }
 
+@media (max-width: 680px) {
+  body .tab-panel button,
+  body.auth-page button,
+  body .plan-delete-modal button,
+  body .focused-study-modal button,
+  body .review-history-modal button,
+  body .evolution-topic-modal button {
+    min-height: 44px;
+  }
+
+  body .tab-panel .icon-button,
+  body .plan-delete-modal .icon-button,
+  body .focused-study-modal .icon-button,
+  body .review-history-modal .icon-button,
+  body .evolution-topic-modal .icon-button {
+    min-width: 44px;
+  }
+}
+
 html {
   min-height: 100%;
   background: var(--bg-main);
