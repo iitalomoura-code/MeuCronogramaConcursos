@@ -6056,7 +6056,7 @@ function renderGeneratedSchedule() {
                 </div>
                 <div class="goal-priority">
                   <span>Prioridade</span>
-                  ${priorityDots(block.prioridade)}
+                  ${priorityDots(displayPriorityForBlock(block))}
                 </div>
               </div>
               <div class="goal-card-actions">
@@ -6899,7 +6899,7 @@ function renderContinuePanelLegacy() {
           </div>
           <div>
             <span>Prioridade</span>
-            ${priorityDots(suggested.block.prioridade)}
+            ${priorityDots(displayPriorityForBlock(suggested.block))}
           </div>
         </div>
         <div class="continue-actions">
@@ -8259,7 +8259,7 @@ function renderContinuePanel() {
           <div class="continue-meta-cycle"><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
           <div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: manualEntry?.override?.action?.label || suggested.block.atividadeSugerida || recommendationResult.activityType }, "continue-activity-badge")}</div>
           <div class="continue-meta-status"><span>Status</span>${statusBadge(suggested.block.status)}</div>
-          <div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(suggested.block.prioridade)}</div>
+          <div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(displayPriorityForBlock(suggested.block))}</div>
         </div>
         <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-duration=\"" + suggested.index + "\" data-duration-minutes=\"" + minutes + "\">" + formatMinutesShort(minutes) + "</button>").join("")}</div></div>
         ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
@@ -8566,9 +8566,27 @@ function performancePanel(block, index) {
   `;
 }
 
-function priorityDots(priority) {
-  const level = Math.max(1, Math.min(5, Math.ceil((Number(priority) || 0) * 5)));
-  return `<span class="priority-indicator priority-level-${level}" aria-label="Prioridade ${level} de 5"><span class="priority-dots">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span></span>`;
+function priorityVisualLevel(score) {
+  const normalized = Math.max(0, Math.min(1, Number(score) || 0));
+  return Math.min(5, Math.floor(normalized * 5) + 1);
+}
+
+function displayPriorityForBlock(block = {}) {
+  const structuralPriority = Number(block.prioridadeBase);
+  if (Number.isFinite(structuralPriority) && structuralPriority >= 0 && structuralPriority <= 1) return structuralPriority;
+
+  const subject = subjectPlanningData(block.materia);
+  if (subject?.materia) return priorityScore(subject);
+
+  return Math.max(0, Math.min(1, Number(block.prioridade) || 0));
+}
+
+function priorityDots(score) {
+  const normalized = Math.max(0, Math.min(1, Number(score) || 0));
+  const level = priorityVisualLevel(normalized);
+  const priority = priorityInfo(normalized);
+  const description = `Prioridade ${priority.label.toLowerCase()} - ${priority.percent}% - nível ${level} de 5`;
+  return `<span class="priority-indicator priority-level-${level}" aria-label="${description}" title="${description}"><span class="priority-dots" aria-hidden="true">${Array.from({ length: 5 }, (_, index) => `<span class="dot ${index < level ? "filled" : ""}"></span>`).join("")}</span></span>`;
 }
 
 function formatPercent(value) {
