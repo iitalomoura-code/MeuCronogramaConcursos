@@ -3503,6 +3503,41 @@ function getContestConfig() {
   };
 }
 
+function capacityPlanning() {
+  return window.CapacityPlanning || {
+    capacityFor: ({ weeklyHours = 0 } = {}) => ({
+      dailyHours: balancedDailyHours(weeklyHours),
+      availableHours: Number(weeklyHours) || 0,
+      plannedHours: Number(weeklyHours) || 0,
+      plannedMinutes: Math.round((Number(weeklyHours) || 0) * 60),
+      safetyMargin: 1,
+      reserveHours: 0,
+      adaptiveReserveMinutes: 0,
+    }),
+    normalizeSubject: (subject) => subject,
+    normalizeExamImportance: (subject) => subject.examImportance || {},
+    knowledgeState: () => ({ key: "unmeasured", label: "Ainda não medido" }),
+    studyPressure: () => 0,
+    classifyBlock: () => ({ category: "flexible" }),
+  };
+}
+
+function normalizedPlanningSubject(subject = {}) {
+  return capacityPlanning().normalizeSubject(subject);
+}
+
+function subjectIsActive(subject = {}) {
+  return normalizedPlanningSubject(subject).active !== false;
+}
+
+function subjectPlanningCapacity(subject = {}) {
+  const normalized = normalizedPlanningSubject(subject);
+  return {
+    ...normalized,
+    examImportance: capacityPlanning().normalizeExamImportance(normalized),
+  };
+}
+
 function normalizeReferenceDurationHours(value, fallback = 1.5) {
   const parsed = parseDurationInput(value, fallback);
   const minutes = Math.max(30, Math.round((Number(parsed) || fallback) * 60));
@@ -3660,7 +3695,7 @@ function uniqueSubjects(rows) {
   rows.filter((row) => row.estudar !== "Nao" && row.materia).map(canonicalProgramUnit).forEach((row) => {
     const key = normalizeForMatch(row.materia);
     if (!map.has(key)) {
-      map.set(key, { materia: row.materia, assuntos: [], temas: [], peso: 3, dominio: 3, prioridade: 0 });
+      map.set(key, { materia: row.materia, assuntos: [], temas: [], peso: 3, dominio: 3, prioridade: 0, active: true, familiarity: "unknown" });
     }
     if (row.titulo) {
       const subject = map.get(key);
@@ -3697,13 +3732,21 @@ function refreshPlanningBaseFromRows({ preservePriorities = true } = {}) {
   const previous = new Map((state.planningBase?.materias || []).map((subject) => [normalizeForMatch(subject.materia), subject]));
   const materias = uniqueSubjects(validRows).map((subject) => {
     const previousSubject = previous.get(normalizeForMatch(subject.materia));
-    if (!preservePriorities || !previousSubject) return { ...subject, prioridade: priorityScore(subject) };
+    if (!preservePriorities || !previousSubject) {
+      const normalized = normalizedPlanningSubject(subject);
+      return { ...normalized, prioridade: priorityScore(normalized) };
+    }
     const merged = {
       ...subject,
       peso: Number(previousSubject.peso) || 3,
       dominio: Number(previousSubject.dominio) || 3,
+      active: previousSubject.active !== false,
+      status: previousSubject.status || "active",
+      familiarity: previousSubject.familiarity || previousSubject.initialKnowledgeLevel || "unknown",
+      examImportance: previousSubject.examImportance || null,
     };
-    return { ...merged, prioridade: priorityScore(merged) };
+    const normalized = normalizedPlanningSubject(merged);
+    return { ...normalized, prioridade: priorityScore(normalized) };
   });
   state.planningBase = {
     ...(state.planningBase || {}),
@@ -3898,14 +3941,15 @@ function renderPlanningBase() {
   if (priorityEditIndex >= subjects.length) priorityEditIndex = -1;
   renderPrioritySummary(subjects);
   els.planningGrid.innerHTML = subjects.map((subject, index) => {
+    const planningSubject = subjectPlanningCapacity(subject);
     const priority = priorityInfo(subject.prioridade);
     const isOpen = index === priorityEditIndex;
     return `
-      <article class="priority-row ${isOpen ? "is-open" : ""}">
+      <article class="priority-row ${isOpen ? "is-open" : ""} ${planningSubject.active ? "" : "is-paused"}">
         <div class="priority-row-main">
           <div class="priority-subject">
             <strong>${escapeHtml(subject.materia)}</strong>
-            <span>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"}</span>
+            <span>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"} &middot; ${planningSubject.active ? "Ativa" : "Em espera"}</span>
           </div>
           <div class="priority-cell">
             <span>Import\u00e2ncia na prova</span>
@@ -3919,6 +3963,9 @@ function renderPlanningBase() {
             <span>Prioridade de estudo</span>
             <strong class="priority-badge ${priority.className}" data-priority="${index}">${priority.label} &middot; ${priority.percent}%</strong>
           </div>
+          <button class="subject-activity-toggle" type="button" data-toggle-subject-active="${index}" aria-pressed="${planningSubject.active}" title="${planningSubject.active ? "Pausar matéria" : "Ativar matéria"}">
+            ${planningSubject.active ? "Ativa" : "Em espera"}
+          </button>
           <button class="priority-toggle" type="button" data-edit-priority="${index}" aria-label="Editar ${escapeHtml(subject.materia)}" aria-expanded="${isOpen ? "true" : "false"}">
             <i data-lucide="chevron-down"></i>
           </button>
@@ -3934,11 +3981,12 @@ function renderPlanningBase() {
 function renderPrioritySummary(subjects) {
   if (!els.prioritySummary) return;
   const totalSubjects = subjects.length;
+  const activeSubjects = subjects.filter(subjectIsActive).length;
   const totalTopics = subjects.reduce((sum, subject) => sum + subject.assuntos.length, 0);
   const highPriority = subjects.filter((subject) => priorityInfo(subject.prioridade).percent >= 60).length;
   const lowPriority = subjects.filter((subject) => priorityInfo(subject.prioridade).percent < 40).length;
   els.prioritySummary.innerHTML = summaryItems([
-    ["Total de mat\u00e9rias", totalSubjects],
+    ["Matérias ativas", `${activeSubjects}/${totalSubjects}`],
     ["Total de temas", totalTopics],
     ["Alta prioridade", highPriority],
     ["Baixa prioridade", lowPriority],
@@ -4092,7 +4140,7 @@ function syncPlanningSliders() {
 }
 
 function priorityScore(subject) {
-  const pesoNormalizado = (Number(subject.peso) || 3) / 5;
+  const pesoNormalizado = Number(subjectPlanningCapacity(subject).examImportance.importanceScore) || (Number(subject.peso) || 3) / 5;
   const dificuldadeNormalizada = (Number(subject.dominio) || 3) / 5;
   return 0.6 * pesoNormalizado + 0.4 * dificuldadeNormalizada;
 }
@@ -5019,15 +5067,22 @@ function scheduleConfig() {
   const base = getContestConfig();
   const override = Number(els.overrideWeeklyHours.value);
   const useOverride = Boolean(els.overrideCycleToggle?.checked);
-  const weeklyHours = useOverride && override > 0 ? override : base.horasSemana;
-  const suggestedMinutes = estimatedPlanningBlockMinutes({ ...base, horasSemanaCronograma: weeklyHours });
+  const capacity = capacityPlanning().capacityFor({
+    dailyHours: base.horasPorDia,
+    weeklyHours: base.horasSemana,
+    overrideHours: useOverride && override > 0 ? override : 0,
+  });
+  const suggestedMinutes = estimatedPlanningBlockMinutes({ ...base, horasSemanaCronograma: capacity.plannedHours });
   const suggestedHours = suggestedMinutes / 60;
-  const fullBlocks = Math.floor(weeklyHours / suggestedHours);
-  const residualHours = Number((weeklyHours - fullBlocks * suggestedHours).toFixed(2));
+  const fullBlocks = Math.floor(capacity.plannedHours / suggestedHours);
+  const residualHours = Number((capacity.plannedHours - fullBlocks * suggestedHours).toFixed(2));
   return {
     ...base,
     semanaReferencia: els.referenceWeek.value,
-    horasSemanaCronograma: weeklyHours,
+    horasSemanaCronograma: capacity.plannedHours,
+    horasDisponiveis: capacity.availableHours,
+    capacidade: capacity,
+    horasPorDia: capacity.dailyHours,
     blocosCompletos: fullBlocks,
     horasResiduais: residualHours,
     duracaoReferencia: base.duracaoBloco,
@@ -5110,12 +5165,11 @@ function updateOverrideVisibility() {
 function updateGenerationSummary() {
   const config = scheduleConfig();
   renderCycleLabel();
-  const residualText = config.horasResiduais > 0 && config.usarResidual ? `${formatHours(config.horasResiduais)} dispon\u00edvel` : formatHours(0);
   els.generationSummary.innerHTML = summaryItems([
     ["Ciclo atual", currentCycleLabel()],
-    ["Carga do ciclo", formatHours(config.horasSemanaCronograma)],
+    ["Horas planejadas", formatHours(config.horasSemanaCronograma)],
     ["Blocos principais", config.blocosCompletos],
-    ["Revis\u00e3o curta", residualText],
+    ["Margem protegida", formatHours(config.capacidade?.reserveHours || 0)],
   ]);
   updateDeadlineDisplays(config);
 }
@@ -5313,7 +5367,9 @@ function fittedDurationMinutes(estimate, remainingMinutes) {
 function createAdaptiveCycleBlocks(materias, config, analysis) {
   const capacityMinutes = Math.max(0, Math.round((Number(config.horasSemanaCronograma) || 0) * 60));
   if (!capacityMinutes) return { blocks: [], distribution: [] };
-  const activeSubjects = materias.filter((subject) => operationalStudyUnits(subject, analysis).length);
+  const activeSubjects = materias
+    .map(subjectPlanningCapacity)
+    .filter((subject) => subjectIsActive(subject) && operationalStudyUnits(subject, analysis).length);
   if (!activeSubjects.length) return { blocks: [], distribution: [] };
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
@@ -5343,7 +5399,24 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     const adjustedEstimate = durationMinutes === estimate.minutes
       ? estimate
       : { ...estimate, minutes: durationMinutes, hours: duration, reason: [...estimate.reason, "encaixe na carga restante"].slice(0, 3) };
-    blocks.push(blockRow(blocks.length + 1, duration, item, activityType, adjustedEstimate));
+    const block = blockRow(blocks.length + 1, duration, item, activityType, adjustedEstimate);
+    const diagnosis = masteryDiagnosisForTarget({ materia: block.materia, assunto: block.assunto, prioridade: block.prioridade });
+    const pressure = capacityPlanning().studyPressure({
+      importance: subject.examImportance,
+      diagnosis,
+      urgency: currentExamPhaseState().profile?.urgency?.value || 0,
+      hasContact: diagnosis.hasContact,
+      familiarity: subject.familiarity,
+    });
+    Object.assign(block, capacityPlanning().classifyBlock({ block, diagnosis, importance: subject.examImportance, pressure }));
+    block.integratedNeeds = [
+      ...(block.reviewIntegrated ? ["review"] : []),
+      ...(block.reinforcementIntegrated ? ["reinforcement"] : []),
+    ];
+    block.studyPressure = pressure;
+    block.knowledgeState = capacityPlanning().knowledgeState(diagnosis);
+    block.examImportance = subject.examImportance;
+    blocks.push(block);
     remainingMinutes -= durationMinutes;
   }
 
@@ -12064,6 +12137,12 @@ function applyAppSnapshot(saved = {}) {
 
   state.confirmed = Boolean(saved.confirmed);
   state.planningBase = saved.planningBase || null;
+  if (Array.isArray(state.planningBase?.materias)) {
+    state.planningBase.materias = state.planningBase.materias.map((subject) => {
+      const normalized = normalizedPlanningSubject(subject);
+      return { ...normalized, prioridade: Number(normalized.prioridade) || priorityScore(normalized) };
+    });
+  }
   state.distribution = Array.isArray(saved.distribution) ? saved.distribution : [];
   state.generatedBlocks = Array.isArray(saved.generatedBlocks)
     ? saved.generatedBlocks.map((block) => ({ ...block, status: normalizeStatus(block.status) }))
@@ -14108,7 +14187,33 @@ els.planningGrid.addEventListener("input", (event) => {
     updateGenerationSummary();
   }
 });
-els.planningGrid.addEventListener("click", (event) => {
+els.planningGrid.addEventListener("click", async (event) => {
+  const activityButton = event.target.closest("[data-toggle-subject-active]");
+  if (activityButton && state.planningBase) {
+    const index = Number(activityButton.dataset.toggleSubjectActive);
+    const subject = state.planningBase.materias[index];
+    if (!subject) return;
+    const activating = !subjectIsActive(subject);
+    if (!activating) {
+      const futureBlocks = state.generatedBlocks.filter((block) =>
+        normalizeForMatch(block.materia) === normalizeForMatch(subject.materia) &&
+        ["Não iniciado", "Reprogramar"].includes(normalizeStatus(block.status))
+      );
+      if (futureBlocks.length) {
+        const removeNow = await dialogConfirm(`Há ${futureBlocks.length} meta${futureBlocks.length === 1 ? "" : "s"} futura${futureBlocks.length === 1 ? "" : "s"} de ${subject.materia} neste ciclo. Retirar apenas essas metas pendentes agora? Blocos concluídos e em andamento serão preservados.`, { confirmLabel: "Retirar pendentes" });
+        if (removeNow) state.generatedBlocks = state.generatedBlocks.filter((block) =>
+          normalizeForMatch(block.materia) !== normalizeForMatch(subject.materia) || !["Não iniciado", "Reprogramar"].includes(normalizeStatus(block.status))
+        );
+      }
+    }
+    subject.active = activating;
+    subject.status = activating ? "active" : "paused";
+    if (activating && !subject.familiarity) subject.familiarity = "unknown";
+    renderAppViews({ notebook: false, evolution: false });
+    renderPlanningBase();
+    scheduleAutoSave();
+    return;
+  }
   const editButton = event.target.closest("[data-edit-priority]");
   if (editButton) {
     const index = Number(editButton.dataset.editPriority);
@@ -14602,6 +14707,10 @@ els.continueToPriorityFromDiagnosisButton?.addEventListener("click", () => {
 });
 els.saveCycleAdjustmentsButton?.addEventListener("click", () => saveAppStateNow("Ajustes salvos"));
 els.overrideCycleToggle?.addEventListener("change", updateOverrideVisibility);
+els.dailyHoursGrid?.addEventListener("input", () => {
+  updateGenerationSummary();
+  scheduleAutoSave();
+});
 els.backToGenerateFromScheduleButton?.addEventListener("click", () => switchTab("pesos"));
 els.saveTrackingButton?.addEventListener("click", () => saveAppStateNow("Acompanhamento salvo"));
 els.finishCycleButton?.addEventListener("click", renderCycleClosureSummary);

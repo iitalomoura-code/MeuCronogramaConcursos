@@ -3747,7 +3747,7 @@ textarea:focus {
 
 .priority-row-main {
   display: grid;
-  grid-template-columns: minmax(240px, 1.5fr) minmax(120px, 0.75fr) minmax(130px, 0.75fr) minmax(160px, 0.8fr) 44px;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(110px, 0.7fr) minmax(120px, 0.7fr) minmax(145px, 0.75fr) auto 44px;
   align-items: center;
   gap: 16px;
   padding: 16px 20px;
@@ -3923,6 +3923,28 @@ textarea:focus {
   border-color: color-mix(in srgb, var(--color-attention) 42%, var(--border));
   background: var(--surface-amber-soft);
   color: var(--badge-high-text);
+}
+
+.subject-activity-toggle {
+  width: fit-content;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.priority-row.is-paused .subject-activity-toggle {
+  color: var(--muted);
+  background: transparent;
+}
+
+.priority-row.is-paused .priority-subject strong {
+  color: var(--muted);
 }
 
 .status-badge.status-neutral {
@@ -5046,7 +5068,7 @@ details[open] > :not(summary),
   }
 
   .priority-row-main {
-    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-columns: minmax(0, 1fr) auto 44px;
   }
 
   .priority-xray-item {

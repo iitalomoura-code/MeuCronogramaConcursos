@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260907-semantic-color-fix-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260908-capacity-planning" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -489,8 +489,8 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
                 <span>Usar saldo restante para revis&atilde;o curta</span>
               </label>
             </div>
-            <details class="daily-details" hidden>
-              <summary>Horas por dia do ciclo</summary>
+            <details class="daily-details">
+              <summary>Disponibilidade por dia</summary>
               <div class="daily-grid" id="dailyHoursGrid"></div>
             </details>
             <div class="deadline-panel" id="generationDeadline"></div>
@@ -866,11 +866,12 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./js/predictive-evolution.js?v=20260902-evolution-diagnosis"></script>
     <script src="./js/study-alerts.js?v=20260907-contact-date-fix"></script>
     <script src="./js/study-derived-state.js?v=20260902-continue-derived-state"></script>
+    <script src="./js/capacity-planning.js?v=20260908-capacity-planning"></script>
     <script src="./js/study-plan-composer.js?v=20260902-adaptive-composer"></script>
     <script src="./js/continue-recommendation.js?v=20260902-diagnosis-override"></script>
     <script src="./js/learning-diagnosis-view.js?v=20260902-diagnosis-override"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260907-semantic-color-fix-3"></script>
+    <script src="./app.js?v=20260908-capacity-planning"></script>
   </body>
 </html>
 
