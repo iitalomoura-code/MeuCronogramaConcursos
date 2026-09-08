@@ -3835,6 +3835,21 @@ function closeContentProblemsModal() {
   if (els.contentProblemsModal) els.contentProblemsModal.hidden = true;
 }
 
+function positionTopicActionsMenu(menu) {
+  if (!(menu instanceof HTMLDetailsElement)) return;
+  menu.classList.remove("opens-upward");
+  if (!menu.open) return;
+  window.requestAnimationFrame(() => {
+    const panel = menu.querySelector(":scope > div");
+    const summary = menu.querySelector("summary");
+    if (!panel || !summary) return;
+    const rect = summary.getBoundingClientRect();
+    const panelHeight = Math.max(panel.scrollHeight, panel.getBoundingClientRect().height);
+    const safeBottom = Math.max(16, window.innerHeight - 18);
+    menu.classList.toggle("opens-upward", rect.bottom + 8 + panelHeight > safeBottom);
+  });
+}
+
 function closeProgramComparison() {
   pendingProgramComparison = null;
   if (!els.programComparisonModal) return;
@@ -14065,6 +14080,11 @@ function saveManualTopicEdit(topic) {
   notifyContent("Tema atualizado. A edição manual foi preservada.");
   return true;
 }
+
+els.topicsBody.addEventListener("toggle", (event) => {
+  const menu = event.target.closest?.(".topic-actions-menu");
+  if (menu) positionTopicActionsMenu(menu);
+}, true);
 
 els.topicsBody.addEventListener("click", async (event) => {
   if (event.target.closest("[data-undo-content]")) {

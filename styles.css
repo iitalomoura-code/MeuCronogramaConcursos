@@ -3300,6 +3300,11 @@ textarea:focus {
   box-shadow: var(--shadow-card);
 }
 
+.topic-actions-menu.opens-upward[open] > div {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .topic-actions-menu .text-action {
   justify-content: flex-start;
   width: 100%;

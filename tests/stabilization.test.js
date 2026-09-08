@@ -18,8 +18,8 @@ assert.ok(app.includes("data-open-review-notebook"), "Revisões devem consultar 
 assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF deve reconstruir linhas.");
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
-assert.ok(index.includes("styles.css?v=20260908-capacity-integration"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260908-capacity-integration"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("styles.css?v=20260908-topic-menu"), "O CSS deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260908-topic-menu"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260908-capacity-integration"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260907-program-validator"), "O validador deve carregar depois do modelo canônico e antes do app.");
@@ -63,5 +63,6 @@ assert.ok(app.includes("registroAutomatico: true"), "A contagem automática da s
 assert.ok(app.includes("function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } = {})"), "A meta semanal deve compor reforços com a disponibilidade real da semana.");
 assert.ok(app.includes("function subjectIsActive"), "Matérias pausadas devem ser excluídas apenas da composição futura do ciclo.");
 assert.ok(app.includes("capacidade: capacity"), "A capacidade planejada precisa preservar reserva de segurança.");
+assert.ok(app.includes("function positionTopicActionsMenu") && styles.includes(".topic-actions-menu.opens-upward[open]"), "O menu de ações do tema deve abrir acima quando não houver espaço no rodapé.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");
