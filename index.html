@@ -11,7 +11,7 @@
       document.documentElement.dataset.theme = localStorage.getItem("meu-cronograma-theme") || "day";
     </script>
     <link rel="stylesheet" href="./vendor/quill.snow.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260908-capacity-planning" />
+    <link rel="stylesheet" href="./styles.css?v=20260908-capacity-integration" />
     <script src="./js/brand-logo.js?v=20260812-brand-logo" defer></script>
     <script src="./vendor/lucide.min.js"></script>
     <script src="./vendor/mammoth.browser.min.js"></script>
@@ -452,6 +452,12 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           </div>
           <div class="priority-summary" id="prioritySummary"></div>
           <div class="planning-grid" id="planningGrid"></div>
+          <details class="exam-structure-details" id="examStructureDetails">
+            <summary>Estrutura da prova</summary>
+            <p>Informe questões e pesos quando o edital trouxer esses dados. A prioridade usa esta estrutura antes do ajuste manual.</p>
+            <label class="checkbox-label subtle-option"><input id="usePreviousExamStructure" type="checkbox" /><span>Usar último edital como referência</span></label>
+            <div id="examStructureGrid" class="exam-structure-grid"></div>
+          </details>
 
           <div class="cycle-adjust-card priority-cycle-card">
             <div class="cycle-adjust-header">
@@ -530,6 +536,7 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
           <div class="cycle-closure-panel" id="cycleClosurePanel" hidden></div>
           <div class="schedule-actions" id="scheduleActions" hidden>
             <button id="backToGenerateFromScheduleButton" class="ghost-button" type="button"><i data-lucide="arrow-left"></i><span>Voltar</span></button>
+            <button id="cycleChangesButton" class="ghost-button" type="button"><i data-lucide="sparkles"></i><span>Por que meu ciclo mudou?</span></button>
             <button id="saveTrackingButton" class="ghost-button" type="button"><i data-lucide="save"></i><span>Salvar acompanhamento</span></button>
             <button id="finishCycleButton" class="primary-button" type="button"><i data-lucide="check-circle-2"></i><span>Finalizar ciclo</span></button>
           </div>
@@ -866,12 +873,12 @@ Atos administrativos. Licita&ccedil;&otilde;es. Contratos.</pre>
     <script src="./js/predictive-evolution.js?v=20260902-evolution-diagnosis"></script>
     <script src="./js/study-alerts.js?v=20260907-contact-date-fix"></script>
     <script src="./js/study-derived-state.js?v=20260902-continue-derived-state"></script>
-    <script src="./js/capacity-planning.js?v=20260908-capacity-planning"></script>
+    <script src="./js/capacity-planning.js?v=20260908-capacity-integration"></script>
     <script src="./js/study-plan-composer.js?v=20260902-adaptive-composer"></script>
     <script src="./js/continue-recommendation.js?v=20260902-diagnosis-override"></script>
     <script src="./js/learning-diagnosis-view.js?v=20260902-diagnosis-override"></script>
     <script src="./vendor/quill.js"></script>
-    <script src="./app.js?v=20260908-capacity-planning"></script>
+    <script src="./app.js?v=20260908-capacity-integration"></script>
   </body>
 </html>
 

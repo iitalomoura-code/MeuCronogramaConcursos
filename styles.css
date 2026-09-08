@@ -3947,6 +3947,65 @@ textarea:focus {
   color: var(--muted);
 }
 
+.exam-structure-details {
+  margin-top: 16px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.exam-structure-details summary {
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.exam-structure-details > p {
+  max-width: 720px;
+  margin: 8px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.exam-structure-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.exam-structure-head,
+.exam-structure-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) 92px 82px 110px minmax(84px, .7fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.exam-structure-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.exam-structure-row {
+  min-height: 42px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.exam-structure-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.exam-importance-source {
+  color: var(--muted);
+}
+
 .status-badge.status-neutral {
   border-color: var(--border);
   background: var(--soft);
@@ -5082,6 +5141,18 @@ details[open] > :not(summary),
 
   .priority-cell,
   .priority-result {
+    grid-column: 1 / -1;
+  }
+
+  .exam-structure-head {
+    display: none;
+  }
+
+  .exam-structure-row {
+    grid-template-columns: minmax(0, 1fr) 78px 70px;
+  }
+
+  .exam-structure-row > span {
     grid-column: 1 / -1;
   }
 

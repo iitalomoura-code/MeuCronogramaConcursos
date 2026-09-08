@@ -371,6 +371,8 @@ const els = {
   saveContentButton: document.querySelector("#saveContentButton"),
   planningGrid: document.querySelector("#planningGrid"),
   prioritySummary: document.querySelector("#prioritySummary"),
+  examStructureGrid: document.querySelector("#examStructureGrid"),
+  usePreviousExamStructure: document.querySelector("#usePreviousExamStructure"),
   downloadButton: document.querySelector("#downloadButton"),
   backToContentFromPriorityButton: document.querySelector("#backToContentFromPriorityButton"),
   referenceWeek: document.querySelector("#referenceWeek"),
@@ -395,6 +397,7 @@ const els = {
   scheduleWrap: document.querySelector("#scheduleWrap"),
   cycleClosurePanel: document.querySelector("#cycleClosurePanel"),
   scheduleActions: document.querySelector("#scheduleActions"),
+  cycleChangesButton: document.querySelector("#cycleChangesButton"),
   backToGenerateFromScheduleButton: document.querySelector("#backToGenerateFromScheduleButton"),
   saveTrackingButton: document.querySelector("#saveTrackingButton"),
   finishCycleButton: document.querySelector("#finishCycleButton"),
@@ -3538,6 +3541,42 @@ function subjectPlanningCapacity(subject = {}) {
   };
 }
 
+function subjectHistorySummary(materia = "") {
+  const entries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
+  const questions = entries.reduce((sum, item) => sum + Math.max(0, Number(item.questoes) || 0), 0);
+  const correct = entries.reduce((sum, item) => sum + Math.min(Math.max(0, Number(item.questoes) || 0), Math.max(0, Number(item.acertos) || 0)), 0);
+  const diagnosis = masteryDiagnosisForTarget({ materia });
+  const lastContact = entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
+  return {
+    questions,
+    accuracy: questions ? correct / questions : null,
+    diagnosis,
+    lastContact,
+    hasEnough: questions >= EVOLUTION_MIN_SAMPLE_QUESTIONS || entries.filter((entry) => Number(entry.tempoEstudado) > 0).length >= 2,
+  };
+}
+
+async function chooseSubjectFamiliarity(subject = {}) {
+  const history = subjectHistorySummary(subject.materia);
+  if (history.hasEnough) {
+    const contact = history.lastContact ? new Date(history.lastContact).toLocaleDateString("pt-BR") : "sem contato datado";
+    await dialogAlert(`Encontramos histórico desta matéria. ${history.questions} questões, ${history.accuracy === null ? "sem taxa consolidada" : `${Math.round(history.accuracy * 100)}% de acertos`}, último contato ${contact}, tendência ${history.diagnosis?.trend?.label || "ainda insuficiente"} e domínio ${capacityPlanning().knowledgeState(history.diagnosis).label}. Esses dados serão usados para calcular a prioridade inicial.`, { title: "Histórico recuperado" });
+    return subject.familiarity || "unknown";
+  }
+  const choice = await openDialog({
+    title: "Qual é sua familiaridade geral com esta matéria?",
+    message: "Isso serve só como ponto de partida; as primeiras sessões de questões passam a ter mais peso depois.",
+    actions: [
+      { id: "unknown", label: "Não sei avaliar", value: "unknown" },
+      { id: "none", label: "Nunca estudei", value: "none" },
+      { id: "weak", label: "Já estudei pouco", value: "weak" },
+      { id: "intermediate", label: "Já estudei razoavelmente", value: "intermediate" },
+      { id: "good", label: "Tenho boa base", variant: "primary", value: "good" },
+    ],
+  });
+  return ["none", "weak", "intermediate", "good", "unknown"].includes(choice) ? choice : "unknown";
+}
+
 function normalizeReferenceDurationHours(value, fallback = 1.5) {
   const parsed = parseDurationInput(value, fallback);
   const minutes = Math.max(30, Math.round((Number(parsed) || fallback) * 60));
@@ -3937,6 +3976,7 @@ function confirmRows(options = {}) {
 function renderPlanningBase() {
   if (!state.planningBase) return;
   syncPlanningSliders();
+  refreshExamImportance();
   const subjects = state.planningBase.materias;
   if (priorityEditIndex >= subjects.length) priorityEditIndex = -1;
   renderPrioritySummary(subjects);
@@ -3975,6 +4015,7 @@ function renderPlanningBase() {
     `;
   }).join("");
   if (window.lucide) window.lucide.createIcons();
+  renderExamStructure();
   updateGenerationSummary();
 }
 
@@ -3991,6 +4032,60 @@ function renderPrioritySummary(subjects) {
     ["Alta prioridade", highPriority],
     ["Baixa prioridade", lowPriority],
   ]);
+}
+
+function refreshExamImportance() {
+  const subjects = state.planningBase?.materias || [];
+  const usePrevious = Boolean(state.planningBase?.examStructureReference === "previous-edital");
+  const totalWeightedQuestions = subjects.reduce((sum, subject) => {
+    const importance = subject.examImportance || {};
+    return sum + Math.max(0, Number(importance.questionCount) || 0) * Math.max(1, Number(importance.weight ?? subject.peso) || 1);
+  }, 0);
+  subjects.forEach((subject) => {
+    const previous = subject.examImportance || {};
+    const questionCount = Math.max(0, Number(previous.questionCount) || 0);
+    const weight = Math.max(1, Number(previous.weight ?? subject.peso) || 1);
+    const blockWeight = Math.max(0, Number(previous.blockWeight) || 0);
+    const share = totalWeightedQuestions ? (questionCount * weight) / totalWeightedQuestions : 0;
+    const historical = Number(previous.historicalIncidence) || 0;
+    const sourceType = questionCount > 0 ? (usePrevious ? "previous-edital" : "current-edital") : previous.sourceType || "manual-fallback";
+    const importanceScore = questionCount > 0 ? Math.max(.05, Math.min(1, share)) : capacityPlanning().normalizeExamImportance({ ...subject, examImportance: previous }).importanceScore;
+    subject.examImportance = {
+      ...previous,
+      subjectId: previous.subjectId || initialDiagnosisSubjectId(subject.materia),
+      subjectName: subject.materia,
+      questionCount,
+      weight,
+      blockWeight,
+      estimatedPercentage: Number((share * 100).toFixed(1)),
+      historicalIncidence: historical,
+      importanceScore,
+      sourceType,
+      sourceName: questionCount > 0 ? (usePrevious ? "Último edital" : "Edital atual") : previous.sourceName || "Prioridade informada",
+      confidence: questionCount > 0 ? (usePrevious ? "estimated" : "confirmed") : historical ? "estimated" : "manual",
+    };
+    subject.prioridade = priorityScore(subject);
+  });
+}
+
+function renderExamStructure() {
+  if (!els.examStructureGrid || !state.planningBase) return;
+  const subjects = state.planningBase.materias || [];
+  if (els.usePreviousExamStructure) els.usePreviousExamStructure.checked = state.planningBase.examStructureReference === "previous-edital";
+  els.examStructureGrid.innerHTML = `
+    <div class="exam-structure-head"><span>Matéria</span><span>Questões</span><span>Peso</span><span>Participação</span><span>Fonte</span></div>
+    ${subjects.map((subject, index) => {
+      const importance = capacityPlanning().normalizeExamImportance(subject);
+      const source = importance.sourceType === "current-edital" ? "Confirmada" : importance.sourceType === "previous-edital" ? "Estimada" : importance.sourceType === "manual-fallback" ? "Manual" : "Histórica";
+      return `<div class="exam-structure-row">
+        <strong>${escapeHtml(subject.materia)}</strong>
+        <input type="number" min="0" step="1" data-exam-structure="${index}" data-exam-field="questionCount" value="${Number(importance.questionCount) || ""}" aria-label="Questões de ${escapeHtml(subject.materia)}" />
+        <input type="number" min="1" step="0.5" data-exam-structure="${index}" data-exam-field="weight" value="${Number(importance.weight) || 1}" aria-label="Peso de ${escapeHtml(subject.materia)}" />
+        <span>${Number(importance.estimatedPercentage || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
+        <span class="exam-importance-source">${source}</span>
+      </div>`;
+    }).join("")}
+  `;
 }
 
 function priorityReason(subject) {
@@ -5177,16 +5272,27 @@ function updateGenerationSummary() {
 function distributeBlocks(materias, totalBlocks, options = {}) {
   if (!materias.length || totalBlocks <= 0) return [];
   const scored = materias.map((materia) => {
+    const planningSubject = subjectPlanningCapacity(materia);
     const basePriority = priorityScore(materia);
+    const diagnosis = masteryDiagnosisForTarget({ materia: materia.materia, prioridadeBase: basePriority });
+    const pressure = capacityPlanning().studyPressure({
+      importance: planningSubject.examImportance,
+      diagnosis,
+      urgency: currentExamPhaseState().profile?.urgency?.value || 0,
+      hasContact: diagnosis.hasContact,
+      familiarity: planningSubject.familiarity,
+    });
     const initialDiagnosis = initialDiagnosisInfluence(materia.materia);
     const scheduling = options.adaptive
       ? schedulingPriorityForTarget({ ...materia, subject: materia, prioridade: basePriority, prioridadeBase: basePriority, initialDiagnosis })
       : { adjusted: basePriority, adaptive: null, incidence: { applied: false }, incidenceAdjustment: 0 };
     const adaptive = scheduling.adaptive;
     return {
-      ...materia,
+      ...planningSubject,
       prioridadeBase: basePriority,
-      prioridade: scheduling.adjusted,
+      prioridade: Math.min(1, scheduling.adjusted + pressure * .22),
+      studyPressure: pressure,
+      knowledgeState: capacityPlanning().knowledgeState(diagnosis),
       adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive?.adjustment ?? 0,
       adaptiveReason: adaptive?.reason || "",
       incidenciaHistorica: scheduling.incidence,
@@ -5244,7 +5350,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       const rotation = Math.min(32, cycleAbsenceForSubject(item.materia) * CYCLE_RECENCY_WEIGHT) + (item.exposures === 0 ? CURRENT_CYCLE_COVERAGE_WEIGHT : 0);
       const quota = item.remaining > 0 ? 22 : 0;
       const concentrationPenalty = recentShare > MAX_RECENT_SHARE_PER_SUBJECT ? 34 : recentCount * 5;
-      return { item, urgent, excludedBySequence, excludedByShare, score: item.prioridade * 40 + rotation + quota - concentrationPenalty };
+      return { item, urgent, excludedBySequence, excludedByShare, score: item.prioridade * 40 + Number(item.studyPressure || 0) * 32 + rotation + quota - concentrationPenalty };
     });
     const eligible = candidates.filter((candidate) => !candidate.excludedBySequence && !candidate.excludedByShare);
     const chosenCandidate = (eligible.length ? eligible : candidates)
@@ -5437,7 +5543,169 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     blocos: actualCounts.get(item.materia) || 0,
     foraDoCiclo: !(actualCounts.get(item.materia) || 0),
   }));
-  return { blocks, distribution, remainingMinutes };
+  return { blocks: assignBlocksToDailyCapacity(integrateReviewNeedsIntoCycle(blocks), config), distribution, remainingMinutes };
+}
+
+function cycleNeedKey(item = {}) {
+  return `${normalizeForMatch(item.materia)}::${normalizeForMatch(item.assunto || item.titulo)}`;
+}
+
+function isProtectedCycleBlock(block = {}) {
+  return Boolean(block.protected || block.category === "protected" || normalizeStatus(block.status) === "Em andamento");
+}
+
+function cycleNeedCandidate({ materia = "", assunto = "", need = "", reason = "", diagnosis = null, sourceBlockId = "" } = {}) {
+  const subject = subjectPlanningCapacity(subjectPlanningData(materia));
+  const action = diagnosis?.action || {};
+  const duration = Math.max(.5, Math.min(1.5, (Number(action.minutes) || 30) / 60));
+  const pressure = capacityPlanning().studyPressure({
+    importance: subject.examImportance,
+    diagnosis: diagnosis || {},
+    urgency: currentExamPhaseState().profile?.urgency?.value || 0,
+    hasContact: Boolean(diagnosis?.hasContact),
+    familiarity: subject.familiarity,
+  });
+  return {
+    materia,
+    assunto,
+    duracao: duration,
+    status: "Não iniciado",
+    tipoAtividade: need === "review" ? "Revisão" : action.label || "Questões",
+    atividadeSugerida: need === "review" ? "Revisão integrada" : action.label || "Reforço direcionado",
+    prioridade: Math.max(priorityScore(subject), pressure),
+    prioridadeBase: priorityScore(subject),
+    category: "adaptive",
+    adaptive: need !== "review",
+    reviewIntegrated: need === "review",
+    reinforcementIntegrated: need === "reinforcement",
+    integratedNeeds: [need],
+    adaptiveReason: reason,
+    studyPressure: pressure,
+    sourceBlockId,
+  };
+}
+
+function mergeCycleNeedIntoBlock(block, candidate) {
+  const mergeCandidate = { ...candidate, metaPartKey: block.metaPartKey || candidate.metaPartKey || "" };
+  const merged = capacityPlanning().mergeNeeds([block, mergeCandidate])[0] || block;
+  const needs = new Set([...(merged.integratedNeeds || []), ...(block.integratedNeeds || []), ...(candidate.integratedNeeds || [])]);
+  Object.assign(block, merged, {
+    integratedNeeds: [...needs],
+    reviewIntegrated: needs.has("review"),
+    reinforcementIntegrated: needs.has("reinforcement"),
+    adaptiveReason: [block.adaptiveReason, candidate.adaptiveReason].filter(Boolean).join("; ").slice(0, 420),
+    category: isProtectedCycleBlock(block) ? "protected" : candidate.category === "adaptive" ? "adaptive" : block.category || "flexible",
+  });
+  return block;
+}
+
+function recordCycleAdaptation(change = {}) {
+  state.interventionHistory = Array.isArray(state.interventionHistory) ? state.interventionHistory : [];
+  const key = `${change.type || "adaptation"}:${change.sourceBlockId || ""}:${cycleNeedKey(change)}`;
+  if (state.interventionHistory.some((item) => item.changeKey === key)) return;
+  state.interventionHistory.push({
+    ...change,
+    changeKey: key,
+    recordedAt: new Date().toISOString(),
+    cycle: currentCycleLabel(),
+  });
+  state.interventionHistory = state.interventionHistory.slice(-160);
+}
+
+function integrateCycleNeed(candidate, { blocks = state.generatedBlocks, allowReplacement = true } = {}) {
+  if (!candidate?.materia || !candidate?.assunto) return { applied: false, deferred: true, reason: "invalid" };
+  const key = cycleNeedKey(candidate);
+  const matching = blocks.find((block) => isPendingBlock(block) && cycleNeedKey(block) === key);
+  if (matching) {
+    mergeCycleNeedIntoBlock(matching, candidate);
+    recordCycleAdaptation({ ...candidate, type: "merged", targetBlockId: matching.id || matching.bloco });
+    return { applied: true, merged: true, block: matching };
+  }
+  if (candidate.integratedNeeds?.includes("review")) return { applied: false, deferred: true, reason: "review-without-space" };
+
+  const gate = capacityPlanning().capIntracycleAdaptations(blocks, [candidate]);
+  if (!gate.accepted.length) {
+    recordCycleAdaptation({ ...candidate, type: "deferred", reason: "adaptive-limit" });
+    return { applied: false, deferred: true, reason: "adaptive-limit" };
+  }
+  const replacement = allowReplacement
+    ? blocks
+      .filter((block) => isPendingBlock(block) && !isProtectedCycleBlock(block) && block.category !== "adaptive")
+      .sort((a, b) => Number(a.studyPressure || a.prioridade || 0) - Number(b.studyPressure || b.prioridade || 0))[0]
+    : null;
+  if (!replacement) {
+    recordCycleAdaptation({ ...candidate, type: "deferred", reason: "no-flexible-slot" });
+    return { applied: false, deferred: true, reason: "no-flexible-slot" };
+  }
+  const position = blocks.indexOf(replacement);
+  const kept = { bloco: replacement.bloco, id: replacement.id || "", ciclo: replacement.ciclo || "" };
+  blocks[position] = { ...replacement, ...candidate, ...kept, replacedBlock: { materia: replacement.materia, assunto: replacement.assunto }, category: "adaptive" };
+  recordCycleAdaptation({ ...candidate, type: "replaced", replaced: { materia: replacement.materia, assunto: replacement.assunto }, targetBlockId: kept.id || kept.bloco });
+  return { applied: true, replaced: true, block: blocks[position] };
+}
+
+function integrateReviewNeedsIntoCycle(blocks = state.generatedBlocks) {
+  const reviewRecords = (state.reviews || []).filter((review) => {
+    const status = normalizeReviewStatus(review.status);
+    const info = reviewStatusInfo(review);
+    return !["Concluída", "Cancelada"].includes(status) && ["overdue", "today"].includes(info.group);
+  });
+  reviewRecords.forEach((review) => integrateCycleNeed(cycleNeedCandidate({
+    materia: review.materia,
+    assunto: review.assunto,
+    need: "review",
+    reason: `revisão ${review.intervalLabel || review.intervalKey || "programada"}`,
+  }), { blocks, allowReplacement: false }));
+  return blocks;
+}
+
+function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
+  const daily = config.capacidade?.dailyHours || config.horasPorDia || {};
+  const margin = Number(config.capacidade?.safetyMargin) || 1;
+  const remaining = Object.fromEntries(DAYS.map(([key]) => [key, Math.round(Math.max(0, Number(daily[key]) || 0) * margin * 60)]));
+  let cursor = 0;
+  blocks.forEach((block) => {
+    const minutes = Math.round((Number(block.duracao) || 0) * 60);
+    const available = DAYS.slice(cursor).find(([key]) => remaining[key] >= minutes) || DAYS.find(([key]) => remaining[key] >= minutes);
+    if (!available) {
+      block.plannedDay = "";
+      return;
+    }
+    const dayIndex = DAYS.findIndex(([key]) => key === available[0]);
+    block.plannedDay = available[0];
+    remaining[available[0]] -= minutes;
+    cursor = Math.min(DAYS.length - 1, dayIndex);
+  });
+  return blocks;
+}
+
+function applyAdaptiveCycleNeedFromResult(block, diagnosis = null) {
+  const resolvedDiagnosis = diagnosis || masteryDiagnosisForTarget(block);
+  if (!block?.materia || !block?.assunto || !["attention", "deficiency", "critical", "insufficient"].includes(resolvedDiagnosis?.level)) return null;
+  return integrateCycleNeed(cycleNeedCandidate({
+    materia: block.materia,
+    assunto: block.assunto,
+    need: "reinforcement",
+    reason: (resolvedDiagnosis.reasons || []).join("; ") || "o diagnóstico indicou necessidade de reforço",
+    diagnosis: resolvedDiagnosis,
+    sourceBlockId: block.lastSavedSessionId || block.sessaoId || "",
+  }));
+}
+
+async function showCycleChanges() {
+  const changes = (state.interventionHistory || [])
+    .filter((item) => item.changeKey && item.cycle === currentCycleLabel())
+    .slice(-6)
+    .reverse();
+  if (!changes.length) {
+    await dialogAlert("O ciclo ainda não recebeu ajustes automáticos. Revisões e reforços continuarão competindo dentro da mesma capacidade.", { title: "Por que meu ciclo mudou?" });
+    return;
+  }
+  const text = changes.map((item) => {
+    const action = item.type === "merged" ? "foi integrada à meta já prevista" : item.type === "replaced" ? "ocupou o lugar de uma meta flexível de menor pressão" : "foi adiada para o próximo ciclo";
+    return `${item.materia} — ${item.assunto}: ${action}. ${item.adaptiveReason || item.reason || ""}`;
+  }).join("\n\n");
+  await dialogAlert(text, { title: "Por que meu ciclo mudou?" });
 }
 
 function rebalanceGoalDurations(blocks, weeklyHours, baseDuration) {
@@ -8458,11 +8726,13 @@ function saveStudyResult({
   invalidateDerivedStudyCaches();
   if (syncReviews) syncBlockReviewRecords(block);
   const adaptiveOutcome = syncAdaptiveReviewForBlock(block);
+  const cycleAdaptation = applyAdaptiveCycleNeedFromResult(block);
+  integrateReviewNeedsIntoCycle();
   updateBlockAccuracy(block);
   updateNavigationState();
   queueStudyAlertsRefresh();
   if (persist) scheduleAutoSave();
-  return { ok: true, block, adaptiveOutcome, previousStatus, nextStatus };
+  return { ok: true, block, adaptiveOutcome, cycleAdaptation, previousStatus, nextStatus };
 }
 
 function alternationScore() {
@@ -14187,6 +14457,24 @@ els.planningGrid.addEventListener("input", (event) => {
     updateGenerationSummary();
   }
 });
+els.examStructureGrid?.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-exam-structure]");
+  if (!input || !state.planningBase) return;
+  const subject = state.planningBase.materias[Number(input.dataset.examStructure)];
+  const field = input.dataset.examField;
+  if (!subject || !["questionCount", "weight"].includes(field)) return;
+  subject.examImportance = { ...(subject.examImportance || {}), [field]: Math.max(0, Number(input.value) || 0) };
+  refreshExamImportance();
+  renderPlanningBase();
+  scheduleAutoSave();
+});
+els.usePreviousExamStructure?.addEventListener("change", () => {
+  if (!state.planningBase) return;
+  state.planningBase.examStructureReference = els.usePreviousExamStructure.checked ? "previous-edital" : "current-edital";
+  refreshExamImportance();
+  renderPlanningBase();
+  scheduleAutoSave();
+});
 els.planningGrid.addEventListener("click", async (event) => {
   const activityButton = event.target.closest("[data-toggle-subject-active]");
   if (activityButton && state.planningBase) {
@@ -14206,6 +14494,7 @@ els.planningGrid.addEventListener("click", async (event) => {
         );
       }
     }
+    if (activating) subject.familiarity = await chooseSubjectFamiliarity(subject);
     subject.active = activating;
     subject.status = activating ? "active" : "paused";
     if (activating && !subject.familiarity) subject.familiarity = "unknown";
@@ -14713,6 +15002,7 @@ els.dailyHoursGrid?.addEventListener("input", () => {
 });
 els.backToGenerateFromScheduleButton?.addEventListener("click", () => switchTab("pesos"));
 els.saveTrackingButton?.addEventListener("click", () => saveAppStateNow("Acompanhamento salvo"));
+els.cycleChangesButton?.addEventListener("click", () => { void showCycleChanges(); });
 els.finishCycleButton?.addEventListener("click", renderCycleClosureSummary);
 els.pendingOnlyToggle?.addEventListener("click", () => {
   showPendingOnly = !showPendingOnly;
