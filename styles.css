@@ -3982,7 +3982,7 @@ textarea:focus {
 .exam-structure-head,
 .exam-structure-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) 92px 82px 110px minmax(84px, .7fr);
+  grid-template-columns: minmax(180px, 1.5fr) 92px 82px 110px 104px minmax(84px, .7fr);
   align-items: center;
   gap: 12px;
 }

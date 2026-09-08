@@ -23,6 +23,12 @@ const paused = CapacityPlanning.normalizeSubject({ materia: "Inglês", active: f
 assert.strictEqual(active.active, true, "Matérias legadas devem permanecer ativas por padrão.");
 assert.strictEqual(paused.status, "paused", "Matéria pausada deve manter um estado explícito.");
 assert.strictEqual(active.examImportance.confidence, "manual", "Peso legado deve ser uma importância manual compatível.");
+const historicalFallback = CapacityPlanning.normalizeExamImportance({
+  materia: "Histórica",
+  peso: 2,
+  examImportance: { questionCount: 0, importanceScore: .01, historicalIncidence: .8 },
+});
+assert.ok(historicalFallback.importanceScore > .4, "Sem estrutura objetiva, a incidência histórica deve prevalecer sobre um score legado achatado.");
 
 const criticalPressure = CapacityPlanning.studyPressure({
   importance: { importanceScore: .85 },

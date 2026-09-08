@@ -66,10 +66,23 @@ assert.strictEqual(days[0].plannedDay, "sabado", "Bloco de duas horas não pode 
 assert.strictEqual(days[1].plannedDay, "sabado", "A alocação deve respeitar a capacidade diária restante.");
 
 runtime.state.planningBase = { materias: [
-  { materia: "Tributário", peso: 2, dominio: 3, examImportance: { questionCount: 16, weight: 1 } },
-  { materia: "Administração", peso: 5, dominio: 3, examImportance: { questionCount: 10, weight: 1 } },
-] };
+  ["Português", 15, 3], ["Dados", 15, 3], ["Constitucional", 14, 3], ["Administrativo", 12, 3],
+  ["Contabilidade", 10, 3], ["Tributário", 8, 3], ["Previdenciário", 8, 4], ["Legislação Tributária", 14, 3], ["Legislação Aduaneira", 14, 3],
+].map(([materia, questionCount, dominio]) => ({ materia, peso: 1, dominio, examImportance: { questionCount, weight: 1 } })) };
 runtime.refreshExamImportance();
-assert.ok(runtime.state.planningBase.materias[0].examImportance.importanceScore > runtime.state.planningBase.materias[1].examImportance.importanceScore, "Questões da estrutura devem prevalecer sobre o peso manual quando disponíveis.");
+const structure = Object.fromEntries(runtime.state.planningBase.materias.map((subject) => [subject.materia, subject.examImportance]));
+const closeTo = (actual, expected, label) => assert.ok(Math.abs(actual - expected) < .002, `${label}: esperado ${expected}, recebido ${actual}`);
+closeTo(structure.Português.importanceScore, 1, "Português deve ser a referência relativa");
+closeTo(structure.Dados.importanceScore, 1, "Dados deve dividir a referência relativa");
+closeTo(structure.Constitucional.importanceScore, 14 / 15, "Constitucional deve usar peso relativo");
+closeTo(structure.Administrativo.importanceScore, .8, "Administrativo deve usar peso relativo");
+closeTo(structure.Contabilidade.importanceScore, 10 / 15, "Contabilidade deve usar peso relativo");
+closeTo(structure.Tributário.importanceScore, 8 / 15, "Tributário deve usar peso relativo");
+closeTo(structure.Previdenciário.importanceScore, 8 / 15, "Previdenciário deve usar peso relativo");
+closeTo(structure.Previdenciário.estimatedPercentage, 8 / 110, "Participação deve continuar absoluta dentro da prova");
+assert.notStrictEqual(structure.Previdenciário.estimatedPercentage, structure.Previdenciário.importanceScore, "Participação percentual e importância relativa precisam continuar separadas.");
+const previdenciario = runtime.state.planningBase.materias.find((subject) => subject.materia === "Previdenciário");
+closeTo(runtime.priorityScore(previdenciario), .6 * (8 / 15) + .4 * .8, "A prioridade deve combinar importância relativa e dificuldade na mesma escala");
+assert.ok(runtime.priorityScore(previdenciario) >= .6, "Previdenciário com dificuldade alta não pode aparecer como baixa prioridade.");
 
 console.log("OK - capacidade integrada funde necessidades, limita adaptações, respeita dias e usa estrutura de prova.");

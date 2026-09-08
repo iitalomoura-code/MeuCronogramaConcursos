@@ -52,12 +52,18 @@
   function normalizeExamImportance(subject = {}) {
     const existing = subject.examImportance || {};
     const weight = Number(existing.weight ?? subject.peso) || 3;
+    const questionCount = Math.max(0, Number(existing.questionCount) || 0);
     const historicalIncidence = clamp(existing.historicalIncidence ?? subject.incidenciaHistorica?.normalized ?? 0);
-    const score = clamp(existing.importanceScore ?? (historicalIncidence ? (weight / 5) * .78 + historicalIncidence * .22 : weight / 5));
+    // A participação percentual é contexto absoluto; a pontuação só pode
+    // reutilizá-la após a normalização relativa feita para toda a prova.
+    const fallbackScore = historicalIncidence ? (weight / 5) * .78 + historicalIncidence * .22 : weight / 5;
+    const score = questionCount > 0 && Number.isFinite(Number(existing.importanceScore))
+      ? clamp(existing.importanceScore)
+      : clamp(fallbackScore);
     return {
       subjectId: existing.subjectId || subject.id || `subject-${String(subject.materia || subject.subjectName || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
       subjectName: existing.subjectName || subject.materia || "",
-      questionCount: Math.max(0, Number(existing.questionCount) || 0),
+      questionCount,
       weight,
       blockWeight: Math.max(0, Number(existing.blockWeight) || 0),
       estimatedPercentage: Math.max(0, Number(existing.estimatedPercentage) || 0),

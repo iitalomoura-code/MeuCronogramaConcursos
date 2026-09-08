@@ -3997,6 +3997,7 @@ function renderPlanningBase() {
   renderPrioritySummary(subjects);
   els.planningGrid.innerHTML = subjects.map((subject, index) => {
     const planningSubject = subjectPlanningCapacity(subject);
+    const objectiveImportance = Number(planningSubject.examImportance?.questionCount) > 0 && ["current-edital", "previous-edital"].includes(planningSubject.examImportance?.sourceType);
     const priority = priorityInfo(subject.prioridade);
     const isOpen = index === priorityEditIndex;
     return `
@@ -4007,8 +4008,8 @@ function renderPlanningBase() {
             <span>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"} &middot; ${planningSubject.active ? "Ativa" : "Em espera"}</span>
           </div>
           <div class="priority-cell">
-            <span>Import\u00e2ncia na prova</span>
-            <strong>${Number(subject.peso) || 3}</strong>
+            <span>${objectiveImportance ? "Importância relativa na prova" : "Importância na prova"}</span>
+            <strong>${objectiveImportance ? `${Math.round(Number(planningSubject.examImportance.importanceScore || 0) * 100)}%` : Number(subject.peso) || 3}</strong>
           </div>
           <div class="priority-cell">
             <span>Dificuldade pessoal</span>
@@ -4056,15 +4057,23 @@ function refreshExamImportance() {
     const importance = subject.examImportance || {};
     return sum + Math.max(0, Number(importance.questionCount) || 0) * Math.max(1, Number(importance.weight ?? subject.peso) || 1);
   }, 0);
+  const maxWeightedQuestions = subjects.reduce((maximum, subject) => {
+    const importance = subject.examImportance || {};
+    const weightedQuestions = Math.max(0, Number(importance.questionCount) || 0) * Math.max(1, Number(importance.weight ?? subject.peso) || 1);
+    return Math.max(maximum, weightedQuestions);
+  }, 0);
   subjects.forEach((subject) => {
     const previous = subject.examImportance || {};
     const questionCount = Math.max(0, Number(previous.questionCount) || 0);
     const weight = Math.max(1, Number(previous.weight ?? subject.peso) || 1);
     const blockWeight = Math.max(0, Number(previous.blockWeight) || 0);
-    const share = totalWeightedQuestions ? (questionCount * weight) / totalWeightedQuestions : 0;
+    const weightedQuestions = questionCount * weight;
+    const share = totalWeightedQuestions ? weightedQuestions / totalWeightedQuestions : 0;
     const historical = Number(previous.historicalIncidence) || 0;
     const sourceType = questionCount > 0 ? (usePrevious ? "previous-edital" : "current-edital") : previous.sourceType || "manual-fallback";
-    const importanceScore = questionCount > 0 ? Math.max(.05, Math.min(1, share)) : capacityPlanning().normalizeExamImportance({ ...subject, examImportance: previous }).importanceScore;
+    const importanceScore = questionCount > 0 && maxWeightedQuestions > 0
+      ? Math.min(1, weightedQuestions / maxWeightedQuestions)
+      : capacityPlanning().normalizeExamImportance({ ...subject, examImportance: { ...previous, importanceScore: undefined } }).importanceScore;
     subject.examImportance = {
       ...previous,
       subjectId: previous.subjectId || initialDiagnosisSubjectId(subject.materia),
@@ -4072,7 +4081,7 @@ function refreshExamImportance() {
       questionCount,
       weight,
       blockWeight,
-      estimatedPercentage: Number((share * 100).toFixed(1)),
+      estimatedPercentage: Number(share.toFixed(4)),
       historicalIncidence: historical,
       importanceScore,
       sourceType,
@@ -4088,7 +4097,7 @@ function renderExamStructure() {
   const subjects = state.planningBase.materias || [];
   if (els.usePreviousExamStructure) els.usePreviousExamStructure.checked = state.planningBase.examStructureReference === "previous-edital";
   els.examStructureGrid.innerHTML = `
-    <div class="exam-structure-head"><span>Matéria</span><span>Questões</span><span>Peso</span><span>Participação</span><span>Fonte</span></div>
+    <div class="exam-structure-head"><span>Matéria</span><span>Questões</span><span>Peso</span><span>Participação</span><span>Importância</span><span>Fonte</span></div>
     ${subjects.map((subject, index) => {
       const importance = capacityPlanning().normalizeExamImportance(subject);
       const source = importance.sourceType === "current-edital" ? "Confirmada" : importance.sourceType === "previous-edital" ? "Estimada" : importance.sourceType === "manual-fallback" ? "Manual" : "Histórica";
@@ -4096,7 +4105,8 @@ function renderExamStructure() {
         <strong>${escapeHtml(subject.materia)}</strong>
         <input type="number" min="0" step="1" data-exam-structure="${index}" data-exam-field="questionCount" value="${Number(importance.questionCount) || ""}" aria-label="Questões de ${escapeHtml(subject.materia)}" />
         <input type="number" min="1" step="0.5" data-exam-structure="${index}" data-exam-field="weight" value="${Number(importance.weight) || 1}" aria-label="Peso de ${escapeHtml(subject.materia)}" />
-        <span>${Number(importance.estimatedPercentage || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
+        <span>${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
+        <span>${Math.round(Number(importance.importanceScore || 0) * 100)}%</span>
         <span class="exam-importance-source">${source}</span>
       </div>`;
     }).join("")}
@@ -4119,10 +4129,18 @@ function explainPriority(subject = {}) {
   const baseScore = priorityScore(subject);
   const base = priorityInfo(baseScore);
   const adaptive = adaptivePriorityAdjustment({ materia: subject.materia, prioridadeBase: baseScore });
-  const mainReasons = [
-    `Importância informada como ${Number(subject.peso) || 3} de 5`,
-    `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
-  ];
+  const importance = capacityPlanning().normalizeExamImportance(subject);
+  const usesStructure = Number(importance.questionCount) > 0 && ["current-edital", "previous-edital"].includes(importance.sourceType);
+  const mainReasons = usesStructure
+    ? [
+      `Importância relativa na prova: ${Math.round(Number(importance.importanceScore || 0) * 100)}%`,
+      `Participação estimada: ${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
+      `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
+    ]
+    : [
+      `Importância informada como ${Number(subject.peso) || 3} de 5`,
+      `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
+    ];
   const secondaryReasons = [];
   adaptive.reasons?.forEach((reason) => {
     if (!mainReasons.some((item) => normalizeForMatch(item).includes(normalizeForMatch(reason)))) secondaryReasons.push(reason);
