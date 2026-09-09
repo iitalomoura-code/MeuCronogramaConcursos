@@ -4636,15 +4636,20 @@ function masteryDiagnosisForTarget(target = {}) {
   if (masteryDiagnosisCache.has(cacheKey)) return masteryDiagnosisCache.get(cacheKey);
   const subjectEntries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
   const topicEntries = assunto ? uniqueDiagnosticEntries(adaptivePerformanceForTopic(materia, assunto)) : [];
-  const macro = assunto ? macroTopicFor(materia, assunto) : "";
-  const macroEntries = macro ? uniqueDiagnosticEntries(subjectEntries.filter((entry) => macroTopicFor(materia, entry.assunto) === macro)) : [];
   const questionCount = (entries) => entries.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0);
   const sessionCount = (entries) => entries.filter((entry) => Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0).length;
-  const selected = questionCount(topicEntries) >= 10 || sessionCount(topicEntries) >= 2
+  const isTopicDiagnosis = Boolean(assunto);
+  // Dados agregados são válidos para a matéria, nunca para declarar domínio de outro assunto.
+  const selected = isTopicDiagnosis
     ? { entries: topicEntries, basis: "topic" }
-    : questionCount(macroEntries) >= 10 || sessionCount(macroEntries) >= 2
-      ? { entries: macroEntries, basis: "macro" }
-      : { entries: subjectEntries, basis: "subject" };
+    : { entries: subjectEntries, basis: "subject" };
+  const topicHasEvidence = topicEntries.some(entryHasRecordedStudyContact);
+  const subjectContext = isTopicDiagnosis && subjectEntries.length ? {
+    questions: questionCount(subjectEntries),
+    sessions: sessionCount(subjectEntries),
+    accuracy: accuracyFromEntries(subjectEntries),
+    hasContact: subjectEntries.some(entryHasRecordedStudyContact),
+  } : null;
   const reviewAttention = reviewAttentionFor(materia, assunto);
   const completedReviews = (state.reviews || []).filter((record) => normalizeReviewStatus(record.status) === "Concluída" && topicMatches(record, materia, assunto)).length;
   const subject = subjectPlanningData(materia);
@@ -4655,7 +4660,20 @@ function masteryDiagnosisForTarget(target = {}) {
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
   if (!engine?.diagnose) {
-    const fallback = { available: false, level: "adequate", basis: selected.basis, confidence: 0, accuracy: null, priorityAdjustment: 0, reasons: [], action: null, needsDiagnostic: false, entries: selected.entries, hasContact: Boolean(lastContact) };
+    const fallback = {
+      available: !isTopicDiagnosis || topicHasEvidence,
+      level: "insufficient",
+      basis: selected.basis,
+      confidence: 0,
+      accuracy: null,
+      priorityAdjustment: 0,
+      reasons: isTopicDiagnosis && !topicHasEvidence ? ["este assunto ainda não tem registro próprio"] : [],
+      action: { kind: "diagnostic", label: "Sessão diagnóstica", minutes: 30, questions: 10, text: "Faça 10 questões deste tema para melhorar o diagnóstico." },
+      needsDiagnostic: true,
+      entries: selected.entries,
+      subjectContext,
+      hasContact: Boolean(lastContact),
+    };
     masteryDiagnosisCache.set(cacheKey, fallback);
     return fallback;
   }
@@ -4671,7 +4689,20 @@ function masteryDiagnosisForTarget(target = {}) {
     initialInfluence: initial.adjustment || 0,
     errorSignals,
   });
-  const result = { ...diagnosis, available: true, entries: selected.entries, macro, incidence, initial, errorSignals, reviewAttention, hasContact: Boolean(lastContact) };
+  const result = {
+    ...diagnosis,
+    available: !isTopicDiagnosis || topicHasEvidence,
+    entries: selected.entries,
+    incidence,
+    initial,
+    errorSignals,
+    reviewAttention,
+    subjectContext,
+    hasContact: Boolean(lastContact),
+    reasons: isTopicDiagnosis && !topicHasEvidence
+      ? ["este assunto ainda não tem registro próprio", ...(diagnosis.reasons || [])].slice(0, 3)
+      : diagnosis.reasons,
+  };
   masteryDiagnosisCache.set(cacheKey, result);
   return result;
 }
@@ -6247,17 +6278,7 @@ function weeklyCompletedReviewEvents() {
 }
 
 function weeklyReinforcementCandidates({ plannedHours = 0, examContext = null } = {}) {
-  const history = adaptiveHistoryEntries();
-  const subjectCache = new Map();
-  const subjectEntries = (materia) => {
-    const key = normalizeForMatch(materia);
-    if (!subjectCache.has(key)) subjectCache.set(key, history.filter((entry) => topicMatches(entry, materia)));
-    return subjectCache.get(key);
-  };
   const candidates = pendingCycleEntries().map(({ block, index }) => {
-    const subjectHistory = subjectEntries(block.materia);
-    const topicEntries = subjectHistory.filter((entry) => topicMatches(entry, block.materia, block.assunto));
-    const entries = topicEntries.length ? topicEntries : subjectHistory;
     const incidence = block.incidenciaHistorica?.applied ? block.incidenciaHistorica : historicalIncidenceForTarget(block);
     const subject = subjectPlanningData(block.materia);
     const scheduling = schedulingPriorityForTarget({ ...block, subject, prioridadeBase: block.prioridadeBase ?? block.prioridade });

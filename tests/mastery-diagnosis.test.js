@@ -30,6 +30,11 @@ const tinyExcellentSample = engine.diagnose({ entries: [entry(4.5, 5)], importan
 assert.equal(tinyExcellentSample.level, "insufficient", "Cinco ou poucas questões excelentes não devem declarar domínio forte.");
 assert.ok(tinyExcellentSample.confidence < .45, "A confiança deve continuar baixa com pouca evidência.");
 
+const preliminaryStrong = engine.diagnose({ entries: [entry(19, 22)], importance: .8 });
+assert.notEqual(preliminaryStrong.level, "strong", "Uma única sessão boa não pode consolidar domínio forte.");
+assert.equal(preliminaryStrong.evidenceStage, "preliminary", "Uma boa primeira sessão deve permanecer em confirmação.");
+assert.ok(preliminaryStrong.reasons.some((reason) => reason.includes("ainda em confirmação")), "O diagnóstico deve explicar que a evidência inicial ainda precisa de novo contato.");
+
 const highButFalling = engine.diagnose({ entries: [entry(19, 20), entry(18, 20), entry(16, 20), entry(16, 20)], importance: .8 });
 assert.equal(highButFalling.trend.label, "falling", "A queda consistente precisa ser preservada no diagnóstico.");
 assert.notEqual(highButFalling.level, "strong", "Uma queda recente não pode ser ignorada por uma média acima de 85%.");

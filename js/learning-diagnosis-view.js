@@ -11,7 +11,10 @@
   };
   const PRIORITY_RANK = { critical: 0, deficiency: 1, attention: 2, insufficient: 3, adequate: 4, strong: 5 };
 
-  function levelInfo(level) {
+  function levelInfo(level, diagnosis = {}) {
+    if (level === "adequate" && diagnosis.evidenceStage === "preliminary") {
+      return { ...LEVELS.adequate, label: "Em consolidação" };
+    }
     return LEVELS[level] || LEVELS.insufficient;
   }
 
@@ -53,7 +56,7 @@
   function build({ topics = [] } = {}) {
     const prepared = topics.map((topic) => {
       const diagnosis = topic.diagnosis || {};
-      const info = levelInfo(diagnosis.level);
+      const info = levelInfo(diagnosis.level, diagnosis);
       return {
         ...topic,
         level: diagnosis.level || "insufficient",

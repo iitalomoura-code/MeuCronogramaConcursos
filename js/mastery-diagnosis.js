@@ -2,6 +2,8 @@
   "use strict";
 
   const STRONG_REFERENCE = 0.85;
+  const STRONG_MIN_QUESTIONS = 30;
+  const STRONG_MIN_SESSIONS = 2;
   const DAY = 24 * 60 * 60 * 1000;
 
   function clamp(value, minimum = 0, maximum = 1) {
@@ -125,6 +127,11 @@
     const overallAccuracy = accuracy(answered);
     const direction = trend(entries);
     const sampleConfidence = confidence(entries, Number(review.completed) || 0);
+    const sessionCount = entries.filter((entry) => Number(entry.questoes) > 0 || Number(entry.tempoEstudado) > 0).length;
+    const hasConfirmedStrongEvidence = counts.questions >= STRONG_MIN_QUESTIONS && sessionCount >= STRONG_MIN_SESSIONS;
+    const preliminaryStrongSignal = currentAccuracy !== null
+      && currentAccuracy >= STRONG_REFERENCE
+      && !hasConfirmedStrongEvidence;
     const highDifficulty = entries.slice(-6).filter((entry) => String(entry.dificuldade || "").toLowerCase() === "alta").length;
     const reprograms = entries.filter((entry) => String(entry.status || "").toLowerCase().includes("reprogram")).length;
     const repeatedErrors = Math.max(0, answered.filter((entry) => Number(entry.questoes) > 0 && (Number(entry.acertos) || 0) / Number(entry.questoes) < 0.7).length - 1);
@@ -173,7 +180,7 @@
     else if ((currentAccuracy !== null && currentAccuracy < 0.45 && relevance >= 0.42) || (pressure >= 0.52 && sampleConfidence >= 0.35)) level = "critical";
     else if ((currentAccuracy !== null && currentAccuracy < 0.60 && sampleConfidence >= 0.22) || pressure >= 0.32) level = "deficiency";
     else if ((currentAccuracy !== null && currentAccuracy < STRONG_REFERENCE) || direction.label === "falling" || pressure >= 0.14) level = "attention";
-    else if (currentAccuracy !== null && currentAccuracy >= STRONG_REFERENCE && sampleConfidence >= 0.45 && direction.label !== "falling") level = "strong";
+    else if (currentAccuracy !== null && currentAccuracy >= STRONG_REFERENCE && sampleConfidence >= 0.45 && hasConfirmedStrongEvidence && direction.label !== "falling") level = "strong";
 
     const reasons = [];
     if (currentAccuracy !== null) reasons.push(`${Math.round(currentAccuracy * 100)}% nas questões mais recentes`);
@@ -185,6 +192,7 @@
     if (errorSignals.available && Number(errorSignals.postInterventionErrors) >= 2) reasons.push("erros persistentes após reforço");
     if (errorSignals.available && Number(errorSignals.concentration) >= 0.35) reasons.push("o tema concentra boa parte dos erros recentes da matéria");
     if (needsDiagnostic) reasons.unshift("ainda há poucas questões registradas");
+    if (preliminaryStrongSignal) reasons.push("bom desempenho inicial; ainda em confirmação");
     if (!reasons.length && level === "strong") reasons.push("desempenho consistente e sem queda recente");
 
     const priorityAdjustment = level === "critical" ? 0.28 : level === "deficiency" ? 0.20 : level === "attention" ? 0.10 : level === "insufficient" && relevance >= 0.55 ? 0.05 : 0;
@@ -202,6 +210,8 @@
       repeatedErrors,
       highDifficulty,
       reprograms,
+      sessionCount,
+      evidenceStage: counts.questions === 0 ? "none" : hasConfirmedStrongEvidence ? "confirmed" : "preliminary",
       daysWithoutContact,
       relevance,
       needsDiagnostic,
@@ -212,6 +222,6 @@
     };
   }
 
-  global.MasteryDiagnosis = { STRONG_REFERENCE, diagnose, accuracy, confidence, trend };
+  global.MasteryDiagnosis = { STRONG_REFERENCE, STRONG_MIN_QUESTIONS, STRONG_MIN_SESSIONS, diagnose, accuracy, confidence, trend };
   if (typeof module !== "undefined" && module.exports) module.exports = global.MasteryDiagnosis;
 })(typeof window !== "undefined" ? window : globalThis);
