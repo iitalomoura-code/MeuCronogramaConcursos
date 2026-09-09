@@ -24,6 +24,8 @@ assert.ok(!app.includes("showToast((focusedStudySession?.context || context.cont
 assert.ok(!app.includes("if (focusedStudyIndex === index) renderContinuePanel();"), "Abrir o modo foco não deve reconstruir a tela Continuar por trás do painel.");
 assert.ok(!app.includes("document.startViewTransition(run)"), "A troca de aba não deve capturar a página inteira antes de responder.");
 assert.ok(app.includes("function yieldForInteraction()"), "Salvamentos pesados devem ceder a primeira pintura ao navegador.");
+assert.ok(app.includes("removeFocusedStudyOverlay();\n  await yieldForInteraction();"), "Finalizar no modo foco deve fechar o painel antes dos cálculos de resultado.");
+assert.ok(app.includes("function scheduleFocusedStudyResultRender"), "A tela Continuar deve ser atualizada depois da primeira resposta visual ao salvar.");
 assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A leitura da árvore do edital deve ocorrer somente em sua tela.");
 assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
 assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");

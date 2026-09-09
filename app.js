@@ -8084,6 +8084,13 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
   return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome, standaloneReview: true };
 }
 
+function scheduleFocusedStudyResultRender() {
+  window.setTimeout(() => {
+    if (getActiveTabName() === "continuar") renderContinuePanel();
+    else scheduleActiveTabRender(getActiveTabName());
+  }, 0);
+}
+
 async function saveFocusedStudy() {
   if (focusedStudySaving || focusedStudyIndex < 0) return;
   const index = focusedStudyIndex;
@@ -8091,10 +8098,21 @@ async function saveFocusedStudy() {
   const draft = focusedStudyDrafts.get(index);
   const context = { context: focusedStudySession?.context || draft?.context || "estudo", reviewId: focusedStudySession?.reviewId || draft?.reviewId || "" };
   if (!block || !draft) return;
-  focusedStudySaving = true;
   const sessionHours = focusedTimerSeconds() / 3600;
   const typedHours = String(draft.tempoEstudado || "").trim() ? parseDurationInput(draft.tempoEstudado, 0) : 0;
   const effectiveHours = Number((typedHours || sessionHours || Number(block.duracao) || 0).toFixed(2));
+  const questions = String(draft.questoes || "").trim() ? Number(draft.questoes) : 0;
+  const correctAnswers = String(draft.acertos || "").trim() ? Number(draft.acertos) : 0;
+  if (!Number.isFinite(questions) || !Number.isFinite(correctAnswers) || questions < 0 || correctAnswers < 0 || correctAnswers > questions) {
+    showToast("Confira as questões e os acertos informados.");
+    return;
+  }
+  focusedStudySaving = true;
+  // Fecha visualmente antes de recalcular diagnóstico, revisões e recomendações.
+  // A renderização do painel de fundo fica para o próximo ciclo de pintura.
+  stopFocusedTimerInterval();
+  removeFocusedStudyOverlay();
+  await yieldForInteraction();
   const standaloneReview = Boolean(block.reviewSessionOnly);
   const outcome = standaloneReview
     ? saveStandaloneReviewResult(block, draft, effectiveHours)
@@ -8106,8 +8124,8 @@ async function saveFocusedStudy() {
       activityType: draft.tipoAtividade,
       difficulty: draft.dificuldade,
       studiedHours: effectiveHours,
-      questions: String(draft.questoes || "").trim() ? Number(draft.questoes) : 0,
-      correctAnswers: String(draft.acertos || "").trim() ? Number(draft.acertos) : 0,
+      questions,
+      correctAnswers,
       notes: draft.observacoes,
       reviewPoints: draft.pontosRevisar,
       reviewCycles: draft.reviewCycles || [],
@@ -8115,6 +8133,7 @@ async function saveFocusedStudy() {
     });
   if (!outcome.ok) {
     focusedStudySaving = false;
+    renderFocusedStudyOverlay();
     if (!outcome.duplicate) showToast(outcome.message || "Não foi possível salvar o resultado.");
     return;
   }
@@ -8133,8 +8152,7 @@ async function saveFocusedStudy() {
   focusedStudyIndex = -1;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
-  if (getActiveTabName() === "continuar") renderContinuePanel();
-  else scheduleActiveTabRender(getActiveTabName());
+  scheduleFocusedStudyResultRender();
   if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
   else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
   else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");

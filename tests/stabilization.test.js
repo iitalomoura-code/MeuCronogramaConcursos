@@ -19,7 +19,7 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260908-priority-visual"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260909-explicit-subject-recovery"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260909-focused-save-response"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260908-priority-visual"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260909-explicit-subject-markers"), "O validador deve carregar depois do modelo canônico e antes do app.");
