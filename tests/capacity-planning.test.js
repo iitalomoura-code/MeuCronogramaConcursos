@@ -29,6 +29,14 @@ const historicalFallback = CapacityPlanning.normalizeExamImportance({
   examImportance: { questionCount: 0, importanceScore: .01, historicalIncidence: .8 },
 });
 assert.ok(historicalFallback.importanceScore > .4, "Sem estrutura objetiva, a incidência histórica deve prevalecer sobre um score legado achatado.");
+const manualFallback = CapacityPlanning.normalizeExamImportance({
+  materia: "Manual",
+  peso: 5,
+  // Estruturas antigas podiam manter um peso auxiliar, mesmo sem questões.
+  examImportance: { questionCount: 0, weight: 3, importanceScore: .6, sourceType: "current-edital" },
+});
+assert.strictEqual(manualFallback.importanceScore, 1, "Sem questões, a importância manual atual de 1 a 5 deve ser usada no cálculo.");
+assert.strictEqual(manualFallback.sourceType, "manual-fallback", "Uma estrutura sem questões não pode continuar se apresentando como estrutura objetiva.");
 
 const criticalPressure = CapacityPlanning.studyPressure({
   importance: { importanceScore: .85 },

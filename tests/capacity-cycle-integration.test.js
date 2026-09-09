@@ -85,4 +85,13 @@ const previdenciario = runtime.state.planningBase.materias.find((subject) => sub
 closeTo(runtime.priorityScore(previdenciario), .6 * (8 / 15) + .4 * .8, "A prioridade deve combinar importância relativa e dificuldade na mesma escala");
 assert.ok(runtime.priorityScore(previdenciario) >= .6, "Previdenciário com dificuldade alta não pode aparecer como baixa prioridade.");
 
+runtime.state.planningBase = { materias: [
+  { materia: "Sem prova anterior", peso: 4, dominio: 4, examImportance: { questionCount: 0, weight: 1, importanceScore: .2, sourceType: "previous-edital" } },
+] };
+runtime.refreshExamImportance();
+const manualSubject = runtime.state.planningBase.materias[0];
+closeTo(manualSubject.examImportance.importanceScore, .8, "Sem quantidade de questões, a escala manual 1 a 5 deve continuar determinando a importância");
+closeTo(runtime.priorityScore(manualSubject), .8, "Importância manual e dificuldade pessoal devem permanecer na mesma escala");
+assert.strictEqual(manualSubject.examImportance.sourceType, "manual-fallback", "Sem questões, uma fonte objetiva antiga não deve continuar ativa.");
+
 console.log("OK - capacidade integrada funde necessidades, limita adaptações, respeita dias e usa estrutura de prova.");

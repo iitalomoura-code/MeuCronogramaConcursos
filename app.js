@@ -4226,13 +4226,19 @@ function refreshExamImportance() {
   subjects.forEach((subject) => {
     const previous = subject.examImportance || {};
     const questionCount = Math.max(0, Number(previous.questionCount) || 0);
-    const weight = Math.max(1, Number(previous.weight ?? subject.peso) || 1);
+    const hasObjectiveQuestions = questionCount > 0;
+    const manualImportance = Number(subject.peso) || 3;
+    const weight = hasObjectiveQuestions
+      ? Math.max(1, Number(previous.weight ?? manualImportance) || 1)
+      : manualImportance;
     const blockWeight = Math.max(0, Number(previous.blockWeight) || 0);
     const weightedQuestions = questionCount * weight;
     const share = totalWeightedQuestions ? weightedQuestions / totalWeightedQuestions : 0;
     const historical = Number(previous.historicalIncidence) || 0;
-    const sourceType = questionCount > 0 ? (usePrevious ? "previous-edital" : "current-edital") : previous.sourceType || "manual-fallback";
-    const importanceScore = questionCount > 0 && maxWeightedQuestions > 0
+    const sourceType = hasObjectiveQuestions
+      ? (usePrevious ? "previous-edital" : "current-edital")
+      : (historical ? "historical-incidence" : "manual-fallback");
+    const importanceScore = hasObjectiveQuestions && maxWeightedQuestions > 0
       ? Math.min(1, weightedQuestions / maxWeightedQuestions)
       : capacityPlanning().normalizeExamImportance({ ...subject, examImportance: { ...previous, importanceScore: undefined } }).importanceScore;
     subject.examImportance = {
@@ -4246,8 +4252,10 @@ function refreshExamImportance() {
       historicalIncidence: historical,
       importanceScore,
       sourceType,
-      sourceName: questionCount > 0 ? (usePrevious ? "Último edital" : "Edital atual") : previous.sourceName || "Prioridade informada",
-      confidence: questionCount > 0 ? (usePrevious ? "estimated" : "confirmed") : historical ? "estimated" : "manual",
+      sourceName: hasObjectiveQuestions
+        ? (usePrevious ? "Último edital" : "Edital atual")
+        : (historical ? "Incidência histórica e importância informada" : "Importância informada"),
+      confidence: hasObjectiveQuestions ? (usePrevious ? "estimated" : "confirmed") : historical ? "estimated" : "manual",
     };
     subject.prioridade = priorityScore(subject);
   });
@@ -4299,6 +4307,7 @@ function explainPriority(subject = {}) {
       `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
     ]
     : [
+      ...(Number(importance.historicalIncidence) > 0 ? [`Incidência histórica disponível: ${Math.round(Number(importance.historicalIncidence) * 100)}%`] : []),
       `Importância informada como ${Number(subject.peso) || 3} de 5`,
       `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
     ];
@@ -4367,6 +4376,11 @@ function renderPriorityXray(subjects) {
 
 function priorityEditPanel(subject, index, priority) {
   const explanation = explainPriority(subject);
+  const importance = subjectPlanningCapacity(subject).examImportance;
+  const usesStructure = Number(importance.questionCount) > 0 && ["current-edital", "previous-edital"].includes(importance.sourceType);
+  const importanceHelp = usesStructure
+    ? "A estrutura de questões está sendo usada. Esta escala fica como alternativa caso a quantidade seja removida."
+    : "Sem questões informadas para esta matéria, esta escala define a importância no cálculo.";
   return `
     <div class="priority-edit-panel">
       <div class="priority-edit-toolbar">
@@ -4374,7 +4388,7 @@ function priorityEditPanel(subject, index, priority) {
         <span class="priority-badge ${priority.className}">Prioridade de estudo: ${priority.label} &middot; ${priority.percent}%</span>
       </div>
       <div class="priority-scale-grid">
-        ${scaleMarkup(index, "peso", "Import\u00e2ncia na prova", "Quanto essa mat\u00e9ria pesa no resultado.", subject.peso)}
+        ${scaleMarkup(index, "peso", "Import\u00e2ncia na prova", importanceHelp, subject.peso)}
         ${scaleMarkup(index, "dominio", "Dificuldade pessoal", "Quanto voc\u00ea sente dificuldade nessa mat\u00e9ria.", subject.dominio)}
       </div>
       <div class="priority-explanation">

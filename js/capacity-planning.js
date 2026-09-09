@@ -51,8 +51,10 @@
 
   function normalizeExamImportance(subject = {}) {
     const existing = subject.examImportance || {};
-    const weight = Number(existing.weight ?? subject.peso) || 3;
     const questionCount = Math.max(0, Number(existing.questionCount) || 0);
+    const manualImportance = Number(subject.peso) || 3;
+    // O peso da estrutura so vale quando ha questoes para ponderar.
+    const weight = questionCount > 0 ? (Number(existing.weight ?? manualImportance) || 1) : manualImportance;
     const historicalIncidence = clamp(existing.historicalIncidence ?? subject.incidenciaHistorica?.normalized ?? 0);
     // A participação percentual é contexto absoluto; a pontuação só pode
     // reutilizá-la após a normalização relativa feita para toda a prova.
@@ -60,6 +62,9 @@
     const score = questionCount > 0 && Number.isFinite(Number(existing.importanceScore))
       ? clamp(existing.importanceScore)
       : clamp(fallbackScore);
+    const sourceType = questionCount > 0
+      ? (existing.sourceType || "current-edital")
+      : (historicalIncidence ? "historical-incidence" : "manual-fallback");
     return {
       subjectId: existing.subjectId || subject.id || `subject-${String(subject.materia || subject.subjectName || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
       subjectName: existing.subjectName || subject.materia || "",
@@ -69,9 +74,11 @@
       estimatedPercentage: Math.max(0, Number(existing.estimatedPercentage) || 0),
       historicalIncidence,
       importanceScore: score,
-      sourceType: existing.sourceType || "manual-fallback",
-      sourceName: existing.sourceName || "Prioridade informada",
-      confidence: existing.confidence || (existing.questionCount ? "confirmed" : historicalIncidence ? "estimated" : "manual"),
+      sourceType,
+      sourceName: questionCount > 0
+        ? (existing.sourceName || "Estrutura da prova")
+        : (historicalIncidence ? "Incidência histórica e importância informada" : "Importância informada"),
+      confidence: questionCount > 0 ? (existing.confidence || "confirmed") : (historicalIncidence ? "estimated" : "manual"),
     };
   }
 
