@@ -229,5 +229,54 @@ Indicadores, perspectivas e mapa estratégico.
 assert.deepEqual([...new Set(acronymInsideAdministration.map((row) => row.materia))], ["ADMINISTRAÇÃO GERAL E PÚBLICA"], "Sigla em título interno não pode virar matéria.");
 assert.equal(acronymInsideAdministration[0].assunto.split(":")[0], "Balanced Scorecard — BSC", "O título interno deve ser preservado integralmente.");
 
+const explicitMarkerContent = parser.parseProgramContent(`
+MATÉRIA: LÍNGUA PORTUGUESA
+1. Interpretação e organização do texto: compreensão textual; tipologia; coesão e coerência.
+2. Pontuação: emprego da vírgula; sinais de pontuação.
+MATÉRIA: LÍNGUA INGLESA
+1. Compreensão de textos: vocabulário e estruturas gramaticais.
+MATÉRIA: FLUÊNCIA EM DADOS
+1. Fundamentos de dados: coleta; organização; leitura de tabelas.
+2. Visualização de dados: gráficos; indicadores; comunicação.
+`);
+assert.deepEqual([...new Set(explicitMarkerContent.map((row) => row.materia))], ["LÍNGUA PORTUGUESA", "LÍNGUA INGLESA", "FLUÊNCIA EM DADOS"], "MATÉRIA: deve preservar cada nome exatamente e encerrar a disciplina anterior.");
+assert.equal(explicitMarkerContent.length, 5, "Cada item numerado deve ser um tema independente na estrutura explícita.");
+assert.equal(explicitMarkerContent[0].assunto.split(":")[0], "Interpretação e organização do texto", "O primeiro dois-pontos deve separar o título do tema.");
+assert.ok(explicitMarkerContent[0].assunto.includes("compreensão textual; tipologia; coesão e coerência"), "Ponto e vírgula deve permanecer dentro da descrição do mesmo tema.");
+assert.equal(parser.getLastProgramParseMeta().mode, "explicit-subject-marker", "Marcadores explícitos devem ter prioridade sobre o parser automático.");
+
+const explicitHierarchy = parser.parseProgramContent(`
+MATÉRIA: ADMINISTRAÇÃO PÚBLICA
+1. Planejamento: fundamentos.
+1.1. Indicadores: monitoramento.
+`);
+assert.deepEqual(explicitHierarchy.map((row) => row.outlineNumber), ["1", "1.1"], "A estrutura explícita deve preservar também a numeração hierárquica.");
+assert.deepEqual(explicitHierarchy.map((row) => row.outlineLevel), [1, 2], "O nível de cada marcador deve permanecer disponível para a prévia.");
+
+const unknownExplicitSubject = parser.parseProgramContent(`
+MATÉRIA: Conhecimentos Interdisciplinares da Carreira X
+1. Bloco inaugural: conteúdo específico.
+`);
+assert.equal(unknownExplicitSubject[0].materia, "Conhecimentos Interdisciplinares da Carreira X", "O marcador explícito não pode depender de catálogo de disciplinas conhecidas.");
+
+const repeatedExplicitTopics = parser.parseProgramContent(`
+MATÉRIA: DIREITO TRIBUTÁRIO
+1. Crédito tributário: constituição e exigibilidade.
+2. Crédito tributário: suspensão e extinção.
+`);
+assert.equal(repeatedExplicitTopics.length, 2, "Itens numerados semelhantes não podem ser unidos por inferência semântica.");
+assert.notEqual(repeatedExplicitTopics[0].assunto, repeatedExplicitTopics[1].assunto, "Cada item preserva a sua própria descrição.");
+
+const explicitWarnings = parser.parseProgramContent(`
+1. Item antes da matéria: precisa de revisão.
+MATÉRIA: SEM TEMA
+MATÉRIA: OUTRA
+1. Tema válido: descrição.
+`);
+assert.equal(explicitWarnings.length, 1, "Conteúdo numerado antes da primeira MATÉRIA: não pode ser associado por suposição.");
+const explicitMeta = parser.getLastProgramParseMeta();
+assert.ok(explicitMeta.subjectsWithoutTopics.includes("SEM TEMA"), "A prévia deve alertar matérias sem temas.");
+assert.ok(explicitMeta.parsingProblems.some((problem) => problem.type === "numbered-before-subject"), "A prévia deve alertar numeração antes da primeira matéria.");
+
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
 console.log("OK - marcadores gen\u00e9ricos, temas expl\u00edcitos, numera\u00e7\u00e3o hier\u00e1rquica, continua\u00e7\u00f5es e normaliza\u00e7\u00e3o.");

@@ -80,3 +80,14 @@ test("aplica apenas correcao automatica segura de descricao duplicada", () => {
   assert.equal(fixed[0].descricao, "Cargo; emprego; fun\u00e7\u00e3o.");
   assert.equal(fixed[0].manualCorrection, true);
 });
+
+test("explica problemas da estrutura explícita antes de confirmar", () => {
+  const issues = issuesFor([], {
+    parsingProblems: [
+      { type: "numbered-before-subject", text: "1. Tema solto" },
+      { type: "marker-inside-topic", materia: "Português", text: "use MATÉRIA: apenas no início" },
+    ],
+  });
+  assert.ok(issues.some((issue) => issue.type === "numbered-before-subject"));
+  assert.ok(issues.some((issue) => issue.type === "marker-inside-topic"));
+});

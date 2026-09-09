@@ -19,10 +19,10 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260908-priority-visual"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260909-topic-isolation"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260909-explicit-subject-markers"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260908-priority-visual"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
-assert.ok(index.includes("js/program-validator.js?v=20260907-program-validator"), "O validador deve carregar depois do modelo canônico e antes do app.");
+assert.ok(index.includes("js/program-validator.js?v=20260909-explicit-subject-markers"), "O validador deve carregar depois do modelo canônico e antes do app.");
 assert.ok(index.includes("js/document-structure-parser.js?v=20260907-canonical-program"), "O parser estrutural deve carregar antes do app.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
 assert.ok(index.includes("js/continue-recommendation.js?v=20260902-diagnosis-override"), "O motor de recomendação deve carregar antes do app.");
@@ -32,7 +32,8 @@ assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('i
 assert.ok(index.includes("js/incidence.js?v=20260805-incidence-fgv"), "A base de incidÃªncia deve ser carregada antes do app.");
 assert.ok(index.includes('class="ql-align" value="justify"'), "O Caderno de Resumos deve oferecer alinhamento justificado.");
 assert.ok(app.includes("NOTEBOOK_QUILL_ALIGNMENTS"), "Os alinhamentos do Quill devem ser normalizados antes do salvamento.");
-assert.ok(index.includes("pedagogical-grouping.js?v=20260907-canonical-program"), "A taxonomia pedagógica deve usar o modelo canônico atualizado.");
+assert.ok(index.includes("pedagogical-grouping.js?v=20260909-explicit-subject-markers"), "A taxonomia pedagógica deve usar o modelo canônico atualizado.");
+assert.ok(app.includes("function parseExplicitSubjectMarkerContent"), "Marcadores MATÉRIA: devem ter uma leitura explícita própria.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");

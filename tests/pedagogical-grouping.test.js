@@ -126,6 +126,13 @@ const law = grouping.groupRows([
 ]);
 assert.equal(law.length, 4, "Temas jurídicos autônomos devem permanecer separados.");
 
+const explicitRows = grouping.groupRows([
+  { ...row("Língua Portuguesa", "Ortografia: grafia"), structureSource: "explicit-subject-marker", outlineNumber: "1" },
+  { ...row("Língua Portuguesa", "Acentuação: regras"), structureSource: "explicit-subject-marker", outlineNumber: "2" },
+  { ...row("Língua Portuguesa", "Pontuação: vírgula"), structureSource: "explicit-subject-marker", outlineNumber: "3" },
+]);
+assert.equal(explicitRows.length, 3, "Linhas numeradas após MATÉRIA: devem permanecer separadas, sem agrupamento pedagógico.");
+
 assert.equal(grouping.TAXONOMY.length, 10, "A taxonomia deve cobrir as dez matérias iniciais.");
 assert.ok(grouping.GENERIC_TERMS.includes("classificacao"), "Termos genéricos devem permanecer identificados fora das regras de decisão.");
 

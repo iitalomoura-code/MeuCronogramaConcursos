@@ -189,6 +189,12 @@
       if (problem?.type === "orphan-content" || problem?.type === "loose-content") {
         add(buildIssue("orphan-description", "warning", [{ materia: "", titulo: clean(problem.text), __validatorIndex: -1 }], "Conte\u00fado n\u00e3o associado a nenhum tema.", "Associe ao tema anterior, ao pr\u00f3ximo ou crie um novo tema."));
       }
+      if (problem?.type === "numbered-before-subject") {
+        add(buildIssue("numbered-before-subject", "warning", [{ materia: "", titulo: clean(problem.text), __validatorIndex: -1 }], "Item numerado encontrado antes de uma linha MAT\u00c9RIA:.", "Inclua a mat\u00e9ria antes deste item ou mova o item para a disciplina correta."));
+      }
+      if (problem?.type === "marker-inside-topic") {
+        add(buildIssue("marker-inside-topic", "warning", [{ materia: clean(problem.materia), titulo: clean(problem.text), __validatorIndex: -1 }], "A express\u00e3o MAT\u00c9RIA: apareceu dentro de um tema.", "Use MAT\u00c9RIA: apenas no in\u00edcio de uma nova disciplina."));
+      }
     });
 
     const uniqueIssues = [...new Map(issues.map((issue) => [issue.id, issue])).values()];

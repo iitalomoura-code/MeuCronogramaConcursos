@@ -1139,6 +1139,152 @@ function formatImportedProgramText(rawText) {
     .trim();
 }
 
+function explicitSubjectMarker(line) {
+  const match = String(line || "").match(/^\s*mat[eé]ria\s*:\s*(.*?)\s*$/i);
+  if (!match || !match[1]) return null;
+  const subject = match[1].replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").trim();
+  return subject ? { subject } : null;
+}
+
+function hasExplicitSubjectMarkers(rawText) {
+  return String(rawText || "").replace(/\r\n?/g, "\n").split("\n").some((line) => Boolean(explicitSubjectMarker(line)));
+}
+
+function explicitTopicParts(value) {
+  const text = tidyProgramLine(value);
+  const separator = text.indexOf(":");
+  const title = normalizeTopic(separator >= 0 ? text.slice(0, separator) : text);
+  const description = separator >= 0 ? normalizeTopic(text.slice(separator + 1)) : "";
+  return { title, description, assunto: description ? `${title}: ${description}` : title };
+}
+
+function parseExplicitSubjectMarkerContent(rawText) {
+  const rows = [];
+  const subjects = [];
+  const subjectsWithTopics = new Set();
+  const parsingProblems = [];
+  const parsedStructure = [];
+  let currentSubject = "";
+  let currentTopic = null;
+
+  const registerSubject = (subject, sourceLine) => {
+    currentSubject = subject;
+    currentTopic = null;
+    subjects.push(subject);
+    parsedStructure.push({ type: "explicit-subject-marker", materia: subject, sourceLine, topics: [] });
+  };
+
+  const appendTopic = (value, sourceLine, outlineNumber = null) => {
+    const parts = explicitTopicParts(value);
+    if (!parts.title) {
+      parsingProblems.push({ type: "empty-topic", text: value, sourceLine, materia: currentSubject });
+      return;
+    }
+    const order = rows.filter((row) => row.materia === currentSubject).length + 1;
+    const row = enrichThemeRow({
+      materia: currentSubject,
+      assunto: parts.assunto,
+      ordem: order,
+      estudar: "Sim",
+      observacoes: "",
+      temaExplicito: true,
+      structureSource: "explicit-subject-marker",
+      outlineNumber,
+      outlineLevel: outlineNumber ? outlineNumber.split(".").length : null,
+      sourceBlockType: outlineNumber ? "explicit-numbered-item" : "explicit-topic",
+      origemEdital: {
+        originalText: value,
+        parsedStructure: { type: "topic", number: outlineNumber, text: parts.title, description: parts.description, sourceLine },
+      },
+    });
+    rows.push(row);
+    subjectsWithTopics.add(currentSubject);
+    parsedStructure[parsedStructure.length - 1]?.topics.push({ number: outlineNumber, title: parts.title, sourceLine });
+    currentTopic = { row, title: parts.title, description: parts.description, sourceLine };
+  };
+
+  const appendContinuation = (value, sourceLine) => {
+    const text = normalizeTopic(tidyProgramLine(value));
+    if (!text) return;
+    if (!currentTopic) {
+      parsingProblems.push({ type: "loose-content", text, sourceLine, materia: currentSubject });
+      return;
+    }
+    if (/\bmat[eé]ria\s*:/i.test(text)) {
+      parsingProblems.push({ type: "marker-inside-topic", text, sourceLine, materia: currentSubject });
+    }
+    currentTopic.description = normalizeTopic(`${currentTopic.description} ${text}`);
+    currentTopic.row.assunto = currentTopic.description
+      ? `${currentTopic.title}: ${currentTopic.description}`
+      : currentTopic.title;
+    if (currentTopic.row.origemEdital) currentTopic.row.origemEdital.originalText += `\n${value}`;
+  };
+
+  String(rawText || "").replace(/\r\n?/g, "\n").split("\n").forEach((source, index) => {
+    const sourceLine = index + 1;
+    const marker = explicitSubjectMarker(source);
+    if (marker) {
+      registerSubject(marker.subject, sourceLine);
+      return;
+    }
+    const line = tidyProgramLine(source);
+    if (!line) return;
+    const numbered = line.match(/^\s*(\d+(?:\.\d+)*)\.\s+(.+)$/);
+    if (numbered) {
+      if (!currentSubject) {
+        parsingProblems.push({ type: "numbered-before-subject", text: line, sourceLine });
+        return;
+      }
+      appendTopic(numbered[2], sourceLine, numbered[1]);
+      return;
+    }
+    if (!currentSubject) {
+      parsingProblems.push({ type: "loose-content", text: line, sourceLine });
+      return;
+    }
+    if (/^assunto\s*\d*\s*$/i.test(line)) {
+      currentTopic = { row: null, title: line, description: "", sourceLine };
+      return;
+    }
+    if (/^assunto\s*:/i.test(line) && currentTopic?.title && !currentTopic.row) {
+      appendTopic(`${currentTopic.title}: ${line.replace(/^assunto\s*:\s*/i, "")}`, sourceLine);
+      return;
+    }
+    if (line.includes(":")) {
+      appendTopic(line, sourceLine);
+      return;
+    }
+    appendContinuation(line, sourceLine);
+  });
+
+  const uniqueSubjects = [...new Set(subjects)];
+  const subjectsWithoutTopics = uniqueSubjects.filter((subject) => !subjectsWithTopics.has(subject));
+  subjectsWithoutTopics.forEach((materia) => {
+    parsingProblems.push({ type: "explicit-subject-without-topics", materia });
+  });
+  const unusuallyLargeSubjects = uniqueSubjects
+    .map((materia) => ({ materia, temas: rows.filter((row) => row.materia === materia).length }))
+    .filter((item) => item.temas > 30);
+  lastProgramParseMeta = {
+    subjects: uniqueSubjects,
+    subjectsWithoutTopics,
+    genericLabelsIgnored: [],
+    looseTopics: [],
+    suspiciousSubjects: [],
+    duplicatedThemes: [],
+    unusuallyLargeSubjects,
+    parsingProblems,
+    originalText: String(rawText || ""),
+    parsedStructure,
+    document: typeof lastDocumentExtractionMeta === "undefined" ? null : lastDocumentExtractionMeta,
+    mode: "explicit-subject-marker",
+    confidence: subjectsWithoutTopics.length || parsingProblems.some((problem) => problem.type === "numbered-before-subject") ? 0.75 : 1,
+    structureSource: "explicit-subject-marker",
+    interpretation: `${uniqueSubjects.length} matéria${uniqueSubjects.length === 1 ? "" : "s"} e ${rows.length} tema${rows.length === 1 ? "" : "s"} foram lidos pela estrutura informada no conteúdo.`,
+  };
+  return rows;
+}
+
 function parseOutlineNumber(value) {
   const clean = tidyProgramLine(value);
   const match = clean.match(/^\s*(\d+(?:\.\d+)*)\.?(?:\s+(.+))?$/);
@@ -1324,6 +1470,7 @@ function isEditorialProgramNote(line) {
 }
 
 function parseProgramContent(rawText) {
+  if (hasExplicitSubjectMarkers(rawText)) return parseExplicitSubjectMarkerContent(formatImportedProgramText(rawText));
   const structure = documentStructureAnalysis(rawText);
   if (structure?.mode === "structured" && structure.rows?.length) {
     const rows = structure.rows.map((row) => enrichThemeRow(row));
@@ -13948,7 +14095,7 @@ els.processButton.addEventListener("click", async () => {
   els.programText.value = text;
   addHistory("colagem manual", originalText);
   const parsedRows = parseProgramContent(originalText);
-  const pedagogicallyGroupedRows = lastProgramParseMeta.structureSource !== "user-structured" && window.PedagogicalContentGrouping?.groupRows
+  const pedagogicallyGroupedRows = !["user-structured", "explicit-subject-marker"].includes(lastProgramParseMeta.structureSource) && window.PedagogicalContentGrouping?.groupRows
     ? window.PedagogicalContentGrouping.groupRows(parsedRows)
     : parsedRows;
   const warnings = programParserWarnings(pedagogicallyGroupedRows);

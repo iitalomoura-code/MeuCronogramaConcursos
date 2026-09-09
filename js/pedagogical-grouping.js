@@ -139,7 +139,7 @@
     TAXONOMY.forEach((taxonomy) => {
       taxonomy.macrothemes.forEach((macrotheme) => {
         const candidates = rows.map((row, index) => ({ row, index }))
-          .filter(({ row, index }) => !consumed.has(index) && row?.structureSource !== "user-structured" && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title);
+          .filter(({ row, index }) => !consumed.has(index) && !["user-structured", "explicit-subject-marker"].includes(row?.structureSource) && subjectTaxonomy(row.materia)?.id === taxonomy.id && matchingMacrotheme(row, taxonomy)?.title === macrotheme.title);
         const bySubarea = new Map();
         candidates.forEach((candidate) => {
           const key = normalize(candidate.row?.subarea || "");
