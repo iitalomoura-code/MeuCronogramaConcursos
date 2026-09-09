@@ -1150,6 +1150,17 @@ function hasExplicitSubjectMarkers(rawText) {
   return String(rawText || "").replace(/\r\n?/g, "\n").split("\n").some((line) => Boolean(explicitSubjectMarker(line)));
 }
 
+function explicitSubjectsMissingFromRows(rows = state.rows, rawText = els.programText?.value || "") {
+  if (!hasExplicitSubjectMarkers(rawText)) return [];
+  const markedSubjects = String(rawText || "").replace(/\r\n?/g, "\n").split("\n")
+    .map(explicitSubjectMarker)
+    .filter(Boolean)
+    .map((marker) => marker.subject);
+  const presentSubjects = new Set((rows || []).map((row) => normalizeForMatch(row?.materia)).filter(Boolean));
+  return [...new Map(markedSubjects.map((subject) => [normalizeForMatch(subject), subject])).values()]
+    .filter((subject) => !presentSubjects.has(normalizeForMatch(subject)));
+}
+
 function explicitTopicParts(value) {
   const text = tidyProgramLine(value);
   const separator = text.indexOf(":");
@@ -2249,7 +2260,8 @@ function renderContentSummary() {
   const selected = state.rows.filter((row) => row.assunto && row.estudar !== "Nao").length;
   const problems = contentProblemAnalysis();
   const validationIssues = contentValidationIssues();
-  const pointCount = validationIssues.length || problems.length;
+  const missingExplicitSubjects = explicitSubjectsMissingFromRows();
+  const pointCount = (validationIssues.length || problems.length) + (missingExplicitSubjects.length ? 1 : 0);
   const errors = validationIssues.filter((issue) => issue.severity === "error").length;
   els.contentSummary.innerHTML = state.rows.length ? summaryItems([
     ["Mat\u00e9rias", subjectGroups().length],
@@ -2263,7 +2275,9 @@ function renderContentSummary() {
   if (els.contentProblemCount) els.contentProblemCount.textContent = pointCount;
   if (els.contentProblemSummary) {
     els.contentProblemSummary.hidden = !pointCount;
-    els.contentProblemSummary.innerHTML = pointCount
+    els.contentProblemSummary.innerHTML = missingExplicitSubjects.length
+      ? "<i data-lucide=\"triangle-alert\"></i><strong>" + missingExplicitSubjects.length + " matéria" + (missingExplicitSubjects.length === 1 ? "" : "s") + " do texto ainda não " + (missingExplicitSubjects.length === 1 ? "foi aplicada" : "foram aplicadas") + ": " + escapeHtml(missingExplicitSubjects.join(", ")) + ".</strong><button class=\"text-action\" type=\"button\" data-reprocess-explicit-content>Atualizar leitura</button>"
+      : pointCount
       ? "<i data-lucide=\"triangle-alert\"></i><strong>" + pointCount + " ponto" + (pointCount === 1 ? "" : "s") + (errors ? " precisa" + (errors === 1 ? "" : "m") + " de corre\u00e7\u00e3o" : " para revisar") + "</strong><button class=\"text-action\" type=\"button\" data-show-content-problems>Revisar estrutura</button>"
       : "";
   }
@@ -14246,6 +14260,10 @@ document.querySelectorAll("[data-content-filter]").forEach((button) => {
 });
 
 els.contentProblemSummary?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-reprocess-explicit-content]")) {
+    els.processButton?.click();
+    return;
+  }
   if (!event.target.closest("[data-show-content-problems]")) return;
   contentFilter = "problems";
   document.querySelectorAll("[data-content-filter]").forEach((item) => item.classList.toggle("is-active", item.dataset.contentFilter === "problems"));

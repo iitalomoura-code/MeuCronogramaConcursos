@@ -19,7 +19,7 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260908-priority-visual"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260909-explicit-subject-markers"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260909-explicit-subject-recovery"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260908-priority-visual"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260909-explicit-subject-markers"), "O validador deve carregar depois do modelo canônico e antes do app.");
@@ -34,6 +34,7 @@ assert.ok(index.includes('class="ql-align" value="justify"'), "O Caderno de Resu
 assert.ok(app.includes("NOTEBOOK_QUILL_ALIGNMENTS"), "Os alinhamentos do Quill devem ser normalizados antes do salvamento.");
 assert.ok(index.includes("pedagogical-grouping.js?v=20260909-explicit-subject-markers"), "A taxonomia pedagógica deve usar o modelo canônico atualizado.");
 assert.ok(app.includes("function parseExplicitSubjectMarkerContent"), "Marcadores MATÉRIA: devem ter uma leitura explícita própria.");
+assert.ok(app.includes("function explicitSubjectsMissingFromRows"), "A prévia deve avisar quando uma matéria marcada não foi aplicada ao conteúdo salvo.");
 assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");
