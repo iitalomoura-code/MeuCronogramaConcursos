@@ -10,8 +10,6 @@
   ]);
   const TOPIC_ALIASES = Object.freeze([
     ["receita publica", "receitas publicas"],
-    ["atos administrativos", "atos e principios administrativos"],
-    ["planejamento estrategico", "planejamento estrategico tatico e operacional"],
   ]);
 
   function clamp(value, minimum = 0, maximum = 1) {
@@ -56,14 +54,15 @@
     const a = normalize(target);
     const b = normalize(source);
     if (!a || !b || GENERIC_TOPICS.has(a) || GENERIC_TOPICS.has(b)) return { score: 0, confidence: "low", kind: "none" };
-    if (a === b) return { score: 1, confidence: "high", kind: "exact" };
-    if (sameAlias(a, b, TOPIC_ALIASES)) return { score: .96, confidence: "high", kind: "alias" };
+    if (a === b) return { score: 1, confidence: "high", kind: "exact", direction: "equivalent" };
+    if (sameAlias(a, b, TOPIC_ALIASES)) return { score: .96, confidence: "high", kind: "alias", direction: "equivalent" };
     const shortest = Math.min(a.length, b.length);
-    if (shortest >= 8 && (a.includes(b) || b.includes(a))) return { score: .86, confidence: "high", kind: "contained" };
+    if (shortest >= 4 && a.includes(b)) return { score: .78, confidence: "medium", kind: "contained", direction: "broad-to-specific" };
+    if (shortest >= 4 && b.includes(a)) return { score: .84, confidence: "medium", kind: "contained", direction: "specific-to-broad" };
     const score = overlap(a, b);
     return score >= .72
-      ? { score, confidence: score >= .86 ? "high" : "medium", kind: "partial" }
-      : { score: 0, confidence: "low", kind: "none" };
+      ? { score, confidence: score >= .86 ? "high" : "medium", kind: "partial", direction: "partial" }
+      : { score: 0, confidence: "low", kind: "none", direction: "none" };
   }
 
   function dateValue(entry = {}) {
@@ -80,26 +79,33 @@
     return 0;
   }
 
-  function completed(block = {}) {
-    const status = normalize(block.status || "concluido");
-    return !status || status.includes("concluido") || Boolean(block.completedAt || block.concluidoEm);
+  function hasExecutionEvidence(block = {}, explicitCompletionHistory = false) {
+    const status = normalize(block.status || "");
+    return explicitCompletionHistory
+      || status.includes("concluido")
+      || Boolean(block.completedAt || block.concluidoEm)
+      || Number(block.questoes) > 0
+      || Number(block.tempoEstudado) > 0;
   }
 
   function snapshotBlocks(source = {}) {
     const snapshot = source.snapshot || source.data || {};
     const blocks = [
-      ...(snapshot.completedHistory || []),
-      ...(snapshot.cycleHistory || []).flatMap((cycle) => [...(cycle.completedHistory || []), ...(cycle.generatedBlocks || [])]),
-      ...(snapshot.cycleResults || []).flatMap((cycle) => cycle.completed || []),
-      ...(snapshot.interventionHistory || []),
-    ].filter((block) => block?.materia && block?.assunto && completed(block));
+      ...(snapshot.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
+      ...(snapshot.cycleHistory || []).flatMap((cycle) => [
+        ...(cycle.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
+        ...(cycle.generatedBlocks || []).map((block) => ({ block, explicitCompletionHistory: false })),
+      ]),
+      ...(snapshot.cycleResults || []).flatMap((cycle) => (cycle.completed || []).map((block) => ({ block, explicitCompletionHistory: true }))),
+      ...(snapshot.interventionHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
+    ].filter(({ block, explicitCompletionHistory }) => block?.materia && block?.assunto && hasExecutionEvidence(block, explicitCompletionHistory));
     const seen = new Set();
-    return blocks.filter((block) => {
+    return blocks.filter(({ block }) => {
       const signature = [normalize(block.materia), normalize(block.assunto), dateValue(block), Number(block.questoes) || 0, Number(block.acertos) || 0, Number(block.tempoEstudado) || 0].join("|");
       if (seen.has(signature)) return false;
       seen.add(signature);
       return true;
-    }).map((block) => ({ ...block, sourceId: source.id || "", sourceName: source.name || snapshot.form?.contestName || "Planejamento anterior" }));
+    }).map(({ block }) => ({ ...block, sourceId: source.id || "", sourceName: source.name || snapshot.form?.contestName || "Planejamento anterior" }));
   }
 
   function sourceDifficulty(source = {}, materia = "") {
@@ -164,6 +170,7 @@
         matchScore: group.score,
         matchConfidence: group.topic.confidence === "high" && group.subject.confidence !== "low" ? "high" : group.topic.confidence,
         matchKind: group.topic.kind,
+        matchDirection: group.topic.direction || "partial",
         matchedSubject: group.entry.materia,
         matchedTopic: group.entry.assunto,
         questions,
@@ -183,7 +190,7 @@
   function inheritanceLevel(summary = []) {
     if (!summary.length) return "none";
     const best = summary[0];
-    if (best.questions >= 40 && (best.accuracy === null || best.accuracy >= .72) && best.confidence >= .52 && best.matchConfidence !== "low") return "strong";
+    if (best.matchDirection === "equivalent" && best.questions >= 40 && (best.accuracy === null || best.accuracy >= .72) && best.confidence >= .52 && best.matchConfidence !== "low") return "strong";
     if (best.questions >= 10 || best.sessions >= 2 || best.hours >= 1) return "partial";
     return "contact";
   }

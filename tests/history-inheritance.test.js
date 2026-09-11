@@ -41,10 +41,27 @@ assert.equal(weak.level, "partial");
 const none = derive({ materia: "Direito Administrativo", assunto: "Poder de polícia" }, [source()]);
 assert.equal(none.level, "none");
 
+// Blocos apenas planejados não são evidência de estudo; execução legada inequívoca continua válida.
+const generatedOnly = { id: "planejado", name: "Planejado", snapshot: { cycleHistory: [{ generatedBlocks: [{ materia: "Direito Administrativo", assunto: "Atos Administrativos" }] }] } };
+assert.equal(inheritance.snapshotBlocks(generatedOnly).length, 0, "Bloco gerado sem status, tempo, questões ou data não pode virar herança.");
+const executedLegacy = { id: "legado", name: "Legado", snapshot: { cycleHistory: [{ generatedBlocks: [{ materia: "Direito Administrativo", assunto: "Atos Administrativos", questoes: 8, acertos: 6 }] }] } };
+assert.equal(inheritance.snapshotBlocks(executedLegacy).length, 1, "Questões registradas devem preservar uma execução legada inequívoca.");
+
 // D: equivalência semântica controlada.
 const equivalent = derive({ materia: "Administração Geral e Pública", assunto: "Planejamento Estratégico" }, [source({ materia: "Administração Pública", assunto: "Planejamento estratégico, tático e operacional" })]);
 assert.ok(["high", "medium"].includes(equivalent.matchConfidence));
 assert.notEqual(equivalent.level, "none");
+
+// Inclusão textual é direcional: um tópico amplo não confirma domínio do específico.
+const broadToSpecific = derive({ materia: "Direito Tributário", assunto: "IRPJ - Lucro Real" }, [source({ materia: "Direito Tributário", assunto: "IRPJ", questions: 80, correct: 70, sessions: 4 })]);
+assert.equal(broadToSpecific.level, "partial", "IRPJ amplo não pode confirmar base forte em Lucro Real.");
+assert.equal(broadToSpecific.sources[0].matchDirection, "broad-to-specific");
+const specificToBroad = derive({ materia: "Direito Tributário", assunto: "IRPJ" }, [source({ materia: "Direito Tributário", assunto: "IRPJ - Lucro Real", questions: 80, correct: 70, sessions: 4 })]);
+assert.equal(specificToBroad.level, "partial", "Lucro Real pode contribuir apenas parcialmente para IRPJ amplo.");
+assert.equal(specificToBroad.sources[0].matchDirection, "specific-to-broad");
+
+const compositeTopic = derive({ materia: "Administração Pública", assunto: "Planejamento estratégico, tático e operacional" }, [source({ materia: "Administração Pública", assunto: "Planejamento Estratégico", questions: 80, correct: 70, sessions: 4 })]);
+assert.equal(compositeTopic.level, "partial", "Tema composto não deve assumir cobertura completa a partir de um subtópico.");
 
 // E: assuntos apenas relacionados não podem ser fundidos.
 const unrelated = derive({ materia: "Administração Pública", assunto: "Governança Pública" }, [source({ materia: "Administração Pública", assunto: "Administração Pública" })]);

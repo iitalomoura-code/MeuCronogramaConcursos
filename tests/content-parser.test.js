@@ -7,6 +7,7 @@ const vm = require("vm");
 const documentStructureParser = require(path.resolve(__dirname, "..", "js", "document-structure-parser.js"));
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
+const index = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
 const start = source.indexOf("function uppercaseRatio");
 const end = source.indexOf("function prefersReducedMotion");
 if (start < 0 || end < 0) throw new Error("Parser de conteudo nao encontrado em app.js.");
@@ -244,6 +245,21 @@ assert.equal(explicitMarkerContent.length, 5, "Cada item numerado deve ser um te
 assert.equal(explicitMarkerContent[0].assunto.split(":")[0], "Interpretação e organização do texto", "O primeiro dois-pontos deve separar o título do tema.");
 assert.ok(explicitMarkerContent[0].assunto.includes("compreensão textual; tipologia; coesão e coerência"), "Ponto e vírgula deve permanecer dentro da descrição do mesmo tema.");
 assert.equal(parser.getLastProgramParseMeta().mode, "explicit-subject-marker", "Marcadores explícitos devem ter prioridade sobre o parser automático.");
+
+const guidedExplicitFormat = parser.parseProgramContent(`
+MATÉRIA: PORTUGUÊS
+1. Interpretação: compreensão; organização do sentido.
+2. Semântica: vocabulário; efeitos de sentido.
+`);
+assert.deepEqual(guidedExplicitFormat.map((row) => row.materia), ["PORTUGUÊS", "PORTUGUÊS"], "O formato orientado com MATÉRIA: deve identificar a disciplina e seus temas.");
+
+const legacySubjectFormat = parser.parseProgramContent(`
+LÍNGUA PORTUGUESA
+1. Interpretação de textos
+2. Semântica
+`);
+assert.deepEqual([...new Set(legacySubjectFormat.map((row) => row.materia))], ["LÍNGUA PORTUGUESA"], "O formato legado sem MATÉRIA: deve continuar funcionando como fallback.");
+assert.ok(index.includes("Dica: use &ldquo;MAT&Eacute;RIA:&rdquo;") && index.includes("MAT&Eacute;RIA: DIREITO ADMINISTRATIVO"), "A importação deve orientar o formato explícito mais confiável.");
 
 const explicitHierarchy = parser.parseProgramContent(`
 MATÉRIA: ADMINISTRAÇÃO PÚBLICA
