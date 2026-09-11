@@ -43,6 +43,12 @@ const duplicate = history.appendSnapshot(firstAppend.snapshots, snapshot([topic(
 assert.equal(duplicate.added, false, "Um snapshot com fingerprint idêntico não pode duplicar o histórico.");
 assert.ok(duplicate.message.includes("Não houve mudança"), "A repetição deve explicar que não houve mudança estratégica.");
 
+assert.equal(history.appendSnapshot(firstAppend.snapshots, snapshot([topic({ questions: 60 })], undefined, "more-questions")).added, false, "Mais questões, sem alteração estratégica, não podem criar marco.");
+assert.equal(history.appendSnapshot(firstAppend.snapshots, snapshot([topic({ recentAccuracy: .75 })], undefined, "accuracy-noise")).added, false, "Pequena oscilação de acerto não pode criar marco.");
+assert.equal(history.appendSnapshot(firstAppend.snapshots, snapshot([topic({ confidence: .76 })], undefined, "confidence-noise")).added, false, "Pequena oscilação de confiança não pode criar marco.");
+assert.equal(history.appendSnapshot(firstAppend.snapshots, snapshot([topic({ strategicScore: .74 })], undefined, "score-noise")).added, false, "Delta de score abaixo do limiar não pode criar marco.");
+assert.equal(history.appendSnapshot(firstAppend.snapshots, snapshot([topic({ strategicScore: .85 })], undefined, "score-change")).added, true, "Delta de score relevante deve criar marco mesmo sem outra transição.");
+
 let comparison = history.compare(first, snapshot([topic({ category: "watch", diagnosisLevel: "attention", strategicScore: .55 })], undefined, "attention"));
 assert.equal(comparison.improvements.length, 1, "Deficiência para atenção deve ser reconhecida como melhora.");
 
@@ -55,6 +61,13 @@ assert.equal(comparison.declines.length, 1, "Forte para atenção com evidência
 comparison = history.compare(snapshot([topic({ category: "maintain", diagnosisLevel: "adequate", strategicScore: .35 })], undefined, "maintain-before"), snapshot([topic({ category: "recovery", learningState: "recovery", diagnosisLevel: "attention", strategicScore: .72, trend: "falling" })], undefined, "recovery"));
 assert.equal(comparison.newPriorities.length, 1, "Manutenção para recuperação deve criar novo ponto prioritário.");
 
+comparison = history.compare(snapshot([topic({ category: "building", learningState: "building", diagnosisLevel: "insufficient" })], undefined, "building-before"), snapshot([topic({ category: "maintain", learningState: "consolidating", diagnosisLevel: "attention" })], undefined, "consolidating"));
+assert.equal(comparison.learningStateChanges[0].direction, "improvement", "Construção para consolidação deve ser uma progressão de estado.");
+comparison = history.compare(snapshot([topic({ category: "maintain", learningState: "consolidating", diagnosisLevel: "attention" })], undefined, "consolidating-before"), snapshot([topic({ category: "maintain", learningState: "practice", diagnosisLevel: "adequate" })], undefined, "practice"));
+assert.equal(comparison.learningStateChanges[0].current.learningState, "practice", "Consolidação para questões deve ser registrada estruturadamente.");
+comparison = history.compare(snapshot([topic({ category: "maintain", learningState: "practice", diagnosisLevel: "adequate" })], undefined, "practice-before"), snapshot([topic({ category: "reduce", learningState: "maintenance", diagnosisLevel: "strong" })], undefined, "maintenance"));
+assert.equal(comparison.learningStateChanges[0].direction, "improvement", "Questões para manutenção deve ser uma evolução positiva.");
+
 comparison = history.compare(first, snapshot([topic({ category: "maintain", diagnosisLevel: "adequate", strategicScore: .3 })], undefined, "resolved"));
 assert.equal(comparison.resolvedPriorities.length, 1, "Prioridade que vira manutenção deve ser registrada como resolvida.");
 
@@ -63,6 +76,8 @@ assert.equal(comparison.priorityChanges.length, 0, "Variação de score abaixo d
 
 comparison = history.compare(snapshot([topic({ strategicScore: .45 })], undefined, "score-large-before"), snapshot([topic({ strategicScore: .7 })], undefined, "score-large-after"));
 assert.equal(comparison.priorityChanges.length, 1, "Variação relevante de score deve aparecer na comparação.");
+assert.equal(comparison.independentPriorityChanges.length, 1, "Mudança de prioridade independente deve chegar à síntese exibível.");
+assert.ok(comparison.notableChanges.some((item) => item.type === "priority-change"), "Mudança de prioridade independente deve aparecer entre as mudanças notáveis.");
 
 comparison = history.compare(snapshot([topic({ recentAccuracy: .74 })], undefined, "accuracy-before"), snapshot([topic({ recentAccuracy: .72 })], undefined, "accuracy-after"));
 assert.equal(comparison.declines.length, 0, "Oscilação pequena de acerto isolada não pode virar piora automática.");
@@ -82,14 +97,19 @@ comparison = history.compare(
 assert.equal(comparison.grouped.improvements.length, 1, "Mudanças múltiplas da mesma matéria devem poder ser sintetizadas em uma única leitura.");
 assert.equal(comparison.grouped.improvements[0].title, "Contabilidade", "A síntese deve agrupar mudanças pelo nome da matéria.");
 
-const beforeStudyData = JSON.stringify({ questions: 40, sessions: 3, hours: 12, confidence: .75, level: "deficiency", priority: .7 });
+const restored = history.rehydrateSnapshots([JSON.parse(JSON.stringify(first))]);
+assert.ok(Object.isFrozen(restored[0]) && Object.isFrozen(restored[0].topics), "Snapshots restaurados devem ser novamente imutáveis.");
+
+const studyState = { questions: 40, sessions: 3, hours: 12, confidence: .75, level: "deficiency", priority: .7, recency: 5, intervention: { count: 1 }, strategicAdvisorSnapshots: [] };
+const beforeStudyData = JSON.stringify(studyState);
 let snapshots = [];
 for (let index = 0; index < 22; index += 1) {
-  const result = history.appendSnapshot(snapshots, snapshot([topic({ strategicScore: .2 + index * .01 })], undefined, `limit-${index}`));
+  const result = history.appendSnapshot(snapshots, snapshot([topic({ strategicScore: .2, trend: index % 2 ? "improving" : "stable" })], undefined, `limit-${index}`));
   snapshots = result.snapshots;
 }
 assert.equal(snapshots.length, history.MAX_SNAPSHOTS, "O histórico estratégico deve respeitar o limite de snapshots.");
-assert.equal(JSON.stringify({ questions: 40, sessions: 3, hours: 12, confidence: .75, level: "deficiency", priority: .7 }), beforeStudyData, "Registrar snapshots não pode alterar dados de estudo.");
+studyState.strategicAdvisorSnapshots = snapshots;
+assert.equal(JSON.stringify({ ...studyState, strategicAdvisorSnapshots: [] }), beforeStudyData, "Registrar snapshots não pode alterar dados de estudo além do histórico estratégico.");
 
 const deterministicA = history.compare(first, snapshot([topic({ category: "watch", diagnosisLevel: "attention" })], undefined, "deterministic"));
 const deterministicB = history.compare(first, snapshot([topic({ category: "watch", diagnosisLevel: "attention" })], undefined, "deterministic"));

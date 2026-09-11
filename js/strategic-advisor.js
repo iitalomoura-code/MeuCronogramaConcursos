@@ -96,6 +96,8 @@
     const sentences = [];
     if (coverage.level === "partial") {
       sentences.push("A visão global ainda é parcial porque muitos conteúdos não possuem evidência suficiente.");
+    } else if (coverage.level === "low") {
+      sentences.push("A visão global ainda é limitada porque poucos conteúdos possuem evidência própria.");
     }
     if (groups.priorities.length) sentences.push(`${groups.priorities[0].title} concentra a maior oportunidade de ganho neste momento.`);
     if (groups.reduceLoad.length) sentences.push(`${groups.reduceLoad.map((item) => item.materia).join(" e ")} ${groups.reduceLoad.length === 1 ? "pode" : "podem"} receber menos carga e seguir em manutenção.`);

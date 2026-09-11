@@ -43,6 +43,7 @@ assert.notEqual(advisor.categoryFor(input[3]), "prioritize", "Poucos dados não 
 assert.ok(index.includes("js/strategic-advisor.js") && index.indexOf("js/strategic-advisor.js") < index.indexOf("app.js?v="), "O módulo do Orientador deve carregar antes da aplicação.");
 assert.ok(index.includes("strategicAdvisorModal") && app.includes("strategicAdvisorCompactMarkup") && app.includes("data-open-strategic-advisor"), "O card compacto e a análise completa devem estar integrados sem nova aba.");
 assert.ok(index.includes("js/strategic-advisor-history.js") && app.includes("strategicAdvisorSnapshots") && app.includes("data-register-strategic-advisor"), "Marcos estratégicos devem usar a persistência do planejamento e uma ação explícita.");
+assert.ok(app.includes("modalPriorities") && app.includes("independentPriorityChanges"), "O modal deve deduplicar matérias mistas e exibir mudanças independentes de prioridade.");
 
 const mixedSubject = advisor.build({ topics: [
   topic("AFO", "Receita Pública", { level: "deficiency", accuracy: .55 }, { score: .8 }),
@@ -50,6 +51,7 @@ const mixedSubject = advisor.build({ topics: [
 ] });
 assert.equal(mixedSubject.reduceLoad.length, 0, "Uma matéria com gargalo não pode receber redução global de carga.");
 assert.ok(mixedSubject.priorities[0].title.includes("AFO: Receita Pública"), "A orientação deve permanecer localizada no assunto problemático.");
+assert.ok(mixedSubject.mixedSubjects.length, "A matéria mista deve manter sua síntese sem remover a prioridade do modelo.");
 
 const stable = advisor.build({ topics: [
   topic("RLM", "Lógica", { level: "adequate", accuracy: .86 }, { score: .3 }),
@@ -92,6 +94,14 @@ const trulyEarly = advisor.build({ topics: [
 ] });
 assert.equal(trulyEarly.globalAssessment, "low-evidence", "Pouca evidência sem recomendação local deve manter o fallback cauteloso.");
 assert.ok(trulyEarly.summary[0].includes("poucos dados"), "O fallback de poucos dados deve ser preservado quando ele for realmente necessário.");
+
+const lowCoverageWithLocalEvidence = advisor.build({ topics: [
+  topic("Contabilidade", "Lançamentos", { level: "deficiency", accuracy: .5, questions: 100 }, { score: .88 }),
+  ...Array.from({ length: 199 }, (_, index) => topic(`Sem contato ${index}`, "Tema", { level: "insufficient", hasContact: false, confidence: 0 }, { score: .2 }, { historyInheritance: { level: "none" } })),
+] });
+assert.equal(lowCoverageWithLocalEvidence.coverage.level, "low", "Pouca cobertura em edital grande deve continuar classificada como baixa.");
+assert.ok(lowCoverageWithLocalEvidence.priorities.some((item) => item.materia === "Contabilidade"), "Evidência local forte deve manter a prioridade sob cobertura baixa.");
+assert.ok(lowCoverageWithLocalEvidence.summary[0].includes("visão global ainda é limitada"), "Cobertura baixa com evidência local deve ser contextualizada, não descartada.");
 
 const broadCoverage = advisor.build({
   topics: Array.from({ length: 10 }, (_, index) => topic(

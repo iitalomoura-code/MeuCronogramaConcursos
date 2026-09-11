@@ -6,6 +6,7 @@
   const SCORE_DELTA = .08;
   const coverageRank = { low: 0, partial: 1, broad: 2 };
   const diagnosisRank = { insufficient: 0, critical: 1, deficiency: 2, attention: 3, adequate: 4, strong: 5 };
+  const learningStateRank = { "not-started": 0, building: 1, consolidating: 2, practice: 3, maintenance: 4, recovery: -1 };
 
   function clamp(value) {
     return Math.max(0, Math.min(1, Number(value) || 0));
@@ -87,13 +88,17 @@
       version: VERSION,
       coverage: {
         level: snapshot.coverage?.level || "low",
-        ratio: round(snapshot.coverage?.ratio),
-        evidencedTopics: Number(snapshot.coverage?.evidencedTopics) || 0,
-        totalTopics: Number(snapshot.coverage?.totalTopics) || 0,
       },
       topics: (snapshot.topics || []).map(normalizeTopic).sort((a, b) => topicKey(a).localeCompare(topicKey(b))).map((topic) => ({
-        ...topic,
-        reasons: topic.reasons.slice(0, 3),
+        materia: topic.materia,
+        assunto: topic.assunto,
+        subarea: topic.subarea,
+        category: topic.category,
+        learningState: topic.learningState,
+        diagnosisLevel: topic.diagnosisLevel,
+        trend: topic.trend,
+        errorRecurrence: topic.errorRecurrence,
+        evidenceStage: topic.evidenceStage,
       })),
     };
     return JSON.stringify(compact);
@@ -132,6 +137,34 @@
     return deepFreeze(snapshot);
   }
 
+  function rehydrateSnapshot(snapshot = {}) {
+    const topics = (snapshot.topics || []).map(normalizeTopic).sort((a, b) => topicKey(a).localeCompare(topicKey(b)));
+    const restored = {
+      ...snapshot,
+      version: Number(snapshot.version) || VERSION,
+      coverage: {
+        level: snapshot.coverage?.level || "low",
+        ratio: round(snapshot.coverage?.ratio),
+        evidencedTopics: Number(snapshot.coverage?.evidencedTopics) || 0,
+        totalTopics: Number(snapshot.coverage?.totalTopics) || topics.length,
+      },
+      subjects: Array.isArray(snapshot.subjects) ? snapshot.subjects.map((subject) => ({ ...subject })) : subjectsFor(topics),
+      topics,
+      summary: Array.isArray(snapshot.summary) ? [...snapshot.summary] : [],
+      priorities: Array.isArray(snapshot.priorities) ? [...snapshot.priorities] : [],
+      reduceLoad: Array.isArray(snapshot.reduceLoad) ? [...snapshot.reduceLoad] : [],
+      watch: Array.isArray(snapshot.watch) ? [...snapshot.watch] : [],
+      building: Array.isArray(snapshot.building) ? [...snapshot.building] : [],
+      insufficientEvidence: Array.isArray(snapshot.insufficientEvidence) ? [...snapshot.insufficientEvidence] : [],
+      fingerprint: snapshot.fingerprint || fingerprintFor({ ...snapshot, topics }),
+    };
+    return deepFreeze(restored);
+  }
+
+  function rehydrateSnapshots(history = []) {
+    return (Array.isArray(history) ? history : []).slice(-MAX_SNAPSHOTS).map(rehydrateSnapshot);
+  }
+
   function provenance(type, previous, current, explanation, cautious = false) {
     return {
       materia: current.materia,
@@ -160,6 +193,35 @@
     return `${title} passou de ${levelLabel(previous.diagnosisLevel)} para ${levelLabel(current.diagnosisLevel)}.`;
   }
 
+  function learningStateDirection(previous = "", current = "") {
+    if (!previous || !current || previous === current) return "";
+    if (current === "recovery") return "decline";
+    if (previous === "recovery" && current !== "recovery") return "improvement";
+    const previousRank = learningStateRank[previous];
+    const currentRank = learningStateRank[current];
+    if (!Number.isFinite(previousRank) || !Number.isFinite(currentRank)) return "";
+    return currentRank > previousRank ? "improvement" : currentRank < previousRank ? "decline" : "";
+  }
+
+  function learningStateLabel(state) {
+    return ({ "not-started": "não iniciado", building: "construção", consolidating: "consolidação", practice: "questões", maintenance: "manutenção", recovery: "recuperação" })[state] || state;
+  }
+
+  function hasMeaningfulStrategicChange(previousSnapshot, currentSnapshot) {
+    if (!previousSnapshot || !currentSnapshot) return true;
+    if ((previousSnapshot.coverage?.level || "low") !== (currentSnapshot.coverage?.level || "low")) return true;
+    const previous = (previousSnapshot.topics || []).map(normalizeTopic);
+    const current = (currentSnapshot.topics || []).map(normalizeTopic);
+    if (previous.length !== current.length) return true;
+    const previousByKey = new Map(previous.map((topic) => [topicKey(topic), topic]));
+    return current.some((topic) => {
+      const before = previousByKey.get(topicKey(topic));
+      if (!before) return true;
+      return ["category", "learningState", "diagnosisLevel", "trend", "errorRecurrence", "evidenceStage"].some((field) => before[field] !== topic[field])
+        || Math.abs(topic.strategicScore - before.strategicScore) >= SCORE_DELTA;
+    });
+  }
+
   function groupChangesBySubject(items = []) {
     const groups = new Map();
     items.forEach((item) => {
@@ -186,7 +248,7 @@
 
   function compare(previousSnapshot, currentSnapshot) {
     if (!previousSnapshot || !currentSnapshot) {
-      return { improvements: [], declines: [], stabilized: [], newPriorities: [], resolvedPriorities: [], stateChanges: [], priorityChanges: [], coverageChanges: [], grouped: { improvements: [], declines: [], stabilized: [] }, notableChanges: [], summary: "Este é o primeiro marco estratégico registrado. A partir das próximas análises, o sistema mostrará o que mudou.", initial: true };
+      return { improvements: [], declines: [], stabilized: [], newPriorities: [], resolvedPriorities: [], stateChanges: [], learningStateChanges: [], priorityChanges: [], coverageChanges: [], grouped: { improvements: [], declines: [], stabilized: [] }, notableChanges: [], summary: "Este é o primeiro marco estratégico registrado. A partir das próximas análises, o sistema mostrará o que mudou.", initial: true };
     }
     const previous = (previousSnapshot.topics || []).map(normalizeTopic);
     const current = (currentSnapshot.topics || []).map(normalizeTopic);
@@ -197,6 +259,7 @@
     const newPriorities = [];
     const resolvedPriorities = [];
     const stateChanges = [];
+    const learningStateChanges = [];
     const priorityChanges = [];
 
     current.forEach((topic) => {
@@ -204,13 +267,17 @@
       if (!before) return;
       const cautious = topic.confidence < .45 || topic.questions < 10;
       const levelDelta = (diagnosisRank[topic.diagnosisLevel] ?? 0) - (diagnosisRank[before.diagnosisLevel] ?? 0);
+      const stateDirection = learningStateDirection(before.learningState, topic.learningState);
       const becamePriority = !isPriority(before.category) && isPriority(topic.category);
       const resolvedPriority = isPriority(before.category) && !isPriority(topic.category);
-      const worsened = levelDelta < 0 || becamePriority || (before.trend !== "falling" && topic.trend === "falling") || (before.errorRecurrence !== "high" && topic.errorRecurrence === "high");
-      const improved = levelDelta > 0 || resolvedPriority || (before.trend === "falling" && ["stable", "improving"].includes(topic.trend)) || (before.errorRecurrence === "high" && topic.errorRecurrence !== "high");
+      const worsened = levelDelta < 0 || stateDirection === "decline" || becamePriority || (before.trend !== "falling" && topic.trend === "falling") || (before.errorRecurrence !== "high" && topic.errorRecurrence === "high");
+      const improved = levelDelta > 0 || stateDirection === "improvement" || resolvedPriority || (before.trend === "falling" && ["stable", "improving"].includes(topic.trend)) || (before.errorRecurrence === "high" && topic.errorRecurrence !== "high");
       if (improved || worsened) {
         const type = improved && !worsened ? "improvement" : "decline";
-        const item = provenance(type, before, topic, changeExplanation(before, topic, type), cautious);
+        const explanation = stateDirection
+          ? `${topic.assunto || topic.materia} ${stateDirection === "improvement" ? "avançou" : "passou"} de ${learningStateLabel(before.learningState)} para ${learningStateLabel(topic.learningState)}${levelDelta > 0 ? ` e deixou o nível de ${levelLabel(before.diagnosisLevel)}.` : "."}`
+          : changeExplanation(before, topic, type);
+        const item = provenance(type, before, topic, explanation, cautious);
         stateChanges.push(item);
         (type === "improvement" ? improvements : declines).push(item);
         if (becamePriority) newPriorities.push(item);
@@ -221,6 +288,16 @@
       if (Math.abs(topic.strategicScore - before.strategicScore) >= SCORE_DELTA) {
         const direction = topic.strategicScore > before.strategicScore ? "increased" : "reduced";
         priorityChanges.push(provenance("priority-change", before, topic, `${topic.assunto || topic.materia} ${direction === "increased" ? "ganhou" : "perdeu"} importância operacional na estratégia atual.`, cautious));
+      }
+      if (stateDirection) {
+        learningStateChanges.push({
+          materia: topic.materia,
+          assunto: topic.assunto,
+          subarea: topic.subarea,
+          direction: stateDirection,
+          previous: { learningState: before.learningState },
+          current: { learningState: topic.learningState },
+        });
       }
     });
 
@@ -235,7 +312,9 @@
         ? currentCoverage === "broad" ? "Agora já existe cobertura suficiente para conclusões mais amplas sobre a preparação." : "A visão da sua preparação ficou mais confiável porque mais conteúdos passaram a ter evidência própria."
         : "A cobertura disponível para conclusões globais ficou mais limitada neste marco.",
     }];
-    const notableChanges = [...declines, ...newPriorities, ...improvements, ...resolvedPriorities, ...coverageChanges, ...stabilized]
+    const changedTopicKeys = new Set(stateChanges.map((item) => `${item.materia || ""}:${item.assunto || ""}:${item.title}`));
+    const independentPriorityChanges = priorityChanges.filter((item) => !changedTopicKeys.has(`${item.materia || ""}:${item.assunto || ""}:${item.title}`));
+    const notableChanges = [...declines, ...newPriorities, ...improvements, ...resolvedPriorities, ...independentPriorityChanges, ...coverageChanges, ...stabilized]
       .filter((item, index, list) => list.findIndex((candidate) => `${candidate.materia || ""}:${candidate.assunto || ""}:${candidate.title}` === `${item.materia || ""}:${item.assunto || ""}:${item.title}`) === index)
       .slice(0, 5);
     const uniqueTopics = (items) => new Set(items.map((item) => `${item.materia || ""}:${item.assunto || ""}:${item.title}`)).size;
@@ -253,7 +332,9 @@
       newPriorities,
       resolvedPriorities,
       stateChanges,
+      learningStateChanges,
       priorityChanges,
+      independentPriorityChanges,
       coverageChanges,
       grouped: {
         improvements: groupChangesBySubject(improvements),
@@ -267,9 +348,9 @@
   }
 
   function appendSnapshot(history = [], snapshot) {
-    const snapshots = Array.isArray(history) ? [...history] : [];
+    const snapshots = rehydrateSnapshots(history);
     const previous = snapshots.at(-1) || null;
-    if (previous?.fingerprint === snapshot.fingerprint) {
+    if (previous && !hasMeaningfulStrategicChange(previous, snapshot)) {
       return { snapshots, added: false, comparison: compare(previous, snapshot), message: "Não houve mudança estratégica relevante desde o último marco." };
     }
     const comparison = compare(previous, snapshot);
@@ -281,7 +362,7 @@
     };
   }
 
-  const api = { VERSION, MAX_SNAPSHOTS, SCORE_DELTA, createSnapshot, appendSnapshot, compare, fingerprintFor };
+  const api = { VERSION, MAX_SNAPSHOTS, SCORE_DELTA, createSnapshot, appendSnapshot, compare, fingerprintFor, hasMeaningfulStrategicChange, rehydrateSnapshot, rehydrateSnapshots };
   global.StrategicAdvisorHistory = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
