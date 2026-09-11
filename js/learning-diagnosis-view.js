@@ -53,6 +53,32 @@
     return { label: labels[intervention.lastResult] || "Em acompanhamento", detail: intervention.lastResultMessage || "A resposta ao reforço foi registrada." };
   }
 
+  function subjectSummary(topics = []) {
+    const count = (levels) => topics.filter((topic) => levels.includes(topic.level)).length;
+    const parts = [];
+    const strong = count(["strong"]);
+    const adequate = count(["adequate"]);
+    const monitoring = count(["attention"]);
+    const deficiency = count(["deficiency", "critical"]);
+    const insufficient = count(["insufficient"]);
+    if (strong) parts.push(`${strong} consolidado${strong === 1 ? "" : "s"}`);
+    if (adequate) parts.push(`${adequate} adequado${adequate === 1 ? "" : "s"}`);
+    if (monitoring) parts.push(`${monitoring} em acompanhamento`);
+    if (deficiency) parts.push(`${deficiency} em deficiência`);
+    if (insufficient) parts.push(`${insufficient} sem dados suficientes`);
+    return parts.join(" · ") || "Ainda sem evidências suficientes.";
+  }
+
+  function technicalDetails(topic, escape, actionButton) {
+    const diagnosis = topic.diagnosis || {};
+    const errors = topic.errorSignals || {};
+    const trend = diagnosis.trend?.label === "falling" ? "Queda" : diagnosis.trend?.label === "improving" ? "Melhora" : "Estável";
+    const percentage = (value) => value === null || typeof value === "undefined" ? "Sem registro" : `${Math.round(value * 100)}%`;
+    const source = topic.historyInheritance?.origin === "previous-history" ? "Histórico de ciclos anteriores" : diagnosis.basis === "subject" ? "Registros deste assunto" : "Registros disponíveis";
+    const errorDetail = errors.recurrence === "high" ? `Recorrentes em ${errors.sessionsWithErrors || 0} sessões` : Number(errors.postInterventionErrors) >= 2 ? "Persistentes após reforço" : "Sem recorrência relevante";
+    return `<details class="learning-diagnosis-topic-details"><summary>Ver detalhes</summary><dl><div><dt>Desempenho recente</dt><dd>${escape(percentage(diagnosis.accuracy))}</dd></div><div><dt>Desempenho histórico</dt><dd>${escape(percentage(diagnosis.overallAccuracy))}</dd></div><div><dt>Questões</dt><dd>${escape(diagnosis.questions || 0)}</dd></div><div><dt>Sessões</dt><dd>${escape(diagnosis.sessions || 0)}</dd></div><div><dt>Tendência</dt><dd>${escape(trend)}</dd></div><div><dt>Confiança</dt><dd>${Math.round((Number(diagnosis.confidence) || 0) * 100)}%</dd></div><div><dt>Último contato</dt><dd>${topic.daysWithoutContact > 0 ? `${escape(topic.daysWithoutContact)} dias atrás` : "Hoje ou sem registro anterior"}</dd></div><div><dt>Erros</dt><dd>${escape(errorDetail)}</dd></div><div><dt>Origem</dt><dd>${escape(source)}</dd></div></dl><div class="learning-diagnosis-detail-action"><span>Próxima ação disponível</span><strong>${escape(topic.action.label)}</strong><small>${escape(topic.action.detail)}</small><button class="secondary-button compact-button" type="button" data-reinforce-topic="${escape(topic.materia)}" data-reinforce-subject="${escape(topic.assuntoOriginal || topic.assunto)}"><i data-lucide="zap"></i><span>${actionButton(topic)}</span></button></div></details>`;
+  }
+
   function build({ topics = [] } = {}) {
     const prepared = topics.map((topic) => {
       const diagnosis = topic.diagnosis || {};
@@ -108,25 +134,22 @@
     const attentionOnly = Boolean(options.attentionOnly);
     const status = options.status || "";
     const matchesStatus = (topic) => !status
+      || (status === "attention" && ["adequate", "attention", "deficiency", "critical"].includes(topic.level))
       || (status === "monitoring" && ["adequate", "attention"].includes(topic.level))
       || (status === "deficiency" && ["critical", "deficiency"].includes(topic.level))
       || topic.level === status;
     const visible = model.topics.filter((topic) => (subject === "all" || topic.materia === subject) && (!attentionOnly || ["attention", "deficiency", "critical", "insufficient"].includes(topic.level)) && matchesStatus(topic));
     const visibleKeys = new Set(visible.map((topic) => `${topic.materia}::${topic.assunto}`));
-    const priorityItems = visible.slice(0, 5);
     const subjectItems = model.subjects.map((item) => ({ ...item, topics: item.topics.filter((topic) => visibleKeys.has(`${topic.materia}::${topic.assunto}`)) })).filter((item) => item.topics.length);
     const badge = (topic) => `<span class="learning-diagnosis-status ${topic.levelInfo.tone}">${escape(topic.levelInfo.label)}</span>`;
     const actionButton = (topic) => topic.level === "insufficient" ? "Fazer diagnóstico" : "Reforçar agora";
-    const topicCard = (topic, compact = false) => `<article class="learning-diagnosis-topic${compact ? " compact" : ""}"><div class="learning-diagnosis-topic-heading"><div><span>${escape(topic.materia)}</span><h4>${escape(topic.assunto)}</h4></div>${badge(topic)}</div><p class="learning-diagnosis-evidence">${topic.evidence.length ? escape(topic.evidence.join(" · ")) : "Ainda não há evidências suficientes para detalhar este tema."}</p>${topic.response ? `<p class="learning-diagnosis-response"><strong>${escape(topic.response.label)}</strong><span>${escape(topic.response.detail)}</span></p>` : ""}<div class="learning-diagnosis-action"><span>Próxima ação</span><strong>${escape(topic.action.label)}</strong><small>${escape(topic.action.detail)}</small></div>${!compact ? `<button class="primary-button compact-button" type="button" data-reinforce-topic="${escape(topic.materia)}" data-reinforce-subject="${escape(topic.assuntoOriginal || topic.assunto)}"><i data-lucide="zap"></i><span>${actionButton(topic)}</span></button>` : ""}</article>`;
     const mapRows = visible.slice(0, 36).map((topic) => `<article class="learning-diagnosis-map-row"><div><strong>${escape(topic.assunto)}</strong><span>${escape(topic.materia)}</span></div>${badge(topic)}<span>${escape(topic.diagnosis.trend?.label === "falling" ? "Queda" : topic.diagnosis.trend?.label === "improving" ? "Melhora" : "Estável")}</span><span>${Math.round((Number(topic.diagnosis.confidence) || 0) * 100)}%</span><small>${escape(topic.action.label)}</small></article>`).join("");
     return `
       <div class="learning-diagnosis-summary">${[
-        ["strong", "Domínio forte", model.counts.strong], ["monitoring", "Sob acompanhamento", model.counts.monitoring], ["deficiency", "Em deficiência", model.counts.deficiency], ["insufficient", "Mais dados", model.counts.insufficient],
+        ["strong", "Domínio forte", model.counts.strong], ["attention", "Atenção", model.counts.monitoring + model.counts.deficiency], ["insufficient", "Mais dados", model.counts.insufficient],
       ].map(([key, label, count]) => `<button type="button" class="learning-diagnosis-metric ${status === key ? "is-active" : ""}" data-learning-diagnosis-status="${key}"><strong>${count}</strong><span>${label}</span></button>`).join("")}</div>
-      <section class="learning-diagnosis-section learning-diagnosis-priorities"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Prioridades de melhoria</span><h3>Onde agir agora</h3><p>Os temas mais relevantes para o próximo passo do seu estudo.</p></div></div><div class="learning-diagnosis-priority-list">${priorityItems.length ? priorityItems.map((topic) => topicCard(topic)).join("") : "<p class=\"muted-note\">Nenhum tema corresponde aos filtros selecionados.</p>"}</div></section>
-      <section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Diagnóstico por matéria</span><h3>Onde cada matéria pede atenção</h3></div></div><div class="learning-diagnosis-subject-list">${subjectItems.map((item) => { const isExpanded = expanded.has(item.materia); const topics = isExpanded ? item.topics : item.topics.slice(0, 4); return `<article class="learning-diagnosis-subject"><header><div><strong>${escape(item.materia)}</strong><span class="learning-diagnosis-status ${item.levelInfo.tone}">${escape(item.levelInfo.label)}</span></div><small>${item.topics.length} tema${item.topics.length === 1 ? "" : "s"} analisado${item.topics.length === 1 ? "" : "s"}</small></header><div class="learning-diagnosis-subject-topics">${topics.map((topic) => `<span><b>${escape(topic.assunto)}</b>${badge(topic)}</span>`).join("")}</div>${item.topics.length > 4 ? `<button class="text-action" type="button" data-learning-diagnosis-expand="${escape(item.materia)}">${isExpanded ? "Mostrar menos" : "Ver todos os assuntos"}</button>` : ""}</article>`; }).join("") || "<p class=\"muted-note\">Nenhuma matéria corresponde aos filtros.</p>"}</div></section>
-      <div class="learning-diagnosis-secondary-grid"><section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Meus padrões de erro</span><h3>O que está se repetindo</h3></div></div>${model.errorPatterns.length ? `<div class="learning-diagnosis-patterns">${model.errorPatterns.map((topic) => `<article><strong>${escape(topic.assunto)}</strong><span>${Number(topic.errorSignals.postInterventionErrors) >= 2 ? "Erros persistentes após reforço." : topic.errorSignals.recurrence === "high" ? `Erros em ${topic.errorSignals.sessionsWithErrors} sessões diferentes.` : `${Math.round(topic.errorSignals.concentration * 100)}% dos erros recentes de ${topic.materia} estão aqui.`}</span></article>`).join("")}</div>` : "<p class=\"muted-note\">Os padrões relevantes de erro aparecerão conforme novas questões forem registradas.</p>"}</section><section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">O que está funcionando</span><h3>Resposta aos reforços</h3></div></div>${model.responses.length ? `<div class="learning-diagnosis-patterns">${model.responses.map((topic) => `<article><strong>${escape(topic.assunto)} · ${escape(topic.response.label)}</strong><span>${escape(topic.response.detail)}</span></article>`).join("")}</div>` : "<p class=\"muted-note\">Depois de um reforço com novas questões, a resposta aparecerá aqui.</p>"}</section></div>
-      <section class="learning-diagnosis-section learning-diagnosis-map"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Mapa de domínio</span><h3>Todos os temas no estado atual</h3></div></div><div class="learning-diagnosis-map-head"><span>Assunto</span><span>Situação</span><span>Tendência</span><span>Confiança</span><span>Ação</span></div>${mapRows || "<p class=\"muted-note\">Ainda não há temas para exibir.</p>"}</section>`;
+      <section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Diagnóstico por matéria</span><h3>Como está cada matéria</h3><p>Abra uma matéria para ver os assuntos e investigue as evidências somente quando precisar.</p></div></div><div class="learning-diagnosis-subject-list">${subjectItems.map((item) => { const isExpanded = expanded.has(item.materia); return `<article class="learning-diagnosis-subject ${isExpanded ? "is-expanded" : ""}"><button class="learning-diagnosis-subject-trigger" type="button" data-learning-diagnosis-expand="${escape(item.materia)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? "Recolher" : "Expandir"} ${escape(item.materia)}"><span><strong>${escape(item.materia)}</strong>${badge(item.weakest)}</span><span class="learning-diagnosis-subject-overview"><b>${escape(item.levelInfo.label)}</b><small>${escape(subjectSummary(item.topics))}</small></span><i data-lucide="chevron-down" aria-hidden="true"></i></button>${isExpanded ? `<div class="learning-diagnosis-subject-topics">${item.topics.map((topic) => `<article class="learning-diagnosis-topic"><div><strong>${escape(topic.assunto)}</strong>${badge(topic)}</div>${technicalDetails(topic, escape, actionButton)}</article>`).join("")}</div>` : ""}</article>`; }).join("") || "<p class=\"muted-note\">Nenhuma matéria corresponde aos filtros.</p>"}</div></section>
+      <details class="learning-diagnosis-map learning-diagnosis-section"><summary><span class="section-kicker">Mapa de domínio</span><strong>Ver mapa completo de assuntos</strong><i data-lucide="chevron-down" aria-hidden="true"></i></summary><div class="learning-diagnosis-map-content"><div class="learning-diagnosis-map-head"><span>Assunto</span><span>Situação</span><span>Tendência</span><span>Confiança</span><span>Ação</span></div>${mapRows || "<p class=\"muted-note\">Ainda não há temas para exibir.</p>"}</div></details>`;
   }
 
   const api = { LEVELS, build, render };

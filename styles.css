@@ -12988,7 +12988,7 @@ textarea:focus {
 
 .learning-diagnosis-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border-top: 1px solid var(--divider);
   border-bottom: 1px solid var(--divider);
 }
@@ -13016,45 +13016,49 @@ textarea:focus {
 .learning-diagnosis-section-heading h3 { margin: 0; font-size: 18px; }
 .learning-diagnosis-section-heading p { max-width: 620px; margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 
-.learning-diagnosis-priority-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.learning-diagnosis-topic { display: grid; gap: 11px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--card) 94%, var(--bg-main)); }
-.learning-diagnosis-topic-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-.learning-diagnosis-topic-heading > div > span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
-.learning-diagnosis-topic h4 { margin: 0; font-size: 15px; line-height: 1.35; }
 .learning-diagnosis-status { display: inline-flex; flex: 0 0 auto; align-items: center; padding: 4px 7px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 750; line-height: 1.1; white-space: nowrap; }
 .learning-diagnosis-status.strong { background: var(--surface-teal-soft); color: var(--color-positive); }
 .learning-diagnosis-status.adequate { background: var(--surface-blue-soft); color: color-mix(in srgb, var(--color-study) 80%, var(--text)); }
 .learning-diagnosis-status.attention { background: var(--surface-amber-soft); color: var(--badge-high-text); }
 .learning-diagnosis-status.deficiency, .learning-diagnosis-status.critical { background: var(--surface-coral-soft); color: var(--color-critical); }
 .learning-diagnosis-status.insufficient { background: var(--surface-violet-soft); color: var(--primary-soft-text); }
-.learning-diagnosis-evidence { min-height: 32px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-.learning-diagnosis-response { display: grid; gap: 3px; margin: 0; padding-left: 10px; border-left: 2px solid var(--color-intelligence); color: var(--muted); font-size: 12px; }
-.learning-diagnosis-response strong { color: var(--text); font-size: 12px; }
-.learning-diagnosis-action { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--divider); }
-.learning-diagnosis-action > span { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
-.learning-diagnosis-action strong { font-size: 13px; }
-.learning-diagnosis-action small { color: var(--muted); font-size: 11px; line-height: 1.4; }
-.learning-diagnosis-topic .compact-button { justify-self: start; min-height: 34px; padding: 0 10px; font-size: 12px; }
-
 .learning-diagnosis-subject-list { display: grid; gap: 8px; }
-.learning-diagnosis-subject { padding: 13px 0; border-top: 1px solid var(--divider); }
-.learning-diagnosis-subject:last-child { border-bottom: 1px solid var(--divider); }
-.learning-diagnosis-subject header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.learning-diagnosis-subject header > div { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
-.learning-diagnosis-subject header > div > strong { font-size: 14px; }
-.learning-diagnosis-subject header small { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.learning-diagnosis-subject-topics { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
-.learning-diagnosis-subject-topics > span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; background: var(--soft); color: var(--text); font-size: 11px; }
-.learning-diagnosis-subject-topics b { font-weight: 650; }
-.learning-diagnosis-subject .text-action { min-height: 28px; margin-top: 8px; padding: 0; font-size: 12px; }
-
-.learning-diagnosis-secondary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 38px; }
-.learning-diagnosis-patterns { display: grid; gap: 0; border-top: 1px solid var(--divider); }
-.learning-diagnosis-patterns article { display: grid; gap: 4px; padding: 11px 0; border-bottom: 1px solid var(--divider); }
-.learning-diagnosis-patterns strong { font-size: 13px; }
-.learning-diagnosis-patterns span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.learning-diagnosis-subject { border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow: hidden; }
+.learning-diagnosis-subject-trigger { display: grid; grid-template-columns: minmax(170px, .9fr) minmax(240px, 1.2fr) auto; align-items: center; width: 100%; min-height: 72px; gap: 18px; padding: 15px 18px; border: 0; border-radius: 0; background: transparent; color: var(--text); text-align: left; box-shadow: none; }
+.learning-diagnosis-subject-trigger:hover { background: var(--soft); transform: none; }
+.learning-diagnosis-subject-trigger > span:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.learning-diagnosis-subject-trigger > span:first-child strong { font-size: 14px; }
+.learning-diagnosis-subject-trigger > i { width: 17px; color: var(--muted); transition: transform .18s ease; }
+.learning-diagnosis-subject.is-expanded .learning-diagnosis-subject-trigger > i { transform: rotate(180deg); }
+.learning-diagnosis-subject-overview { display: grid; gap: 3px; min-width: 0; }
+.learning-diagnosis-subject-overview b { font-size: 13px; }
+.learning-diagnosis-subject-overview small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.learning-diagnosis-subject-topics { display: grid; gap: 0; padding: 0 18px 14px; border-top: 1px solid var(--divider); }
+.learning-diagnosis-topic { display: grid; gap: 9px; padding: 13px 0; border-bottom: 1px solid var(--divider); }
+.learning-diagnosis-topic:last-child { border-bottom: 0; }
+.learning-diagnosis-topic > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.learning-diagnosis-topic > div:first-child strong { font-size: 13px; }
+.learning-diagnosis-topic-details { color: var(--muted); }
+.learning-diagnosis-topic-details > summary, .learning-diagnosis-map > summary { display: flex; align-items: center; gap: 8px; width: fit-content; color: var(--primary); cursor: pointer; font-size: 12px; font-weight: 700; list-style: none; }
+.learning-diagnosis-topic-details > summary::-webkit-details-marker, .learning-diagnosis-map > summary::-webkit-details-marker { display: none; }
+.learning-diagnosis-topic-details > summary::before, .learning-diagnosis-map > summary::before { content: "+"; font-size: 16px; font-weight: 400; }
+.learning-diagnosis-topic-details[open] > summary::before, .learning-diagnosis-map[open] > summary::before { content: "−"; }
+.learning-diagnosis-topic-details dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px 14px; margin: 12px 0; padding: 12px; border-radius: 7px; background: var(--soft); }
+.learning-diagnosis-topic-details dl div { min-width: 0; }
+.learning-diagnosis-topic-details dt { color: var(--muted); font-size: 10px; font-weight: 700; }
+.learning-diagnosis-topic-details dd { margin: 3px 0 0; color: var(--text); font-size: 12px; line-height: 1.3; }
+.learning-diagnosis-detail-action { display: grid; gap: 3px; padding: 11px 0 0; border-top: 1px solid var(--divider); }
+.learning-diagnosis-detail-action > span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.learning-diagnosis-detail-action strong { color: var(--text); font-size: 13px; }
+.learning-diagnosis-detail-action small { font-size: 12px; line-height: 1.4; }
+.learning-diagnosis-detail-action .compact-button { justify-self: start; min-height: 34px; margin-top: 4px; padding: 0 10px; font-size: 12px; }
 
 .learning-diagnosis-map { padding-top: 2px; }
+.learning-diagnosis-map > summary { width: 100%; padding: 14px 0; color: var(--text); }
+.learning-diagnosis-map > summary .section-kicker { margin: 0 4px 0 0; }
+.learning-diagnosis-map > summary > i { margin-left: auto; color: var(--muted); transition: transform .18s ease; }
+.learning-diagnosis-map[open] > summary > i { transform: rotate(180deg); }
+.learning-diagnosis-map-content { padding-top: 8px; }
 .learning-diagnosis-map-head, .learning-diagnosis-map-row { display: grid; grid-template-columns: minmax(190px, 1.6fr) minmax(110px, .75fr) 90px 82px minmax(180px, 1fr); align-items: center; gap: 12px; }
 .learning-diagnosis-map-head { padding: 8px 10px; border-bottom: 1px solid var(--divider); color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .learning-diagnosis-map-row { padding: 12px 10px; border-bottom: 1px solid var(--divider); }
@@ -13064,23 +13068,26 @@ textarea:focus {
 .learning-diagnosis-map-row small { line-height: 1.35; }
 
 @media (max-width: 800px) {
-  .learning-diagnosis-priority-list, .learning-diagnosis-secondary-grid { grid-template-columns: 1fr; gap: 24px; }
   .learning-diagnosis-map-head { display: none; }
   .learning-diagnosis-map-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
   .learning-diagnosis-map-row > div { grid-column: 1 / -1; }
   .learning-diagnosis-map-row > span:not(.learning-diagnosis-status), .learning-diagnosis-map-row small { grid-column: auto; }
+  .learning-diagnosis-subject-trigger { grid-template-columns: minmax(160px, 1fr) minmax(0, 1.2fr) auto; }
+  .learning-diagnosis-topic-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 560px) {
   .learning-diagnosis-toolbar { align-items: stretch; flex-direction: column; gap: 10px; }
   .learning-diagnosis-toolbar > label:first-child { width: 100%; }
   .learning-diagnosis-toggle { min-height: 34px; white-space: normal; }
-  .learning-diagnosis-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learning-diagnosis-summary { grid-template-columns: 1fr; }
   .learning-diagnosis-metric { min-height: 74px; padding: 12px; border-bottom: 1px solid var(--divider); }
-  .learning-diagnosis-metric:nth-child(2) { border-right: 0; }
-  .learning-diagnosis-metric:nth-child(3), .learning-diagnosis-metric:nth-child(4) { border-bottom: 0; }
-  .learning-diagnosis-topic-heading, .learning-diagnosis-subject header { align-items: flex-start; flex-direction: column; }
-  .learning-diagnosis-subject header small { white-space: normal; }
+  .learning-diagnosis-metric:last-child { border-bottom: 0; }
+  .learning-diagnosis-subject-trigger { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 14px; }
+  .learning-diagnosis-subject-overview { grid-column: 1 / -1; grid-row: 2; }
+  .learning-diagnosis-subject-trigger > i { grid-column: 2; grid-row: 1; }
+  .learning-diagnosis-subject-topics { padding-inline: 14px; }
+  .learning-diagnosis-topic-details dl { grid-template-columns: 1fr 1fr; padding: 10px; }
   .learning-diagnosis-map-row { padding-inline: 0; }
 }
 
