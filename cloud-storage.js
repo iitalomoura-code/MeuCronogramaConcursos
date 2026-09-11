@@ -1,6 +1,7 @@
 (function initializeCloudStorage() {
   const PLAN_FIELDS = "id, user_id, name, data, version, created_at, updated_at";
   const PLAN_LIST_FIELDS = "id, user_id, name, version, created_at, updated_at";
+  const KNOWLEDGE_BASE_FIELDS = "user_id, data, version, created_at, updated_at";
 
   function cloudError(message, code = "cloud_storage_unavailable") {
     const error = new Error(message);
@@ -156,6 +157,43 @@
     return true;
   }
 
+  async function loadCloudKnowledgeBase() {
+    const user = await requireCloudUser();
+    const { data, error } = await window.supabaseClient
+      .from("user_knowledge_bases")
+      .select(KNOWLEDGE_BASE_FIELDS)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function saveCloudKnowledgeBase(payload = {}) {
+    const user = await requireCloudUser();
+    const expectedVersion = Number(payload.version);
+    const existing = await loadCloudKnowledgeBase();
+    if (!existing) {
+      const { data, error } = await window.supabaseClient
+        .from("user_knowledge_bases")
+        .insert({ user_id: user.id, data: payload.data || {}, version: 1, updated_at: new Date().toISOString() })
+        .select(KNOWLEDGE_BASE_FIELDS)
+        .single();
+      if (error) throw error;
+      return data;
+    }
+    const version = Number.isFinite(expectedVersion) && expectedVersion > 0 ? expectedVersion : Number(existing.version) || 1;
+    const { data, error } = await window.supabaseClient
+      .from("user_knowledge_bases")
+      .update({ data: payload.data || {}, version: version + 1, updated_at: new Date().toISOString() })
+      .eq("user_id", user.id)
+      .eq("version", version)
+      .select(KNOWLEDGE_BASE_FIELDS)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+    throw cloudConflict(await loadCloudKnowledgeBase());
+  }
+
   window.listCloudPlans = listCloudPlans;
   window.loadCloudPlan = loadCloudPlan;
   window.getCloudPlanVersion = getCloudPlanVersion;
@@ -164,4 +202,6 @@
   window.saveCloudPlan = saveCloudPlan;
   window.deleteCloudPlan = deleteCloudPlan;
   window.testCloudConnection = testCloudConnection;
+  window.loadCloudKnowledgeBase = loadCloudKnowledgeBase;
+  window.saveCloudKnowledgeBase = saveCloudKnowledgeBase;
 })();

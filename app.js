@@ -7,6 +7,7 @@ const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
 const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
 const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
 const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
+const KNOWLEDGE_BASE_CACHE_PREFIX = "meuCronogramaBaseConhecimento";
 const CLOUD_SAVE_DELAY = 3000;
 const FOCUS_SESSION_SAVE_DELAY = 700;
 const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
@@ -227,6 +228,9 @@ let historyInheritanceSources = [];
 let historyInheritanceSourcesKey = "";
 let historyInheritanceLoadPromise = null;
 let historyInheritanceCache = new Map();
+let knowledgeBaseState = null;
+let knowledgeBaseCloudVersion = 0;
+let knowledgeBaseBootstrapPromise = null;
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -12745,6 +12749,151 @@ function saveCloudCache(record, snapshot = record?.data) {
   } catch {}
 }
 
+function knowledgeBaseUserId() {
+  return window.authGate?.getAuthenticatedUser?.()?.id || "local";
+}
+
+function knowledgeBaseStorageKey(userId = knowledgeBaseUserId()) {
+  return `${KNOWLEDGE_BASE_CACHE_PREFIX}:${userId || "local"}`;
+}
+
+function readLocalKnowledgeBase() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(knowledgeBaseStorageKey()) || "null");
+    return saved?.schemaVersion ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalKnowledgeBase(base = knowledgeBaseState) {
+  if (!base?.schemaVersion) return;
+  try {
+    localStorage.setItem(knowledgeBaseStorageKey(), JSON.stringify(base));
+  } catch {}
+}
+
+function knowledgeBaseCloudIsAvailable() {
+  return Boolean(window.authGate?.isAuthenticated?.() && window.loadCloudKnowledgeBase && window.saveCloudKnowledgeBase);
+}
+
+function knowledgeBaseStructureSignature(base = {}) {
+  return JSON.stringify({
+    schemaVersion: base.schemaVersion,
+    concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]),
+    evidence: (base.evidence || []).map((item) => item.id),
+    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.originalSubject, item.originalTopic, item.canonicalKey]),
+  });
+}
+
+function mergeKnowledgeBases(...bases) {
+  const usable = bases.filter((base) => base?.schemaVersion);
+  if (!usable.length) return window.KnowledgeBase?.emptyKnowledgeBase?.() || null;
+  const first = usable[0];
+  return {
+    ...first,
+    concepts: usable.flatMap((base) => base.concepts || []),
+    evidence: usable.flatMap((base) => base.evidence || []),
+    topicMappings: usable.flatMap((base) => base.topicMappings || []),
+  };
+}
+
+function localKnowledgeBaseSources() {
+  const sources = new Map();
+  if (state.currentPlanId) sources.set(state.currentPlanId, {
+    id: state.currentPlanId,
+    name: planVisibleName(activePlan() || {}),
+    snapshot: captureAppState(),
+    sourceType: "current-plan",
+  });
+  readPlansIndex().forEach((plan) => {
+    if (!plan?.id || sources.has(plan.id)) return;
+    try {
+      const snapshot = JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "null");
+      if (snapshot) sources.set(plan.id, { id: plan.id, name: planVisibleName(plan), snapshot, sourceType: "local-plan" });
+    } catch {}
+  });
+  return sources;
+}
+
+async function collectKnowledgeBaseSources() {
+  const sources = localKnowledgeBaseSources();
+  const failures = [];
+  if (!cloudIsAvailable() || !window.listCloudPlans) return { sources: [...sources.values()], failures };
+  let plans = state.plans || [];
+  try {
+    const records = await window.listCloudPlans();
+    plans = records.map(cloudPlanMeta);
+  } catch {
+    // A cópia local continua útil quando a consulta ampla não está disponível.
+    failures.push("cloud-plan-list");
+  }
+  const remote = await Promise.all(plans.filter((plan) => plan?.id).map(async (plan) => {
+    try {
+      const cached = readCloudCache(plan.id)?.data;
+      const record = cached ? null : await window.loadCloudPlan(plan.id);
+      const snapshot = cached || record?.data;
+      return snapshot ? { id: plan.id, name: planVisibleName(plan), snapshot, sourceType: "cloud-plan" } : null;
+    } catch {
+      failures.push(plan.id);
+      return null;
+    }
+  }));
+  remote.filter(Boolean).forEach((source) => sources.set(source.id, source));
+  return { sources: [...sources.values()], failures };
+}
+
+async function bootstrapKnowledgeBase() {
+  if (!window.KnowledgeBase) return null;
+  const userId = knowledgeBaseUserId();
+  if (knowledgeBaseBootstrapPromise) return knowledgeBaseBootstrapPromise;
+  knowledgeBaseBootstrapPromise = (async () => {
+    const local = readLocalKnowledgeBase();
+    let cloud = null;
+    if (knowledgeBaseCloudIsAvailable()) {
+      try {
+        const record = await window.loadCloudKnowledgeBase();
+        cloud = record?.data || null;
+        knowledgeBaseCloudVersion = Number(record?.version) || 0;
+      } catch {
+        // A migração pode ainda não ter sido aplicada; nunca bloqueamos o estudo por isso.
+      }
+    }
+    const { sources, failures } = await collectKnowledgeBaseSources();
+    const sourceKey = [userId, ...sources.map((source) => `${source.id}:${source.snapshot?.savedAt || source.snapshot?.form?.contestName || ""}`)].sort().join("|");
+    const base = mergeKnowledgeBases(cloud, local) || window.KnowledgeBase.emptyKnowledgeBase();
+    const before = knowledgeBaseStructureSignature(base);
+    const next = window.KnowledgeBase.buildKnowledgeBase(base, sources);
+    const after = knowledgeBaseStructureSignature(next);
+    knowledgeBaseState = { ...next, bootstrap: { sourceKey, failures, completedAt: new Date().toISOString() } };
+    saveLocalKnowledgeBase(knowledgeBaseState);
+    if (after !== before && knowledgeBaseCloudIsAvailable()) {
+      try {
+        const saved = await window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion });
+        knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
+      } catch {
+        // A cópia local preserva o bootstrap até a próxima conexão com a nuvem.
+      }
+    }
+    return knowledgeBaseState;
+  })().finally(() => {
+    knowledgeBaseBootstrapPromise = null;
+  });
+  return knowledgeBaseBootstrapPromise;
+}
+
+function scheduleKnowledgeBaseBootstrap() {
+  const run = () => { void bootstrapKnowledgeBase(); };
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 2500 });
+  else window.setTimeout(run, 180);
+}
+
+window.KnowledgeBaseStore = {
+  refresh: bootstrapKnowledgeBase,
+  inspect: () => window.KnowledgeBase?.inspectKnowledgeBase(knowledgeBaseState || readLocalKnowledgeBase() || {}),
+  inspectConcept: (concept) => window.KnowledgeBase?.inspectConcept(knowledgeBaseState || readLocalKnowledgeBase() || {}, concept),
+};
+
 function cancelScheduledCloudCacheWrite() {
   if (!cloudCacheWriteHandle) return;
   if (cloudCacheWriteUsesIdleCallback && typeof window.cancelIdleCallback === "function") {
@@ -13693,18 +13842,32 @@ function applyDriveDataSnapshot(bundle = {}) {
   localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
   renderPlanSelect();
   applyAppSnapshot(snapshots[state.currentPlanId] || blankAppSnapshot(state.plans[0].name));
+  if (bundle.knowledgeBase) restoreKnowledgeBaseFromBackup(bundle.knowledgeBase);
 }
+
+function restoreKnowledgeBaseFromBackup(imported = {}) {
+  if (!window.KnowledgeBase || !imported?.schemaVersion) return;
+  knowledgeBaseState = window.KnowledgeBase.buildKnowledgeBase(mergeKnowledgeBases(readLocalKnowledgeBase(), imported), []);
+  saveLocalKnowledgeBase(knowledgeBaseState);
+  if (knowledgeBaseCloudIsAvailable()) {
+    void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion })
+      .then((record) => { knowledgeBaseCloudVersion = Number(record?.version) || knowledgeBaseCloudVersion; })
+      .catch(() => {});
+  }
+}
+
 function exportBackup() {
   saveAppStateNow("Salvo", { changes: false });
   const snapshot = captureAppState();
-  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+  const backup = { ...snapshot, knowledgeBase: knowledgeBaseState || readLocalKnowledgeBase() || undefined };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = `planeja-concursos-backup-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
-  rememberBackupExport(snapshot.version || 1);
+  rememberBackupExport(backup.version || 1);
 }
 
 function snapshotFromDriveDataBundle(bundle = {}) {
@@ -13725,7 +13888,7 @@ async function importBackup(file) {
       ? snapshotFromDriveDataBundle(snapshot)
       : snapshot;
     if (!importedSnapshot || typeof importedSnapshot !== "object") throw new Error("Backup inválido.");
-    await importSnapshotIntoCloud(importedSnapshot);
+    await importSnapshotIntoCloud(importedSnapshot, snapshot.knowledgeBase);
     return;
   }
   if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
@@ -13742,10 +13905,11 @@ async function importBackup(file) {
   }
   localStorage.setItem(planStorageKey(state.currentPlanId), text);
   applyAppSnapshot(snapshot);
+  restoreKnowledgeBaseFromBackup(snapshot.knowledgeBase);
   saveAppStateNow("Backup importado");
 }
 
-async function importSnapshotIntoCloud(snapshot) {
+async function importSnapshotIntoCloud(snapshot, importedKnowledgeBase = null) {
   const choice = await openDialog({
     title: "Importar backup",
     message: "Escolha como deseja usar este backup na sua conta.",
@@ -13764,6 +13928,7 @@ async function importSnapshotIntoCloud(snapshot) {
       state.plans.push(cloudPlanMeta(record));
       await loadCloudPlanIntoState(record.id);
       updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado como novo planejamento" });
+      restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
       showToast("Backup importado como novo planejamento.");
     } catch {
       updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível importar o backup na conta." });
@@ -13779,6 +13944,7 @@ async function importSnapshotIntoCloud(snapshot) {
     updateCloudPlanMeta(record);
     saveCloudCache(record, snapshot);
     applyAppSnapshot(snapshot);
+    restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
     updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado no planejamento atual" });
     showToast("Backup importado no planejamento atual.");
   } catch (error) {
@@ -13977,6 +14143,7 @@ async function createNewPlan() {
   applyAppSnapshot(snapshot);
   setSetupStep(2, { save: false });
   saveAppStateNow("Novo concurso criado");
+  scheduleKnowledgeBaseBootstrap();
   switchTab("conteudo");
 }
 
@@ -16188,6 +16355,7 @@ async function startMeuCronogramaApp() {
     updateSidebarActiveIndicator();
     animatePanelNumbers(getActiveTabName());
   });
+  scheduleKnowledgeBaseBootstrap();
   void initializeCloudPlanSource().then((loadedFromCloud) => {
     const cloudUnavailable = state.dataSource === "cloud-unavailable";
     if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredFromCloudCache)) {
@@ -16211,6 +16379,7 @@ async function startMeuCronogramaApp() {
     } else if (requestedTab) {
       switchTab(requestedTab);
     }
+    scheduleKnowledgeBaseBootstrap();
   });
 }
 

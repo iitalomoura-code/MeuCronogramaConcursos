@@ -36,5 +36,8 @@ assert.ok(cloud.includes("getCloudPlanVersion"), "A checagem de retorno deve con
 assert.ok(index.includes("cloudMigrationModal"), "A interface deve oferecer a migra\u00e7\u00e3o local controlada.");
 assert.ok(app.includes("function snapshotFromDriveDataBundle"), "O importador deve reconhecer o formato completo de dados salvos.");
 assert.ok(app.includes("bundle.planSnapshots"), "O importador deve usar planSnapshots nos backups completos.");
+assert.ok(cloud.includes("function loadCloudKnowledgeBase") && cloud.includes("function saveCloudKnowledgeBase"), "A base permanente deve usar a mesma autenticação da nuvem, em armazenamento independente.");
+assert.ok(app.includes("function knowledgeBaseStorageKey") && app.includes("function bootstrapKnowledgeBase"), "A base permanente deve manter cache isolado por usuário e bootstrap não bloqueante.");
+assert.ok(index.includes("js/knowledge-base.js?v=20260911-permanent-knowledge-base"), "O motor puro da base permanente deve carregar antes do aplicativo.");
 
 console.log("OK - camada online, migra\u00e7\u00e3o controlada e versionamento otimista presentes.");
