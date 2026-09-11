@@ -43,4 +43,33 @@ assert.notEqual(advisor.categoryFor(input[3]), "prioritize", "Poucos dados não 
 assert.ok(index.includes("js/strategic-advisor.js") && index.indexOf("js/strategic-advisor.js") < index.indexOf("app.js?v="), "O módulo do Orientador deve carregar antes da aplicação.");
 assert.ok(index.includes("strategicAdvisorModal") && app.includes("strategicAdvisorCompactMarkup") && app.includes("data-open-strategic-advisor"), "O card compacto e a análise completa devem estar integrados sem nova aba.");
 
+const mixedSubject = advisor.build({ topics: [
+  topic("AFO", "Receita Pública", { level: "deficiency", accuracy: .55 }, { score: .8 }),
+  topic("AFO", "Despesa Pública", { level: "strong", accuracy: .9 }, { score: .2 }),
+] });
+assert.equal(mixedSubject.reduceLoad.length, 0, "Uma matéria com gargalo não pode receber redução global de carga.");
+assert.ok(mixedSubject.priorities[0].title.includes("AFO: Receita Pública"), "A orientação deve permanecer localizada no assunto problemático.");
+
+const stable = advisor.build({ topics: [
+  topic("RLM", "Lógica", { level: "adequate", accuracy: .86 }, { score: .3 }),
+  topic("RLM", "Conjuntos", { level: "adequate", accuracy: .84 }, { score: .25 }),
+] });
+assert.equal(stable.reduceLoad.length, 0, "Uma matéria adequada e estável não deve ser forçada a reduzir carga.");
+assert.ok(stable.stability && stable.summary[0].includes("preparação está estável"), "O Orientador deve concluir estabilidade quando nenhuma mudança for necessária.");
+
+const buildingOrder = advisor.build({ topics: [
+  topic("Edital A", "Tema", { level: "insufficient", hasContact: false, confidence: 0 }, { score: .3 }, { historyInheritance: { level: "none" } }),
+  topic("Edital B", "Tema", { level: "insufficient", hasContact: false, confidence: 0 }, { score: .8 }, { historyInheritance: { level: "none" } }),
+  topic("Edital C", "Tema", { level: "insufficient", hasContact: false, confidence: 0 }, { score: .55 }, { historyInheritance: { level: "none" } }),
+] });
+assert.deepEqual(buildingOrder.building.map((item) => item.materia), ["Edital B", "Edital C", "Edital A"], "Conteúdos em construção devem ser ordenados pelo score estratégico.");
+assert.ok(buildingOrder.awaitingEvidence && buildingOrder.summary[0].includes("poucos dados"), "Poucos dados devem gerar orientação cautelosa, não estabilidade.");
+
+const diagnosisOrder = advisor.build({ topics: [
+  topic("Legislação A", "Tema", { level: "insufficient", hasContact: false, confidence: .1 }, { score: .25 }, { historyInheritance: { level: "strong" } }),
+  topic("Legislação B", "Tema", { level: "insufficient", hasContact: false, confidence: .1 }, { score: .7 }, { historyInheritance: { level: "partial" } }),
+  topic("Legislação C", "Tema", { level: "insufficient", hasContact: false, confidence: .1 }, { score: .5 }, { historyInheritance: { level: "strong" } }),
+] });
+assert.deepEqual(diagnosisOrder.insufficientEvidence.map((item) => item.materia), ["Legislação B", "Legislação C", "Legislação A"], "Conteúdos que pedem diagnóstico devem ser ordenados pelo score estratégico.");
+
 console.log("OK - Orientador Estratégico interpreta diagnósticos existentes sem criar novo score ou alterar a origem.");
