@@ -5,6 +5,7 @@ const derivedState = require("../js/study-derived-state.js");
 const recommendation = require("../js/continue-recommendation.js");
 
 let derivations = 0;
+let strategicBuilds = 0;
 const rawEntries = [
   { index: 0, block: { materia: "Português", assunto: "Pontuação", prioridade: 3, duracao: 1, status: "Não iniciado" } },
   { index: 1, block: { materia: "AFO", assunto: "Despesa pública", prioridade: 3, duracao: .75, status: "Em andamento" } },
@@ -26,13 +27,23 @@ const input = {
       hasContact: entry.index === 1,
     };
   },
+  buildStrategicQueue(entries) {
+    strategicBuilds += 1;
+    return entries.map((entry) => ({
+      index: entry.index,
+      queueRank: entry.index + 1,
+      strategic: { score: entry.index === 0 ? .7 : .2, queueRank: entry.index + 1, recommendedSession: { label: "Questões e análise de erros" }, reasons: [] },
+    }));
+  },
 };
 
 const first = derivedState.continueSnapshot(input);
 const second = derivedState.continueSnapshot({ ...input, entries: [...rawEntries] });
 assert.strictEqual(first, second, "O snapshot deve ser reutilizado até uma alteração relevante.");
 assert.equal(derivations, 2, "O estado derivado deve calcular cada bloco apenas uma vez por revisão.");
+assert.equal(strategicBuilds, 1, "A fila estratégica deve ser derivada junto ao snapshot, sem recalcular a cada leitura.");
 assert.equal(first.diagnosisByTopic.get("afo::despesa pública").level, "attention", "O diagnóstico por tema deve ficar disponível no snapshot compartilhável.");
+assert.equal(first.entries[0].derived.strategic.queueRank, 1, "A recomendação deve receber a posição derivada da fila estratégica.");
 
 const ranked = recommendation.rank(first, {
   normalizeStatus: (status) => status,
@@ -51,5 +62,6 @@ assert.equal(result.alternatives.length, 1, "Alternativas devem excluir a recome
 
 derivedState.continueSnapshot({ ...input, revision: 2 });
 assert.equal(derivations, 4, "Uma alteração relevante deve invalidar o snapshot derivado.");
+assert.equal(strategicBuilds, 2, "A fila estratégica deve acompanhar apenas invalidações relevantes.");
 
 console.log("OK - estado derivado e motor da tela Continuar reutilizam cálculos e preservam recomendação.");

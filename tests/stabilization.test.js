@@ -19,7 +19,7 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260908-priority-visual"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260909-manual-importance-fallback"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("app.js?v=20260911-strategic-next-hour"), "O JavaScript deve usar o cache-busting atual.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260908-priority-visual"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260909-explicit-subject-markers"), "O validador deve carregar depois do modelo canônico e antes do app.");
@@ -50,6 +50,7 @@ assert.ok(app.includes("function suspendFocusedStudy"), "Sair do modo focado dev
 assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converter temas em partes operacionais vinculadas a uma meta.");
 assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
 assert.ok(index.includes("js/mastery-diagnosis.js?v=20260909-topic-isolation"), "O motor de domínio deve ser carregado antes do app.");
+assert.ok(index.includes("js/strategic-priority.js?v=20260911-next-hour") && index.includes("js/learning-state.js?v=20260911-next-hour"), "A prioridade estratégica e o estado operacional devem carregar antes do estado derivado.");
 assert.ok(index.includes("js/learning-intervention.js?v=20260902-recovery-cycle"), "O ciclo de recuperação deve carregar antes das revisões adaptativas.");
 assert.ok(index.includes("js/error-analysis.js?v=20260902-error-notebook"), "A análise de erros deve carregar antes do diagnóstico central.");
 assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");
@@ -68,5 +69,6 @@ assert.ok(app.includes("capacidade: capacity"), "A capacidade planejada precisa 
 assert.ok(app.includes("function positionTopicActionsMenu") && styles.includes(".topic-actions-menu.opens-upward[open]"), "O menu de ações do tema deve abrir acima quando não houver espaço no rodapé.");
 assert.ok(app.includes("maxWeightedQuestions") && app.includes("weightedQuestions / maxWeightedQuestions"), "A estrutura da prova deve normalizar importância pela maior matéria ponderada.");
 assert.ok(app.includes("Importância relativa na prova") && app.includes("Participação estimada"), "A explicação deve separar importância relativa de participação absoluta.");
+assert.ok(app.includes("function strategicPriorityForTarget"), "A fila e a geração do ciclo devem consumir a mesma prioridade estratégica derivada.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

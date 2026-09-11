@@ -28,9 +28,19 @@
       ...entry,
       derived: derive(entry, phase),
     }));
+    const strategicQueue = typeof input.buildStrategicQueue === "function"
+      ? input.buildStrategicQueue(derivedEntries, phase)
+      : [];
+    const strategicByIndex = new Map(strategicQueue.map((entry) => [entry.index, entry.strategic ? entry : null]));
+    const enrichedEntries = strategicQueue.length
+      ? derivedEntries.map((entry) => {
+        const strategic = strategicByIndex.get(entry.index);
+        return strategic ? { ...entry, derived: { ...entry.derived, strategic } } : entry;
+      })
+      : derivedEntries;
     const diagnosisByTopic = new Map();
     const diagnosisBySubject = new Map();
-    derivedEntries.forEach((entry) => {
+    enrichedEntries.forEach((entry) => {
       const block = entry.block || {};
       const subjectKey = String(block.materia || "").trim().toLowerCase();
       const hasSubarea = Boolean(String(block.subarea || "").trim());
@@ -45,7 +55,8 @@
     cachedSnapshot = {
       revision,
       phase,
-      entries: derivedEntries,
+      entries: enrichedEntries,
+      strategicQueue,
       diagnosisByTopic,
       diagnosisBySubject,
       createdAt: Date.now(),

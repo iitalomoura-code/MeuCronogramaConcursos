@@ -16,6 +16,7 @@
     total += (data.incidence?.adjustment || 0) * 60 * (profile.incidenceMultiplier || 1);
     if (!data.hasContact) total += (profile.uncoveredAdjustment || 0) * 100;
     total += (Number(block.prioridade) || 0) * 24;
+    total += (Number(data.strategic?.strategic?.score ?? data.strategic?.score) || 0) * 120;
     total += data.rotation?.score || 0;
     if (data.weeklyReinforcement) total += 72;
     if (data.weeklyAdjustment) total += Math.min(95, Math.max(20, Number(data.weeklyAdjustment.weight) || 0));
@@ -28,9 +29,10 @@
     const matchesFilters = options.matchesFilters || (() => true);
     const entries = (snapshot.entries || [])
       .map((entry) => ({ ...entry, suggestion: score(entry, { normalizeStatus, phase: snapshot.phase }) }))
-      .sort((a, b) => b.suggestion.score - a.suggestion.score ||
+      .sort((a, b) => Number(Boolean(b.suggestion.review?.hasAttention)) - Number(Boolean(a.suggestion.review?.hasAttention)) ||
         Number(normalizeStatus(b.block.status) === "Em andamento") - Number(normalizeStatus(a.block.status) === "Em andamento") ||
-        Number(Boolean(b.suggestion.review?.hasAttention)) - Number(Boolean(a.suggestion.review?.hasAttention)) ||
+        Number(a.suggestion.strategic?.queueRank || Number.MAX_SAFE_INTEGER) - Number(b.suggestion.strategic?.queueRank || Number.MAX_SAFE_INTEGER) ||
+        b.suggestion.score - a.suggestion.score ||
         a.index - b.index);
     const filtered = entries.filter((entry) => matchesFilters(entry.block));
     return options.hasActiveFilter ? filtered : entries;
@@ -57,6 +59,8 @@
     const offset = Math.max(0, Number(options.offset) || 0) % rankedEntries.length;
     const recommendation = rankedEntries[offset];
     const explanation = explain(recommendation.block, recommendation.suggestion, options.helpers || {});
+    const strategicActivity = recommendation.suggestion.strategic?.strategic?.recommendedSession?.label
+      || recommendation.suggestion.strategic?.recommendedSession?.label;
     return {
       recommendation,
       alternatives: options.includeAlternatives ? alternatives(recommendation, rankedEntries).slice(0, 3) : [],
@@ -64,7 +68,7 @@
       suggestedMinutes: Math.round((Number(recommendation.block.duracao) || 0) * 60),
       activityType: recommendation.suggestion.weeklyReinforcement
         ? "Questões · Reforço recomendado"
-        : recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
+        : strategicActivity || recommendation.block.atividadeSugerida || recommendation.block.tipoAtividade || recommendation.block.tipo || "Teoria e questões",
       weeklyReinforcement: recommendation.suggestion.weeklyReinforcement || null,
     };
   }
@@ -78,6 +82,8 @@
     const predictiveRisk = helpers.predictiveRiskForSubject?.(block.materia);
     const priority = helpers.priorityInfo?.(block.prioridadeBase ?? block.prioridade) || { percent: 0 };
     const factors = [];
+    const strategic = context.strategic?.strategic || context.strategic || null;
+    if (strategic?.reasons?.length) strategic.reasons.slice(0, 2).forEach((reason) => factors.push(reason));
     if (context.weeklyReinforcement?.reasons?.length) context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
     if (context.diagnosticRecovery?.level === "critical") factors.push("tema crítico na fila de recuperação");
     else if (context.diagnosticRecovery?.level === "deficiency") factors.push("tema em deficiência na fila de recuperação");

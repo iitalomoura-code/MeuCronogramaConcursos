@@ -5116,6 +5116,26 @@ function historicalIncidenceForTarget({ materia = "", assunto = "", subject = nu
   };
 }
 
+function strategicPriorityForTarget(target = {}) {
+  if (!window.StrategicPriorityEngine?.calculate) return null;
+  const materia = target.materia || "";
+  const assunto = target.assunto || "";
+  const subject = target.subject || subjectPlanningData(materia);
+  const diagnosis = target.diagnosis || masteryDiagnosisForTarget({ ...target, materia, assunto, prioridade: target.prioridadeBase ?? target.prioridade });
+  const incidence = target.incidence || historicalIncidenceForTarget({ materia, assunto, subject });
+  return window.StrategicPriorityEngine.calculate({
+    subject,
+    diagnosis,
+    errorSignals: target.errorSignals || diagnosis.errorSignals || errorSignalsForTarget(materia, assunto, target.subarea || ""),
+    intervention: target.intervention || learningInterventionFor(materia, assunto),
+    hasContact: target.hasContact ?? diagnosis.hasContact,
+    coverage: target.coverage ?? (diagnosis.hasContact ? 1 : 0),
+    daysWithoutContact: target.daysWithoutContact ?? diagnosis.daysWithoutContact,
+    incidence,
+    examUrgency: target.examUrgency ?? (currentExamPhaseState().profile?.urgency?.value || 0),
+  });
+}
+
 function schedulingPriorityForTarget(target = {}) {
   const subject = target.subject || subjectPlanningData(target.materia) || target;
   const base = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
@@ -5526,10 +5546,13 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
       ? schedulingPriorityForTarget({ ...materia, subject: materia, prioridade: basePriority, prioridadeBase: basePriority, initialDiagnosis })
       : { adjusted: basePriority, adaptive: null, incidence: { applied: false }, incidenceAdjustment: 0 };
     const adaptive = scheduling.adaptive;
+    const strategic = options.adaptive
+      ? strategicPriorityForTarget({ materia: materia.materia, subject: planningSubject, diagnosis, incidence: scheduling.incidence })
+      : null;
     return {
       ...planningSubject,
       prioridadeBase: basePriority,
-      prioridade: Math.min(1, scheduling.adjusted + pressure * .22),
+      prioridade: options.adaptive && strategic ? Math.max(.1, strategic.score) : Math.min(1, scheduling.adjusted + pressure * .22),
       studyPressure: pressure,
       knowledgeState: capacityPlanning().knowledgeState(diagnosis),
       adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive?.adjustment ?? 0,
@@ -5538,6 +5561,7 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
       incidenceAdjustment: scheduling.incidenceAdjustment || 0,
       initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
       initialDiagnosis,
+      strategicPriority: strategic,
     };
   });
   const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0) || scored.length || 1;
@@ -5605,17 +5629,26 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
       initialDiagnosis: chosen.initialDiagnosis,
     });
     const topicAdaptive = topicScheduling.adaptive;
+    const topicStrategic = topic.strategicPriority || strategicPriorityForTarget({
+      materia: chosen.materia,
+      assunto: topic.assunto,
+      subarea: topic.subarea || "",
+      subject: chosen,
+      diagnosis: topicAdaptive.mastery,
+      incidence: topicScheduling.incidence,
+    });
     queue.push({
       ...topic,
       materia: chosen.materia,
       assunto: topic.assunto,
-      prioridade: Math.max(chosen.prioridade, topicScheduling.adjusted),
+      prioridade: topicStrategic ? Math.max(.1, topicStrategic.score) : Math.max(chosen.prioridade, topicScheduling.adjusted),
       prioridadeBase: chosen.prioridadeBase,
       adaptiveAdjustment: Math.max(chosen.adaptiveAdjustment || 0, topicScheduling.adaptiveAdjustment ?? topicAdaptive.adjustment ?? 0),
       adaptiveReason: topicAdaptive.reason || chosen.adaptiveReason || "",
       incidenciaHistorica: topicScheduling.incidence?.applied ? topicScheduling.incidence : chosen.incidenciaHistorica,
       incidenceAdjustment: Math.max(chosen.incidenceAdjustment || 0, topicScheduling.incidenceAdjustment || 0),
       initialDiagnosisAdjustment: topicScheduling.diagnosisAdjustment || chosen.initialDiagnosisAdjustment || 0,
+      strategicPriority: topicStrategic,
       rotationReason: chosen.exposures === 0 ? "a matéria ainda não apareceu neste ciclo" : cycleAbsenceForSubject(chosen.materia) > 1 ? "a matéria voltou após ciclos sem aparecer" : "",
     });
     chosen.remaining = Math.max(0, chosen.remaining - 1);
@@ -5645,6 +5678,14 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         initialDiagnosis: subject.initialDiagnosis,
       });
       const adaptive = scheduling.adaptive;
+      const strategic = strategicPriorityForTarget({
+        materia: subject.materia,
+        assunto: topic.assunto,
+        subarea: topic.subarea || "",
+        subject,
+        diagnosis: adaptive.mastery,
+        incidence: scheduling.incidence,
+      });
       return {
         ...topic,
         originalIndex: index,
@@ -5654,9 +5695,11 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         incidenciaHistorica: scheduling.incidence,
         incidenceAdjustment: scheduling.incidenceAdjustment || 0,
         initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
+        strategicPriority: strategic,
       };
     })
     .sort((a, b) =>
+      Number(b.strategicPriority?.score || 0) - Number(a.strategicPriority?.score || 0) ||
       b.incidenceAdjustment - a.incidenceAdjustment ||
       b.adaptiveAdjustment - a.adaptiveAdjustment ||
       b.adaptiveScore - a.adaptiveScore ||
@@ -5688,7 +5731,8 @@ function distributeAcrossSlots(queue, slots) {
 function activityForQueueItem(item = {}) {
   const review = reviewAttentionFor(item.materia, item.assunto);
   if (review.overdue.length) return "Revisão";
-  const currentActivity = "Teoria e questões";
+  const strategic = item.strategicPriority || strategicPriorityForTarget(item);
+  const currentActivity = strategic?.recommendedSession?.label || "Teoria e questões";
   const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
   const diagnosedActivity = window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
   const entries = adaptivePerformanceForTopic(item.materia, item.assunto);
@@ -6840,8 +6884,41 @@ function continueDerivedSnapshot() {
       hasContact: Boolean(adaptive.hasContact),
     };
   };
+  const buildStrategicQueue = (derivedEntries, phaseState) => {
+    if (!window.StrategicPriorityEngine?.buildStrategicStudyQueue) return [];
+    return window.StrategicPriorityEngine.buildStrategicStudyQueue(derivedEntries.map((entry) => {
+      const block = entry.block || {};
+      const derived = entry.derived || {};
+      const diagnosis = derived.adaptive?.mastery || masteryDiagnosisForTarget(block);
+      const subject = subjectPlanningData(block.materia);
+      const strategic = strategicPriorityForTarget({
+        ...block,
+        subject,
+        diagnosis,
+        errorSignals: diagnosis.errorSignals || errorSignalsForTarget(block.materia, block.assunto, block.subarea),
+        intervention: learningInterventionFor(block.materia, block.assunto),
+        hasContact: Boolean(derived.hasContact),
+        coverage: derived.hasContact ? 1 : 0,
+        incidence: derived.incidence,
+        examUrgency: phaseState.profile?.urgency?.value || 0,
+      });
+      return {
+        index: entry.index,
+        materia: block.materia,
+        unit: block,
+        strategic,
+      };
+    }));
+  };
   if (!window.StudyDerivedState?.continueSnapshot) {
-    return { entries: entries.map((entry) => ({ ...entry, derived: deriveEntry(entry, phase) })), phase };
+    const derivedEntries = entries.map((entry) => ({ ...entry, derived: deriveEntry(entry, phase) }));
+    const strategicQueue = buildStrategicQueue(derivedEntries, phase);
+    const byIndex = new Map(strategicQueue.map((entry) => [entry.index, entry]));
+    return {
+      entries: derivedEntries.map((entry) => byIndex.has(entry.index) ? { ...entry, derived: { ...entry.derived, strategic: byIndex.get(entry.index) } } : entry),
+      phase,
+      strategicQueue,
+    };
   }
   return window.StudyDerivedState.continueSnapshot({
     revision: continueDerivedStateRevision,
@@ -6849,6 +6926,7 @@ function continueDerivedSnapshot() {
     entries,
     phase,
     deriveEntry,
+    buildStrategicQueue,
   });
 }
 
@@ -8471,7 +8549,7 @@ function renderContinuePanel() {
         <div class="continue-reason-box"><div class="continue-reason-heading"><i data-lucide="sparkles"></i><strong>Por que este tema agora?</strong></div><ul>${suggestion.factors.length ? suggestion.factors.map((factor) => "<li>" + escapeHtml(factor) + "</li>").join("") : "<li>" + escapeHtml(suggestion.text) + "</li>"}</ul></div>
         <div class="continue-meta-grid">
           <div class="continue-meta-cycle"><span>Posição no ciclo</span><strong>Bloco ${suggested.index + 1} de ${total}</strong></div>
-          <div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: manualEntry?.override?.action?.label || suggested.block.atividadeSugerida || recommendationResult.activityType }, "continue-activity-badge")}</div>
+          <div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: manualEntry?.override?.action?.label || suggested.suggestion?.strategic?.strategic?.recommendedSession?.label || suggested.suggestion?.strategic?.recommendedSession?.label || suggested.block.atividadeSugerida || recommendationResult.activityType }, "continue-activity-badge")}</div>
           <div class="continue-meta-status"><span>Status</span>${statusBadge(suggested.block.status)}</div>
           <div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(displayPriorityForBlock(suggested.block))}</div>
         </div>
