@@ -138,6 +138,7 @@ const CLOUD_VERSION_CHECK_INTERVAL = 20000;
 let priorityEditIndex = -1;
 let performanceEditIndex = -1;
 let performanceSaveSessionId = "";
+let strategicCyclePreviewUI = null;
 let performanceDraft = null;
 let cycleClosureInProgress = false;
 let reviewSearchTimer = 0;
@@ -410,6 +411,7 @@ const els = {
   cycleClosurePanel: document.querySelector("#cycleClosurePanel"),
   scheduleActions: document.querySelector("#scheduleActions"),
   cycleChangesButton: document.querySelector("#cycleChangesButton"),
+  reconcileCycleButton: document.querySelector("#reconcileCycleButton"),
   backToGenerateFromScheduleButton: document.querySelector("#backToGenerateFromScheduleButton"),
   saveTrackingButton: document.querySelector("#saveTrackingButton"),
   finishCycleButton: document.querySelector("#finishCycleButton"),
@@ -6293,10 +6295,97 @@ async function showCycleChanges() {
     return;
   }
   const text = changes.map((item) => {
+    if (item.type === "strategic-replaced") {
+      const outgoing = item.outgoing || {};
+      return `${item.materia} — ${item.assunto} entrou no lugar de ${outgoing.materia || "um bloco flexível"} — ${outgoing.assunto || ""} porque passou a representar uma oportunidade estratégica maior.`;
+    }
     const action = item.type === "merged" ? "foi integrada à meta já prevista" : item.type === "replaced" ? "ocupou o lugar de uma meta flexível de menor pressão" : "foi adiada para o próximo ciclo";
     return `${item.materia} — ${item.assunto}: ${action}. ${item.adaptiveReason || item.reason || ""}`;
   }).join("\n\n");
   await dialogAlert(text, { title: "Por que meu ciclo mudou?" });
+}
+
+function strategicCycleCoverage() {
+  const advisor = strategicAdvisorModel();
+  return Number(advisor?.coverage?.ratio ?? advisor?.coverage?.value ?? 1);
+}
+
+function activeFocusCycleBlockId() {
+  const session = focusedStudySession || state.activeFocusSession;
+  if (!session || session.standaloneReview) return "";
+  const index = resolveFocusedBlockIndex(session);
+  const block = state.generatedBlocks[index];
+  return String(block?.id || block?.bloco || "");
+}
+
+function strategicCyclePreviewMessage(preview = {}) {
+  if (!preview.changes?.length) return (preview.summary || []).join(" ");
+  const changes = preview.changes.map((change) => [
+    "SAI",
+    `${change.outgoing.materia} — ${change.outgoing.assunto}`,
+    `${change.outgoing.learningState || "prioridade menor"}`,
+    "ENTRA",
+    `${change.incoming.materia} — ${change.incoming.assunto}`,
+    `${change.incoming.learningState || "prioridade maior"}`,
+    `Motivo: ${change.reason[0]}.`,
+  ].join("\n")).join("\n\n");
+  return `${preview.changes.length} troca${preview.changes.length === 1 ? "" : "s"} sugerida${preview.changes.length === 1 ? "" : "s"}. Carga total preservada.\n\n${changes}`;
+}
+
+async function reconcileCurrentCycle() {
+  const engine = window.StrategicCycleReconciliation;
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  if (!engine?.preview || !cycleBlocks.length) {
+    await dialogAlert("Gere um ciclo antes de reavaliar a composição estratégica.", { title: "Reavaliar ciclo" });
+    return;
+  }
+  const topics = strategicPlanningTopics();
+  const options = { coverage: strategicCycleCoverage(), activeFocusBlockId: activeFocusCycleBlockId() };
+  const preview = engine.preview({ blocks: state.generatedBlocks, topics, options });
+  strategicCyclePreviewUI = { preview, generatedAt: new Date().toISOString() };
+  if (!preview.changes.length) {
+    await dialogAlert(strategicCyclePreviewMessage(preview), { title: "Ajustes estratégicos do ciclo" });
+    strategicCyclePreviewUI = null;
+    return;
+  }
+  const apply = await openDialog({
+    title: "Ajustes estratégicos do ciclo",
+    message: strategicCyclePreviewMessage(preview),
+    actions: [
+      { id: "keep", label: "Manter ciclo atual", value: false },
+      { id: "apply", label: "Aplicar ajustes", variant: "primary", value: true },
+    ],
+  }).then((value) => value === true);
+  if (!apply) {
+    strategicCyclePreviewUI = null;
+    return;
+  }
+  const result = engine.applyPreview({ blocks: state.generatedBlocks, preview, topics: strategicPlanningTopics(), options });
+  if (result.stale || !result.applied) {
+    strategicCyclePreviewUI = { preview: result.preview, generatedAt: new Date().toISOString() };
+    showToast("O ciclo mudou desde esta análise. Reavaliei os ajustes.");
+    return;
+  }
+  state.generatedBlocks = result.blocks;
+  result.preview.changes.forEach((change) => {
+    recordCycleAdaptation({
+      type: "strategic-replaced",
+      materia: change.incoming.materia,
+      assunto: change.incoming.assunto,
+      sourceBlockId: change.slotKey,
+      targetBlockId: change.slotKey,
+      outgoing: change.outgoing,
+      incoming: change.incoming,
+      scoreDelta: change.scoreDelta,
+      reason: change.reason.join("; "),
+    });
+  });
+  strategicCyclePreviewUI = null;
+  performanceEditIndex = -1;
+  unitDetailIndex = -1;
+  renderGeneratedSchedule();
+  scheduleAutoSave();
+  showToast("Ajustes estratégicos aplicados ao ciclo.");
 }
 
 function rebalanceGoalDurations(blocks, weeklyHours, baseDuration) {
@@ -15738,6 +15827,7 @@ els.dailyHoursGrid?.addEventListener("input", () => {
 els.backToGenerateFromScheduleButton?.addEventListener("click", () => switchTab("pesos"));
 els.saveTrackingButton?.addEventListener("click", () => saveAppStateNow("Acompanhamento salvo"));
 els.cycleChangesButton?.addEventListener("click", () => { void showCycleChanges(); });
+els.reconcileCycleButton?.addEventListener("click", () => { void reconcileCurrentCycle(); });
 els.finishCycleButton?.addEventListener("click", renderCycleClosureSummary);
 els.pendingOnlyToggle?.addEventListener("click", () => {
   showPendingOnly = !showPendingOnly;
