@@ -217,6 +217,10 @@ let newPlanCloudReadyPromise = null;
 let newPlanReturnToPlans = false;
 let loadedExamPhase = "";
 let examPhaseUpdatedAt = "";
+let historyInheritanceSources = [];
+let historyInheritanceSourcesKey = "";
+let historyInheritanceLoadPromise = null;
+let historyInheritanceCache = new Map();
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -228,6 +232,7 @@ function invalidateDerivedStudyCaches() {
   errorAnalysisRevision += 1;
   window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
+  historyInheritanceCache.clear();
   continueDerivedStateRevision += 1;
   window.StudyDerivedState?.invalidate?.();
 }
@@ -4132,6 +4137,8 @@ function confirmRows(options = {}) {
 
   state.contentDraftPendingConfirmation = false;
   refreshPlanningBaseFromRows({ preservePriorities: true });
+  // A consulta ocorre em segundo plano: confirmar o edital continua imediato.
+  void refreshHistoryInheritanceSources();
   state.confirmed = true;
   updateExamPhaseStatus();
   els.confirmationStatus.textContent = "\u2713 Conte\u00fado confirmado";
@@ -4531,6 +4538,65 @@ function initialDiagnosisReason(materia = "", assunto = "", subarea = "") {
   return "";
 }
 
+function localHistoryInheritanceSources() {
+  return readPlansIndex().filter((plan) => plan?.id && plan.id !== state.currentPlanId).flatMap((plan) => {
+    try {
+      const snapshot = JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "null");
+      return snapshot ? [{ id: plan.id, name: planVisibleName(plan), snapshot }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+async function refreshHistoryInheritanceSources() {
+  const localPlans = readPlansIndex().filter((plan) => plan?.id && plan.id !== state.currentPlanId);
+  const remotePlans = cloudIsPrimary() ? state.plans.filter((plan) => plan?.id && plan.id !== state.currentPlanId) : [];
+  const sourceKey = [state.currentPlanId, ...localPlans.map((plan) => `${plan.id}:${plan.updatedAt || ""}`), ...remotePlans.map((plan) => `${plan.id}:${plan.updatedAt || plan.version || ""}`)].join("|");
+  if (historyInheritanceSourcesKey === sourceKey) return historyInheritanceSources;
+  if (historyInheritanceLoadPromise) return historyInheritanceLoadPromise;
+  historyInheritanceLoadPromise = (async () => {
+    const sources = localHistoryInheritanceSources();
+    if (remotePlans.length && window.loadCloudPlan) {
+      const remote = await Promise.all(remotePlans.map(async (plan) => {
+        try {
+          const cached = readCloudCache(plan.id)?.data;
+          const record = cached ? null : await window.loadCloudPlan(plan.id);
+          const snapshot = cached || record?.data;
+          return snapshot ? { id: plan.id, name: planVisibleName(plan), snapshot } : null;
+        } catch {
+          return null;
+        }
+      }));
+      remote.filter(Boolean).forEach((source) => {
+        if (!sources.some((item) => item.id === source.id)) sources.push(source);
+      });
+    }
+    historyInheritanceSources = sources;
+    historyInheritanceSourcesKey = sourceKey;
+    invalidateDerivedStudyCaches();
+    return historyInheritanceSources;
+  })().finally(() => { historyInheritanceLoadPromise = null; });
+  return historyInheritanceLoadPromise;
+}
+
+function historyInheritanceForTarget({ materia = "", assunto = "", subarea = "" } = {}) {
+  const engine = window.HistoryInheritance;
+  if (!engine?.derive || !materia || !assunto) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
+  const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
+  const profile = initialDiagnosisInfluence(materia, assunto, subarea);
+  const signature = [materia, assunto, subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level].map(normalizeForMatch).join("|");
+  if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
+  const inherited = engine.derive({
+    target: { materia, assunto, subarea },
+    sources: historyInheritanceSources,
+    currentEvidence: evidence,
+    initialProfile: profile,
+  });
+  historyInheritanceCache.set(signature, inherited);
+  return inherited;
+}
+
 function renderInitialDiagnosis() {
   if (!els.initialDiagnosisList || !window.InitialDiagnosisEngine) return;
   const subjects = state.planningBase?.materias || [];
@@ -4837,6 +4903,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
   const initial = initialDiagnosisInfluence(materia, assunto, subarea);
+  const historyInheritance = historyInheritanceForTarget({ materia, assunto, subarea });
   const errorSignals = errorSignalsForTarget(materia, assunto, subarea);
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
@@ -4855,6 +4922,8 @@ function masteryDiagnosisForTarget(target = {}) {
       entries: selected.entries,
       subjectContext,
       hasContact: Boolean(lastContact),
+      historyInheritance,
+      diagnosisOrigin: historyInheritance.origin,
     };
     masteryDiagnosisCache.set(cacheKey, fallback);
     return fallback;
@@ -4877,6 +4946,8 @@ function masteryDiagnosisForTarget(target = {}) {
     entries: selected.entries,
     incidence,
     initial,
+    historyInheritance,
+    diagnosisOrigin: historyInheritance.origin,
     errorSignals,
     reviewAttention,
     subjectContext,
@@ -5143,6 +5214,7 @@ function strategicPriorityForTarget(target = {}) {
     errorSignals: target.errorSignals || diagnosis.errorSignals || errorSignalsForTarget(materia, assunto, target.subarea || ""),
     intervention: target.intervention || learningInterventionFor(materia, assunto),
     initialProfile: target.initialProfile || initialDiagnosisInfluence(materia, assunto, target.subarea || ""),
+    historyInheritance: target.historyInheritance || diagnosis.historyInheritance || historyInheritanceForTarget({ materia, assunto, subarea: target.subarea || "" }),
     hasContact: target.hasContact ?? diagnosis.hasContact,
     coverage: target.coverage ?? (diagnosis.hasContact ? 1 : 0),
     daysWithoutContact: target.daysWithoutContact ?? diagnosis.daysWithoutContact,

@@ -100,6 +100,16 @@ const advancedProfile = engine.calculate(candidate({
 assert.equal(advancedProfile.learningState.awaitingDiagnostic, true, "Perfil avançado sem dados deve aguardar confirmação, não ser tratado como deficiência.");
 assert.equal(advancedProfile.recommendedSession.kind, "diagnostic_questions", "Perfil avançado deve iniciar por questões diagnósticas.");
 
+const inheritedStrong = engine.calculate(candidate({
+  hasContact: false,
+  coverage: 0,
+  historyInheritance: { level: "strong", confidence: .8, origin: "previous-history" },
+  diagnosis: diagnosis({ level: "insufficient", confidence: 0, accuracy: null, overallAccuracy: null, questions: 0, trend: { label: "insufficient" } }),
+}));
+assert.equal(inheritedStrong.learningState.awaitingDiagnostic, true, "Base anterior forte deve ser confirmada, não copiada como domínio atual.");
+assert.equal(inheritedStrong.recommendedSession.kind, "diagnostic_questions", "Base anterior forte deve iniciar com questões diagnósticas.");
+assert.equal(inheritedStrong.diagnosisOrigin, "previous-history", "A origem do diagnóstico deve permanecer auditável.");
+
 const lowStrong = engine.calculate(candidate({
   peso: 1,
   dominio: 2,

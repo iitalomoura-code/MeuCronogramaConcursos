@@ -44,6 +44,13 @@
     return value * clamp(profile.remainingWeight);
   }
 
+  function inheritanceCredit(history = {}) {
+    const confidence = clamp(history.confidence);
+    if (history.level === "strong") return .08 * confidence;
+    if (history.level === "partial") return .035 * confidence;
+    return 0;
+  }
+
   function recencyNeed(days, state) {
     const thresholds = config.thresholds || {};
     const value = Math.max(0, Number(days) || 0);
@@ -97,7 +104,8 @@
     const hasContact = Boolean(input.hasContact ?? diagnosis.hasContact);
     const coverage = Math.max(clamp(input.coverage), hasContact ? .55 : 0);
     const initialProfile = input.initialProfile || {};
-    const learningState = input.learningState || LearningState?.derive?.({ diagnosis, hasContact, coverage, intervention: input.intervention, errorSignals, initialProfile }) || { key: "practice", label: "Questões" };
+    const historyInheritance = input.historyInheritance || {};
+    const learningState = input.learningState || LearningState?.derive?.({ diagnosis, hasContact, coverage, intervention: input.intervention, errorSignals, initialProfile, historyInheritance }) || { key: "practice", label: "Questões" };
     const confidence = clamp(diagnosis.confidence);
     const recentAccuracy = Number.isFinite(diagnosis.accuracy) ? Number(diagnosis.accuracy) : null;
     const historicalAccuracy = Number.isFinite(diagnosis.overallAccuracy) ? Number(diagnosis.overallAccuracy) : null;
@@ -122,7 +130,8 @@
     const rawScore = Object.entries(components).reduce((total, [name, value]) => total + value * (Number(weights[name]) || 0), 0);
     const maintenancePenalty = learningState.key === "maintenance" ? Number(config.thresholds?.maintenancePenalty || .34) : 0;
     const strongPenalty = diagnosis.level === "strong" && learningState.key !== "recovery" ? Number(config.thresholds?.strongPenalty || .08) : 0;
-    const score = clamp(rawScore - maintenancePenalty - strongPenalty);
+    const inheritedHistoryCredit = hasContact ? 0 : inheritanceCredit(historyInheritance);
+    const score = clamp(rawScore - maintenancePenalty - strongPenalty - inheritedHistoryCredit);
     const recommendedSession = sessionFor({ learningState, diagnosis, errorSignals, intervention: input.intervention });
     const reasons = [];
     if (importance >= .8) reasons.push(`importância da matéria: ${Math.round(importance * 5)} de 5`);
@@ -131,8 +140,12 @@
     if (recentAccuracy !== null && historicalAccuracy !== null && Math.abs(historicalAccuracy - recentAccuracy) >= .03) reasons.push(`desempenho histórico: ${Math.round(historicalAccuracy * 100)}%`);
     if (diagnosis.trend?.label === "falling") reasons.push("tendência de queda confirmada");
     if (errorSignals.recurrence === "high") reasons.push("erros recorrentes");
-    if (learningState.awaitingDiagnostic) reasons.push("base inicial informada: confirmar com questões diagnósticas");
+    if (learningState.awaitingDiagnostic && historyInheritance.level === "none") reasons.push("base inicial informada: confirmar com questões diagnósticas");
     else if (initialProfile.active && initialProfile.remainingWeight >= .2) reasons.push(`base inicial informada: ${initialProfile.label.toLowerCase()}`);
+    if (historyInheritance.level === "strong" && !hasContact) reasons.push("base prévia forte: confirmar com questões diagnósticas");
+    else if (historyInheritance.level === "partial" && !hasContact) reasons.push("base prévia parcial: retomar com diagnóstico curto");
+    else if (historyInheritance.level === "contact" && !hasContact) reasons.push("houve contato anterior com este assunto");
+    if (historyInheritance.profileMismatch) reasons.push("a autopercepção e o histórico anterior serão confirmados com cuidado");
     if (!hasContact) reasons.push("assunto ainda sem contato suficiente");
     if (Number(input.daysWithoutContact ?? diagnosis.daysWithoutContact) >= Number(config.thresholds?.buildingContactDays || 12)) reasons.push("contato precisa ser retomado");
     if (learningState.key === "maintenance") reasons.push("bom domínio reduz a necessidade de novo contato imediato");
@@ -149,7 +162,9 @@
       trend: diagnosis.trend?.label || "insufficient",
       recommendedSession,
       scoreComponents: components,
-      diminishingReturns: maintenancePenalty + strongPenalty,
+      diminishingReturns: maintenancePenalty + strongPenalty + inheritedHistoryCredit,
+      historyInheritance,
+      diagnosisOrigin: hasContact ? (historyInheritance.level !== "none" || initialProfile.active ? "mixed" : "current-cycle") : historyInheritance.origin || (initialProfile.active ? "self-assessment" : "none"),
       reasons: [...new Set(reasons)].slice(0, 5),
     };
   }

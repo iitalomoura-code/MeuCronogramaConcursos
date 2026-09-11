@@ -23,7 +23,7 @@
     return hadStrongHistory && declinedEnough && reliable && persistent;
   }
 
-  function derive({ diagnosis = {}, hasContact = false, coverage = 0, intervention = null, errorSignals = null, initialProfile = null } = {}) {
+  function derive({ diagnosis = {}, hasContact = false, coverage = 0, intervention = null, errorSignals = null, initialProfile = null, historyInheritance = null } = {}) {
     const signals = errorSignals || diagnosis.errorSignals || {};
     const questions = Math.max(0, Number(diagnosis.questions) || 0);
     const covered = Math.max(clamp(coverage), hasContact ? .5 : 0);
@@ -31,12 +31,17 @@
     const recovery = hasRecoveryEvidence(diagnosis, intervention || {}, signals);
     const profileLevel = initialProfile?.level || "unknown";
     const profileIsActive = Boolean(initialProfile?.active);
+    const inheritedLevel = historyInheritance?.level || "none";
+    const inheritedDiagnostic = !hasContact && !questions && covered < .1 && ["strong", "partial"].includes(inheritedLevel);
     const awaitingDiagnostic = !hasContact && !questions && covered < .1
       && profileIsActive
       && ["intermediate", "advanced"].includes(profileLevel);
     let key = "practice";
 
-    if (awaitingDiagnostic) key = "practice";
+    if (inheritedDiagnostic && inheritedLevel === "strong") key = "practice";
+    else if (inheritedDiagnostic) key = "consolidating";
+    else if (!hasContact && !questions && covered < .1 && inheritedLevel === "contact") key = "building";
+    else if (awaitingDiagnostic) key = "practice";
     else if (!hasContact && !questions && covered < .1 && profileIsActive && profileLevel === "basic") key = "building";
     else if (!hasContact && !questions && covered < .1) key = "not-started";
     else if (recovery) key = "recovery";
@@ -57,11 +62,14 @@
       label: labels[key],
       mastery,
       initialProfile: profileLevel,
-      awaitingDiagnostic,
+      historyInheritance: inheritedLevel,
+      awaitingDiagnostic: awaitingDiagnostic || inheritedDiagnostic,
       hasRecoveryEvidence: recovery,
       covered,
       reasons: recovery
         ? ["queda confirmada após desempenho anterior forte", "erros ou resposta insuficiente ao reforço"]
+        : inheritedDiagnostic
+          ? ["há base anterior; confirme o ponto atual com questões diagnósticas"]
         : awaitingDiagnostic
           ? ["a base inicial informada será confirmada com questões diagnósticas"]
         : key === "not-started"
