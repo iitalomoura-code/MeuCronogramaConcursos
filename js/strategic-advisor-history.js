@@ -297,6 +297,7 @@
           direction: stateDirection,
           previous: { learningState: before.learningState },
           current: { learningState: topic.learningState },
+          explanation: `${topic.assunto || topic.materia} ${stateDirection === "improvement" ? "avançou" : "passou"} de ${learningStateLabel(before.learningState)} para ${learningStateLabel(topic.learningState)}.`,
         });
       }
     });

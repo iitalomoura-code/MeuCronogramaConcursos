@@ -63,6 +63,7 @@ assert.equal(comparison.newPriorities.length, 1, "Manutenção para recuperaçã
 
 comparison = history.compare(snapshot([topic({ category: "building", learningState: "building", diagnosisLevel: "insufficient" })], undefined, "building-before"), snapshot([topic({ category: "maintain", learningState: "consolidating", diagnosisLevel: "attention" })], undefined, "consolidating"));
 assert.equal(comparison.learningStateChanges[0].direction, "improvement", "Construção para consolidação deve ser uma progressão de estado.");
+assert.ok(comparison.learningStateChanges[0].explanation.includes("construção para consolidação"), "A mudança de learningState deve incluir uma explicação auditável.");
 comparison = history.compare(snapshot([topic({ category: "maintain", learningState: "consolidating", diagnosisLevel: "attention" })], undefined, "consolidating-before"), snapshot([topic({ category: "maintain", learningState: "practice", diagnosisLevel: "adequate" })], undefined, "practice"));
 assert.equal(comparison.learningStateChanges[0].current.learningState, "practice", "Consolidação para questões deve ser registrada estruturadamente.");
 comparison = history.compare(snapshot([topic({ category: "maintain", learningState: "practice", diagnosisLevel: "adequate" })], undefined, "practice-before"), snapshot([topic({ category: "reduce", learningState: "maintenance", diagnosisLevel: "strong" })], undefined, "maintenance"));
@@ -98,9 +99,21 @@ assert.equal(comparison.grouped.improvements.length, 1, "Mudanças múltiplas da
 assert.equal(comparison.grouped.improvements[0].title, "Contabilidade", "A síntese deve agrupar mudanças pelo nome da matéria.");
 
 const restored = history.rehydrateSnapshots([JSON.parse(JSON.stringify(first))]);
-assert.ok(Object.isFrozen(restored[0]) && Object.isFrozen(restored[0].topics), "Snapshots restaurados devem ser novamente imutáveis.");
+assert.ok(Object.isFrozen(restored[0]) && Object.isFrozen(restored[0].topics) && Object.isFrozen(restored[0].topics[0]) && Object.isFrozen(restored[0].coverage), "Snapshots restaurados devem ser novamente imutáveis, inclusive em estruturas internas.");
 
-const studyState = { questions: 40, sessions: 3, hours: 12, confidence: .75, level: "deficiency", priority: .7, recency: 5, intervention: { count: 1 }, strategicAdvisorSnapshots: [] };
+const studyState = {
+  questions: 40,
+  sessions: 3,
+  hours: 12,
+  confidence: .75,
+  mastery: { level: "deficiency" },
+  priority: .7,
+  recency: 5,
+  interventionHistory: [{ id: "intervention-1", result: "unchanged" }],
+  reviews: [{ id: "review-1", status: "open" }],
+  errors: [{ id: "error-1", type: "content" }],
+  strategicAdvisorSnapshots: [],
+};
 const beforeStudyData = JSON.stringify(studyState);
 let snapshots = [];
 for (let index = 0; index < 22; index += 1) {
