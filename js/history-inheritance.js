@@ -88,24 +88,72 @@
       || Number(block.tempoEstudado) > 0;
   }
 
+  function snapshotBlockCandidates(source = {}) {
+    const snapshot = source.snapshot || source.data || {};
+    return [
+      ...(snapshot.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true, collection: "completedHistory" })),
+      ...(snapshot.generatedBlocks || []).map((block) => ({ block, explicitCompletionHistory: false, collection: "generatedBlocks" })),
+      ...(snapshot.cycleHistory || []).flatMap((cycle) => [
+        ...(cycle.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true, collection: "cycleHistory" })),
+        ...(cycle.generatedBlocks || []).map((block) => ({ block, explicitCompletionHistory: false, collection: "cycleHistory" })),
+      ]),
+      ...(snapshot.cycleResults || []).flatMap((cycle) => (cycle.completed || []).map((block) => ({ block, explicitCompletionHistory: true, collection: "cycleResults" }))),
+      ...(snapshot.interventionHistory || []).map((block) => ({ block, explicitCompletionHistory: true, collection: "interventionHistory" })),
+    ];
+  }
+
+  function executionIdentity(block = {}) {
+    const value = block.sessaoId || block.sessionId || block.lastSavedSessionId || block.eventId || block.executionId;
+    return value ? String(value) : "";
+  }
+
+  function structuralExecutionSignature(block = {}) {
+    return [normalize(block.materia), normalize(block.assunto), dateValue(block), Number(block.questoes) || 0, Number(block.acertos) || 0, Number(block.tempoEstudado) || 0].join("|");
+  }
+
+  function uniqueExecutionCandidates(candidates = []) {
+    const identities = new Set();
+    const structural = new Map();
+    return candidates.filter(({ block }) => {
+      const identity = executionIdentity(block);
+      const signature = structuralExecutionSignature(block);
+      const record = structural.get(signature) || { anonymous: false };
+      if (identity) {
+        if (identities.has(identity) || record.anonymous) return false;
+        identities.add(identity);
+        record.hasIdentifiedExecution = true;
+        structural.set(signature, record);
+        return true;
+      }
+      if (record.anonymous || record.hasIdentifiedExecution) return false;
+      record.anonymous = true;
+      structural.set(signature, record);
+      return true;
+    });
+  }
+
   function snapshotBlocks(source = {}) {
     const snapshot = source.snapshot || source.data || {};
-    const blocks = [
-      ...(snapshot.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
-      ...(snapshot.cycleHistory || []).flatMap((cycle) => [
-        ...(cycle.completedHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
-        ...(cycle.generatedBlocks || []).map((block) => ({ block, explicitCompletionHistory: false })),
-      ]),
-      ...(snapshot.cycleResults || []).flatMap((cycle) => (cycle.completed || []).map((block) => ({ block, explicitCompletionHistory: true }))),
-      ...(snapshot.interventionHistory || []).map((block) => ({ block, explicitCompletionHistory: true })),
-    ].filter(({ block, explicitCompletionHistory }) => block?.materia && block?.assunto && hasExecutionEvidence(block, explicitCompletionHistory));
-    const seen = new Set();
-    return blocks.filter(({ block }) => {
-      const signature = [normalize(block.materia), normalize(block.assunto), dateValue(block), Number(block.questoes) || 0, Number(block.acertos) || 0, Number(block.tempoEstudado) || 0].join("|");
-      if (seen.has(signature)) return false;
-      seen.add(signature);
-      return true;
-    }).map(({ block }) => ({ ...block, sourceId: source.id || "", sourceName: source.name || snapshot.form?.contestName || "Planejamento anterior" }));
+    const blocks = snapshotBlockCandidates(source)
+      .filter(({ block, explicitCompletionHistory }) => block?.materia && block?.assunto && hasExecutionEvidence(block, explicitCompletionHistory));
+    return uniqueExecutionCandidates(blocks)
+      .map(({ block }) => ({ ...block, sourceId: source.id || "", sourceName: source.name || snapshot.form?.contestName || "Planejamento anterior" }));
+  }
+
+  function inspectSource(source = {}) {
+    const candidates = snapshotBlockCandidates(source);
+    const count = (collection) => candidates.filter(({ collection: current, block, explicitCompletionHistory }) =>
+      current === collection && block?.materia && block?.assunto && hasExecutionEvidence(block, explicitCompletionHistory)
+    ).length;
+    return {
+      totalGeneratedBlocks: candidates.filter(({ collection }) => collection === "generatedBlocks").length,
+      executedGeneratedBlocks: count("generatedBlocks"),
+      completedHistoryBlocks: count("completedHistory"),
+      cycleHistoryBlocks: count("cycleHistory"),
+      cycleResultBlocks: count("cycleResults"),
+      interventionBlocks: count("interventionHistory"),
+      uniqueExecutionBlocks: snapshotBlocks(source).length,
+    };
   }
 
   function sourceDifficulty(source = {}, materia = "") {
@@ -134,6 +182,36 @@
       });
     }));
     return matches.sort((left, right) => right.score - left.score || dateValue(right.entry) - dateValue(left.entry));
+  }
+
+  function inspectTarget(target = {}, sources = []) {
+    const examined = sources.flatMap((source) => snapshotBlocks(source).map((entry) => ({ source, entry })));
+    const rejected = [];
+    const accepted = [];
+    sources.forEach((source) => snapshotBlockCandidates(source).forEach(({ block, explicitCompletionHistory }) => {
+      if (!block?.materia || !block?.assunto || !hasExecutionEvidence(block, explicitCompletionHistory)) {
+        if (block?.materia || block?.assunto) rejected.push({ source, entry: block, reason: "no-execution-evidence", subject: { score: 0 }, topic: { score: 0 } });
+      }
+    }));
+    examined.forEach(({ source, entry }) => {
+      const subject = subjectMatch(target.materia, entry.materia);
+      const topic = topicMatch(target.assunto, entry.assunto);
+      const acceptedMatch = topic.score >= .72 && !(subject.score < .45 && topic.score < .96);
+      const candidate = { source, entry, subject, topic, reason: acceptedMatch ? "accepted" : subject.score < .45 ? "subject-mismatch" : "topic-mismatch" };
+      if (acceptedMatch) accepted.push(candidate);
+      else rejected.push(candidate);
+    });
+    const bestRejected = rejected
+      .filter((candidate) => candidate.reason !== "no-execution-evidence")
+      .sort((left, right) => (right.topic.score + right.subject.score) - (left.topic.score + left.subject.score))[0] || null;
+    return {
+      examinedExecutionBlocks: examined.length,
+      subjectMatches: examined.filter(({ entry }) => subjectMatch(target.materia, entry.materia).score >= .45).length,
+      topicMatches: examined.filter(({ entry }) => topicMatch(target.assunto, entry.assunto).score >= .72).length,
+      accepted,
+      rejected,
+      bestRejected,
+    };
   }
 
   function confidenceLabel(score) {
@@ -246,7 +324,7 @@
     };
   }
 
-  const api = { normalize, subjectMatch, topicMatch, snapshotBlocks, matchingEntries, derive };
+  const api = { normalize, subjectMatch, topicMatch, snapshotBlocks, matchingEntries, inspectSource, inspectTarget, derive };
   global.HistoryInheritance = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

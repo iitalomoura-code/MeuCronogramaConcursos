@@ -47,6 +47,62 @@ assert.equal(inheritance.snapshotBlocks(generatedOnly).length, 0, "Bloco gerado 
 const executedLegacy = { id: "legado", name: "Legado", snapshot: { cycleHistory: [{ generatedBlocks: [{ materia: "Direito Administrativo", assunto: "Atos Administrativos", questoes: 8, acertos: 6 }] }] } };
 assert.equal(inheritance.snapshotBlocks(executedLegacy).length, 1, "Questões registradas devem preservar uma execução legada inequívoca.");
 
+// O ciclo vivo do planejamento anterior também deve fornecer evidência, sem contar blocos apenas planejados.
+const activeCycle = {
+  id: "tce-ativo",
+  name: "TCE ativo",
+  snapshot: {
+    generatedBlocks: [
+      { materia: "Direito Administrativo", assunto: "Atos Administrativos", questoes: 50, acertos: 41, tempoEstudado: 1.5, status: "Em andamento", sessaoId: "ativo-1" },
+      { materia: "Direito Constitucional", assunto: "Direitos Fundamentais", status: "Não iniciado", questoes: 0, tempoEstudado: 0 },
+      { materia: "Raciocínio Lógico", assunto: "Proposições", status: "Concluído", questoes: 35, acertos: 30, sessaoId: "ativo-2" },
+      { materia: "Administração Pública", assunto: "Governança Pública", status: "Concluído", questoes: 30, acertos: 25, sessaoId: "ativo-3" },
+    ],
+  },
+};
+assert.equal(inheritance.snapshotBlocks(activeCycle).length, 3, "Apenas blocos executados do ciclo vivo devem entrar na herança.");
+assert.notEqual(derive({ materia: "Direito Administrativo", assunto: "Atos Administrativos" }, [activeCycle]).level, "none");
+assert.equal(derive({ materia: "Direito Constitucional", assunto: "Direitos Fundamentais" }, [activeCycle]).level, "none", "Bloco apenas planejado não pode gerar herança.");
+assert.notEqual(derive({ materia: "Raciocínio Lógico", assunto: "Proposições" }, [activeCycle]).level, "none");
+assert.notEqual(derive({ materia: "Administração Pública", assunto: "Governança Pública" }, [activeCycle]).level, "none");
+const activeConstitutional = {
+  id: "constitucional-ativo",
+  name: "Constitucional ativo",
+  snapshot: { generatedBlocks: [{ materia: "Direito Constitucional", assunto: "Direitos Fundamentais", status: "Concluído", questoes: 40, acertos: 33, sessaoId: "constitucional-1" }] },
+};
+assert.notEqual(derive({ materia: "Direito Constitucional", assunto: "Direitos Fundamentais" }, [activeConstitutional]).level, "none", "Correspondência exata executada do ciclo ativo deve aparecer.");
+const sourceAudit = inheritance.inspectSource(activeCycle);
+assert.deepEqual(sourceAudit, {
+  totalGeneratedBlocks: 4,
+  executedGeneratedBlocks: 3,
+  completedHistoryBlocks: 0,
+  cycleHistoryBlocks: 0,
+  cycleResultBlocks: 0,
+  interventionBlocks: 0,
+  uniqueExecutionBlocks: 3,
+});
+
+const duplicatedExecution = {
+  id: "duplicado",
+  name: "Duplicado",
+  snapshot: {
+    generatedBlocks: [{ materia: "Direito Administrativo", assunto: "Atos Administrativos", questoes: 40, acertos: 34, tempoEstudado: 1, sessaoId: "same-session" }],
+    completedHistory: [{ materia: "Direito Administrativo", assunto: "Atos Administrativos", questoes: 40, acertos: 34, tempoEstudado: 1, sessaoId: "same-session", status: "Concluído" }],
+  },
+};
+assert.equal(inheritance.snapshotBlocks(duplicatedExecution).length, 1, "A mesma sessão em generatedBlocks e completedHistory não pode dobrar a evidência.");
+assert.equal(derive({ materia: "Direito Administrativo", assunto: "Atos Administrativos" }, [duplicatedExecution]).metrics.questions, 40);
+const targetAudit = inheritance.inspectTarget({ materia: "Direito Administrativo", assunto: "Atos Administrativos" }, [activeCycle]);
+assert.equal(targetAudit.examinedExecutionBlocks, 3);
+assert.equal(targetAudit.accepted.length, 1);
+assert.ok(targetAudit.rejected.some((candidate) => candidate.reason === "subject-mismatch" || candidate.reason === "topic-mismatch"));
+assert.ok(inheritance.inspectTarget({ materia: "Direito Constitucional", assunto: "Direitos Fundamentais" }, [activeCycle]).rejected.some((candidate) => candidate.reason === "no-execution-evidence"));
+
+// Os aliases conservadores existentes continuam válidos; esta etapa não amplia o matching.
+assert.notEqual(derive({ materia: "Administração Pública", assunto: "Governança Pública" }, [source({ materia: "Administração Geral e Pública", assunto: "Governança Pública" })]).level, "none");
+assert.notEqual(derive({ materia: "Direito Financeiro", assunto: "Receita Pública" }, [source({ materia: "Administração Financeira e Orçamentária", assunto: "Receita Pública" })]).level, "none");
+assert.notEqual(derive({ materia: "Direito Financeiro", assunto: "Receita Pública" }, [source({ materia: "AFO", assunto: "Receita Pública" })]).level, "none");
+
 // D: equivalência semântica controlada.
 const equivalent = derive({ materia: "Administração Geral e Pública", assunto: "Planejamento Estratégico" }, [source({ materia: "Administração Pública", assunto: "Planejamento estratégico, tático e operacional" })]);
 assert.ok(["high", "medium"].includes(equivalent.matchConfidence));
@@ -99,6 +155,6 @@ assert.equal(inheritance.topicMatch("Receita Pública", "Receitas Públicas").co
 assert.equal(inheritance.subjectMatch("Administração Pública", "Governança Pública").score, 0);
 assert.ok(app.includes("function refreshHistoryInheritanceSources") && app.includes("function historyInheritanceForTarget"), "O aplicativo deve carregar fontes anteriores de forma derivada.");
 assert.ok(app.includes("historyInheritance: target.historyInheritance"), "A prioridade estratégica deve receber a herança sem alterar o diagnóstico atual.");
-assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance"), "O motor de herança deve carregar antes do aplicativo.");
+assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance-active-blocks"), "O motor de herança deve carregar antes do aplicativo.");
 
 console.log("OK - herança entre ciclos usa correspondência conservadora, recência e evidências separadas.");
