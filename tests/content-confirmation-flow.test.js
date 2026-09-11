@@ -7,6 +7,8 @@ const vm = require("vm");
 
 const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
+assert.ok(index.includes("app.js?v=20260911-content-confirmation"), "A publicação precisa solicitar a versão atual do fluxo de confirmação.");
 const start = app.indexOf("function contentConfirmationDecision");
 const end = app.indexOf("function renderPlanningBase", start);
 assert.ok(start >= 0 && end > start, "O fluxo de confirmação do conteúdo deve estar isolado antes da renderização da base.");
