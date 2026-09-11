@@ -1058,6 +1058,14 @@ const KNOWN_SUBJECT_NAMES = new Set([
   "direito constitucional",
   "direito penal",
   "direito tributario",
+  "lingua inglesa",
+  "ingles",
+  "administracao geral",
+  "administracao publica",
+  "contabilidade geral",
+  "contabilidade geral e publica",
+  "comercio internacional",
+  "legislacao aduaneira",
   "contabilidade publica",
   "auditoria",
   "etica",
@@ -1114,6 +1122,9 @@ function looksLikeSubjectLine(line, hasOpenSubject = false, { nextLine = "" } = 
 
 function isTopicTitleFollowedByDescription(line, nextLine, hasOpenSubject = false) {
   if (!hasOpenSubject || parseOutlineNumber(line) || parseOutlineNumber(nextLine)) return false;
+  // Uma linha já no formato "Meta: conteúdo" é autônoma. Ela não pode ser
+  // absorvida como descrição do título simples imediatamente anterior.
+  if (splitNamedThemeLine(nextLine)) return false;
   const title = normalizeTopic(stripEnumerator(line));
   const description = normalizeTopic(stripEnumerator(nextLine));
   if (!title || !description || title.includes(":") || title.includes(";")) return false;
@@ -1274,11 +1285,9 @@ function parseExplicitSubjectMarkerContent(rawText) {
       appendTopic(`${currentTopic.title}: ${line.replace(/^assunto\s*:\s*/i, "")}`, sourceLine);
       return;
     }
-    if (line.includes(":")) {
-      appendTopic(line, sourceLine);
-      return;
-    }
-    appendContinuation(line, sourceLine);
+    // Dentro de uma MATÉRIA explícita, toda linha não vazia é uma meta. Os
+    // dois-pontos apenas separam título e detalhamento; não definem a meta.
+    appendTopic(line, sourceLine);
   });
 
   const uniqueSubjects = [...new Set(subjects)];

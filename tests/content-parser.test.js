@@ -294,5 +294,47 @@ const explicitMeta = parser.getLastProgramParseMeta();
 assert.ok(explicitMeta.subjectsWithoutTopics.includes("SEM TEMA"), "A prévia deve alertar matérias sem temas.");
 assert.ok(explicitMeta.parsingProblems.some((problem) => problem.type === "numbered-before-subject"), "A prévia deve alertar numeração antes da primeira matéria.");
 
+const internationalTrade = parser.parseProgramContent(`
+COMÉRCIO INTERNACIONAL
+Fundamentos do Comércio Internacional
+Economia Internacional
+Integração Econômica: área de livre comércio e união aduaneira
+Mercosul: estrutura e tratados
+Logística Internacional
+`);
+assert.equal(internationalTrade.length, 5, "Cada linha não vazia após COMÉRCIO INTERNACIONAL deve virar uma meta, com ou sem dois-pontos.");
+assert.deepEqual(internationalTrade.map((row) => row.assunto.split(":")[0]), ["Fundamentos do Comércio Internacional", "Economia Internacional", "Integração Econômica", "Mercosul", "Logística Internacional"]);
+assert.equal(internationalTrade[2].assunto, "Integração Econômica: área de livre comércio e união aduaneira", "Dois-pontos devem separar título e detalhamento, sem criar outra matéria.");
+
+const administrativeLawPlainLines = parser.parseProgramContent(`
+DIREITO ADMINISTRATIVO
+Princípios Administrativos: princípios básicos
+Poderes Administrativos: hierárquico, disciplinar, regulamentar e polícia
+Atos Administrativos: conceito e atributos
+Organização Administrativa
+`);
+assert.equal(administrativeLawPlainLines.length, 4, "Linhas simples e linhas detalhadas devem coexistir na mesma matéria.");
+assert.deepEqual(administrativeLawPlainLines.map((row) => row.assunto.split(":")[0]), ["Princípios Administrativos", "Poderes Administrativos", "Atos Administrativos", "Organização Administrativa"]);
+
+const portuguesePlainLines = parser.parseProgramContent(`
+LÍNGUA PORTUGUESA
+Interpretação de textos
+Semântica
+Sintaxe: oração, período, coordenação e subordinação
+Pontuação
+`);
+assert.equal(portuguesePlainLines.length, 4, "Uma meta simples não pode ser absorvida pela meta detalhada seguinte.");
+assert.deepEqual(portuguesePlainLines.map((row) => row.assunto.split(":")[0]), ["Interpretação de textos", "Semântica", "Sintaxe", "Pontuação"]);
+
+const explicitPlainLines = parser.parseProgramContent(`
+MATÉRIA: COMÉRCIO INTERNACIONAL
+Fundamentos econômicos e principais teorias do comércio internacional
+Política econômica em economias abertas
+Mercosul: estrutura, objetivos e tratados
+Contratos de câmbio: contratação, liquidação e alteração
+`);
+assert.equal(explicitPlainLines.length, 4, "No formato MATÉRIA:, cada linha não vazia deve abrir uma meta mesmo sem dois-pontos.");
+assert.deepEqual(explicitPlainLines.map((row) => row.assunto.split(":")[0]), ["Fundamentos econômicos e principais teorias do comércio internacional", "Política econômica em economias abertas", "Mercosul", "Contratos de câmbio"]);
+
 console.log(`OK - parser TCE-PE: ${subjects.length} materias e ${rows.length} temas.`);
 console.log("OK - marcadores gen\u00e9ricos, temas expl\u00edcitos, numera\u00e7\u00e3o hier\u00e1rquica, continua\u00e7\u00f5es e normaliza\u00e7\u00e3o.");
