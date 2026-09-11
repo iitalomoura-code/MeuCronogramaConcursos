@@ -4537,7 +4537,7 @@ function initialDiagnosisRecordFor(materia = "") {
   ) || null;
 }
 
-function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true } = {}) {
+function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true, invalidate = true } = {}) {
   if (!materia || !window.InitialDiagnosisEngine) return;
   const normalizedLevel = window.InitialDiagnosisEngine.normalizeLevel(level);
   const subjectId = initialDiagnosisSubjectId(materia);
@@ -4553,7 +4553,7 @@ function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true
   };
   state.initialDiagnosis = (state.initialDiagnosis || []).filter((item) => item !== current && item.subjectId !== subjectId);
   state.initialDiagnosis.push(record);
-  invalidateDerivedStudyCaches();
+  if (invalidate) invalidateDerivedStudyCaches();
   if (save) scheduleAutoSave();
 }
 
@@ -4564,6 +4564,19 @@ function ensureInitialDiagnosisForSubjects({ saveUnknown = false } = {}) {
     if (!initialDiagnosisRecordFor(subject.materia)) setInitialDiagnosisLevel(subject.materia, "unknown", { save: false });
   });
   scheduleAutoSave();
+}
+
+function updateInitialDiagnosisSubjectNotice(row) {
+  const materia = row?.dataset?.diagnosisSubject || "";
+  const notice = row?.querySelector("[data-diagnosis-notice]");
+  if (!materia || !notice || !window.InitialDiagnosisEngine) return;
+  const influence = initialDiagnosisInfluence(materia);
+  if (influence.historyIsPrimary) {
+    notice.textContent = "Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.";
+    return;
+  }
+  const level = window.InitialDiagnosisEngine.levelInfo?.(influence.level)?.label || "Não sei avaliar";
+  notice.textContent = `Nível estimado agora: ${level} · aguardando evidências do estudo`;
 }
 
 function initialDiagnosisEvidence(materia = "", assunto = "", subarea = "") {
@@ -4742,8 +4755,8 @@ function renderInitialDiagnosis() {
       diagnosis: subjectDiagnosis,
     });
     const historyNotice = influence.historyIsPrimary
-      ? `<small>Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.</small>`
-      : `<small>Nível estimado agora: ${escapeHtml(estimated.label)} · ${estimated.source === "evidence" ? "baseado no desempenho registrado" : "aguardando evidências do estudo"}</small>`;
+      ? `<small data-diagnosis-notice>Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.</small>`
+      : `<small data-diagnosis-notice>Nível estimado agora: ${escapeHtml(estimated.label)} · ${estimated.source === "evidence" ? "baseado no desempenho registrado" : "aguardando evidências do estudo"}</small>`;
     return `<article class="initial-diagnosis-row" data-diagnosis-subject="${escapeHtml(subject.materia)}">
       <div class="initial-diagnosis-subject"><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} tema${subject.assuntos?.length === 1 ? "" : "s"}</span>${historyInheritanceSubjectMarkup(histories[index], index)}${historyNotice}</div>
       <div class="initial-diagnosis-options" role="radiogroup" aria-label="Conhecimento inicial em ${escapeHtml(subject.materia)}">
@@ -15904,8 +15917,9 @@ els.initialDiagnosisList?.addEventListener("change", (event) => {
   const input = event.target.closest('input[type="radio"]');
   const row = input?.closest("[data-diagnosis-subject]");
   if (!input || !row) return;
-  setInitialDiagnosisLevel(row.dataset.diagnosisSubject, input.value);
-  renderInitialDiagnosis();
+  setInitialDiagnosisLevel(row.dataset.diagnosisSubject, input.value, { save: false });
+  updateInitialDiagnosisSubjectNotice(row);
+  scheduleAutoSave();
 });
 els.initialDiagnosisList?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-toggle-history-subject]");
@@ -15919,8 +15933,15 @@ els.initialDiagnosisList?.addEventListener("click", (event) => {
 });
 els.applyDiagnosisBulkButton?.addEventListener("click", () => {
   const level = els.diagnosisBulkLevel?.value || "unknown";
-  (state.planningBase?.materias || []).forEach((subject) => setInitialDiagnosisLevel(subject.materia, level, { save: false }));
-  renderInitialDiagnosis();
+  (state.planningBase?.materias || []).forEach((subject) => {
+    setInitialDiagnosisLevel(subject.materia, level, { save: false, invalidate: false });
+    const row = [...els.initialDiagnosisList.querySelectorAll("[data-diagnosis-subject]")]
+      .find((item) => normalizeForMatch(item.dataset.diagnosisSubject) === normalizeForMatch(subject.materia));
+    const input = [...(row?.querySelectorAll('input[type="radio"]') || [])].find((item) => item.value === level);
+    if (input) input.checked = true;
+    updateInitialDiagnosisSubjectNotice(row);
+  });
+  invalidateDerivedStudyCaches();
   scheduleAutoSave();
 });
 els.backToContentFromDiagnosisButton?.addEventListener("click", () => {
