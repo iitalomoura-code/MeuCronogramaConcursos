@@ -12780,22 +12780,28 @@ function knowledgeBaseCloudIsAvailable() {
 function knowledgeBaseStructureSignature(base = {}) {
   return JSON.stringify({
     schemaVersion: base.schemaVersion,
-    concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]),
-    evidence: (base.evidence || []).map((item) => item.id),
-    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.originalSubject, item.originalTopic, item.canonicalKey]),
+    concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    evidence: (base.evidence || []).map((item) => [item.id, item.canonicalKey, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.originalSubject, item.originalTopic, item.canonicalKey]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
   });
+}
+
+function knowledgeBaseNeedsCloudSync(cloudRecord, next = {}) {
+  if (!cloudRecord?.data) return true;
+  return knowledgeBaseStructureSignature(cloudRecord.data) !== knowledgeBaseStructureSignature(next);
 }
 
 function mergeKnowledgeBases(...bases) {
   const usable = bases.filter((base) => base?.schemaVersion);
   if (!usable.length) return window.KnowledgeBase?.emptyKnowledgeBase?.() || null;
   const first = usable[0];
-  return {
+  const merged = {
     ...first,
     concepts: usable.flatMap((base) => base.concepts || []),
     evidence: usable.flatMap((base) => base.evidence || []),
     topicMappings: usable.flatMap((base) => base.topicMappings || []),
   };
+  return window.KnowledgeBase?.buildKnowledgeBase ? window.KnowledgeBase.buildKnowledgeBase(merged, []) : merged;
 }
 
 function localKnowledgeBaseSources() {
@@ -12850,9 +12856,11 @@ async function bootstrapKnowledgeBase() {
   knowledgeBaseBootstrapPromise = (async () => {
     const local = readLocalKnowledgeBase();
     let cloud = null;
+    let cloudRecord = null;
     if (knowledgeBaseCloudIsAvailable()) {
       try {
         const record = await window.loadCloudKnowledgeBase();
+        cloudRecord = record;
         cloud = record?.data || null;
         knowledgeBaseCloudVersion = Number(record?.version) || 0;
       } catch {
@@ -12862,12 +12870,10 @@ async function bootstrapKnowledgeBase() {
     const { sources, failures } = await collectKnowledgeBaseSources();
     const sourceKey = [userId, ...sources.map((source) => `${source.id}:${source.snapshot?.savedAt || source.snapshot?.form?.contestName || ""}`)].sort().join("|");
     const base = mergeKnowledgeBases(cloud, local) || window.KnowledgeBase.emptyKnowledgeBase();
-    const before = knowledgeBaseStructureSignature(base);
     const next = window.KnowledgeBase.buildKnowledgeBase(base, sources);
-    const after = knowledgeBaseStructureSignature(next);
     knowledgeBaseState = { ...next, bootstrap: { sourceKey, failures, completedAt: new Date().toISOString() } };
     saveLocalKnowledgeBase(knowledgeBaseState);
-    if (after !== before && knowledgeBaseCloudIsAvailable()) {
+    if (knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState) && knowledgeBaseCloudIsAvailable()) {
       try {
         const saved = await window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion });
         knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
@@ -13842,18 +13848,30 @@ function applyDriveDataSnapshot(bundle = {}) {
   localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
   renderPlanSelect();
   applyAppSnapshot(snapshots[state.currentPlanId] || blankAppSnapshot(state.plans[0].name));
-  if (bundle.knowledgeBase) restoreKnowledgeBaseFromBackup(bundle.knowledgeBase);
+  if (bundle.knowledgeBase) void restoreKnowledgeBaseFromBackup(bundle.knowledgeBase);
 }
 
-function restoreKnowledgeBaseFromBackup(imported = {}) {
-  if (!window.KnowledgeBase || !imported?.schemaVersion) return;
-  knowledgeBaseState = window.KnowledgeBase.buildKnowledgeBase(mergeKnowledgeBases(readLocalKnowledgeBase(), imported), []);
-  saveLocalKnowledgeBase(knowledgeBaseState);
+async function restoreKnowledgeBaseFromBackup(imported = {}) {
+  if (!window.KnowledgeBase || !imported?.schemaVersion) return null;
+  const local = readLocalKnowledgeBase();
+  let cloud = null;
+  let cloudRecord = null;
   if (knowledgeBaseCloudIsAvailable()) {
-    void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion })
-      .then((record) => { knowledgeBaseCloudVersion = Number(record?.version) || knowledgeBaseCloudVersion; })
-      .catch(() => {});
+    try {
+      cloudRecord = await window.loadCloudKnowledgeBase();
+      cloud = cloudRecord?.data || null;
+      knowledgeBaseCloudVersion = Number(cloudRecord?.version) || 0;
+    } catch {}
   }
+  knowledgeBaseState = window.KnowledgeBase.buildKnowledgeBase(mergeKnowledgeBases(cloud, local, imported), []);
+  saveLocalKnowledgeBase(knowledgeBaseState);
+  if (knowledgeBaseCloudIsAvailable() && knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState)) {
+    try {
+      const record = await window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion });
+      knowledgeBaseCloudVersion = Number(record?.version) || knowledgeBaseCloudVersion;
+    } catch {}
+  }
+  return knowledgeBaseState;
 }
 
 function exportBackup() {
@@ -13905,7 +13923,7 @@ async function importBackup(file) {
   }
   localStorage.setItem(planStorageKey(state.currentPlanId), text);
   applyAppSnapshot(snapshot);
-  restoreKnowledgeBaseFromBackup(snapshot.knowledgeBase);
+  await restoreKnowledgeBaseFromBackup(snapshot.knowledgeBase);
   saveAppStateNow("Backup importado");
 }
 
@@ -13928,7 +13946,7 @@ async function importSnapshotIntoCloud(snapshot, importedKnowledgeBase = null) {
       state.plans.push(cloudPlanMeta(record));
       await loadCloudPlanIntoState(record.id);
       updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado como novo planejamento" });
-      restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
+      await restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
       showToast("Backup importado como novo planejamento.");
     } catch {
       updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível importar o backup na conta." });
@@ -13944,7 +13962,7 @@ async function importSnapshotIntoCloud(snapshot, importedKnowledgeBase = null) {
     updateCloudPlanMeta(record);
     saveCloudCache(record, snapshot);
     applyAppSnapshot(snapshot);
-    restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
+    await restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
     updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado no planejamento atual" });
     showToast("Backup importado no planejamento atual.");
   } catch (error) {

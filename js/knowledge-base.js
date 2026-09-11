@@ -2,6 +2,7 @@
 
 (function initKnowledgeBase(global) {
   const SCHEMA_VERSION = 1;
+  const MAX_RELIABLE_SESSION_MINUTES = 240;
   const HISTORY = global.HistoryInheritance || (typeof require === "function" ? require("./history-inheritance.js") : null);
 
   function nowIso() {
@@ -31,7 +32,8 @@
     return {
       ...concept,
       canonicalTitle: text(canonical.title) || concept.canonicalTitle,
-      domain: text(canonical.subject || entry.materia),
+      // A matéria é contexto da evidência, não uma família conceitual permanente.
+      domain: "",
     };
   }
 
@@ -44,11 +46,25 @@
     if (typeof value === "number") return Math.round(nonNegativeNumber(value) * (numericUnit === "hours" ? 60 : 1));
     const raw = text(value).toLowerCase().replace(",", ".");
     if (!raw) return 0;
+    const clock = raw.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    if (clock) return Math.round(Number(clock[1]) * 60 + Number(clock[2]));
     const hours = raw.match(/(\d+(?:\.\d+)?)\s*(?:h|hora|horas)\b/);
     const minutes = raw.match(/(\d+(?:\.\d+)?)\s*(?:min|minuto|minutos)\b/);
     if (hours || minutes) return Math.round((Number(hours?.[1]) || 0) * 60 + (Number(minutes?.[1]) || 0));
     const number = Number(raw);
     return Number.isFinite(number) ? Math.round(Math.max(0, number) * (numericUnit === "hours" ? 60 : 1)) : 0;
+  }
+
+  function legacyTimeDetails(value) {
+    if (typeof value === "string" && /(?:h|hora|min|:)/i.test(value)) return { minutes: normalizeMinutes(value), warning: "" };
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return { minutes: 0, warning: "" };
+    // O formato atual registra horas decimais; backups antigos também têm minutos
+    // inteiros. O limite confiável evita converter 45 min em 45 horas.
+    if (number > 0 && number <= 4) return { minutes: Math.round(number * 60), warning: "" };
+    if (Number.isInteger(number) && number >= 15 && number <= MAX_RELIABLE_SESSION_MINUTES) return { minutes: Math.round(number), warning: "" };
+    if (number > MAX_RELIABLE_SESSION_MINUTES) return { minutes: Math.round(number), warning: "ambiguous-legacy-time" };
+    return { minutes: Math.round(number), warning: "ambiguous-legacy-time" };
   }
 
   function originalCompletedAt(entry = {}) {
@@ -59,12 +75,16 @@
     return text(entry.activityType || entry.tipoAtividade || entry.tipo || entry.kind || "Estudo") || "Estudo";
   }
 
+  function studiedMinutesDetails(entry = {}) {
+    if (entry.studiedMinutes !== undefined) return { minutes: normalizeMinutes(entry.studiedMinutes), warning: "" };
+    if (entry.durationMinutes !== undefined) return { minutes: normalizeMinutes(entry.durationMinutes), warning: "" };
+    if (entry.tempoEstudado !== undefined) return legacyTimeDetails(entry.tempoEstudado);
+    if (entry.tempo !== undefined) return legacyTimeDetails(entry.tempo);
+    return { minutes: 0, warning: "" };
+  }
+
   function studiedMinutes(entry = {}) {
-    if (entry.studiedMinutes !== undefined) return normalizeMinutes(entry.studiedMinutes);
-    if (entry.durationMinutes !== undefined) return normalizeMinutes(entry.durationMinutes);
-    if (entry.tempoEstudado !== undefined) return normalizeMinutes(entry.tempoEstudado, { numericUnit: "hours" });
-    if (entry.tempo !== undefined) return normalizeMinutes(entry.tempo, { numericUnit: "hours" });
-    return 0;
+    return studiedMinutesDetails(entry).minutes;
   }
 
   function evidenceIdentity(evidence = {}) {
@@ -88,6 +108,7 @@
     const questions = Math.round(nonNegativeNumber(entry.questions ?? entry.questoes));
     const rawCorrect = Math.round(nonNegativeNumber(entry.correctAnswers ?? entry.acertos));
     const correctAnswers = questions ? Math.min(rawCorrect, questions) : 0;
+    const time = studiedMinutesDetails(entry);
     const evidence = {
       id: "",
       sourcePlanId: text(context.sourcePlanId || context.id || entry.sourceId),
@@ -100,26 +121,72 @@
       sessionId: text(entry.sessaoId || entry.sessionId || entry.lastSavedSessionId || entry.eventId || entry.executionId),
       questions,
       correctAnswers,
-      studiedMinutes: studiedMinutes(entry),
+      studiedMinutes: time.minutes,
+      timeNormalizationWarning: time.warning,
       activityType: activityType(entry),
       difficulty: entry.dificuldade ?? entry.difficulty ?? null,
       completedAt: originalCompletedAt(entry),
       sourceType: text(context.sourceType || entry.sourceType || "legacy-backfill"),
       createdAt: text(entry.createdAt || entry.completedAt || entry.concluidoEm || context.createdAt),
+      observedAt: text(entry.updatedAt || entry.atualizadoEm || context.observedAt),
     };
     evidence.id = evidenceIdentity(evidence);
     return evidence;
   }
 
+  function dateValue(value = "") {
+    const brazilian = text(value).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (brazilian) {
+      const [, day, month, year] = brazilian.map(Number);
+      const date = new Date(year, month - 1, day).getTime();
+      return Number.isFinite(date) ? date : 0;
+    }
+    const date = new Date(value).getTime();
+    return Number.isFinite(date) && date >= new Date(2000, 0, 1).getTime() ? date : 0;
+  }
+
+  function factualCompleteness(item = {}) {
+    return [item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]
+      .reduce((score, value) => score + (value === 0 || text(value) ? 1 : 0), 0);
+  }
+
+  function mergeEvidence(existing = {}, incoming = {}) {
+    const existingObserved = dateValue(existing.observedAt || existing.updatedAt);
+    const incomingObserved = dateValue(incoming.observedAt || incoming.updatedAt);
+    const existingFacts = factualCompleteness(existing);
+    const incomingFacts = factualCompleteness(incoming);
+    const incomingMagnitude = (Number(incoming.questions) || 0) * 1000000 + (Number(incoming.correctAnswers) || 0) * 1000 + (Number(incoming.studiedMinutes) || 0);
+    const existingMagnitude = (Number(existing.questions) || 0) * 1000000 + (Number(existing.correctAnswers) || 0) * 1000 + (Number(existing.studiedMinutes) || 0);
+    const preferIncoming = incomingObserved && existingObserved && incomingObserved !== existingObserved
+      ? incomingObserved > existingObserved
+      : incomingFacts !== existingFacts
+        ? incomingFacts > existingFacts
+        : incomingMagnitude > existingMagnitude;
+    const preferred = preferIncoming ? incoming : existing;
+    const secondary = preferIncoming ? existing : incoming;
+    return {
+      ...secondary,
+      ...preferred,
+      id: existing.id || incoming.id || evidenceIdentity(preferred),
+      sourcePlanId: preferred.sourcePlanId || secondary.sourcePlanId,
+      sourcePlanName: preferred.sourcePlanName || secondary.sourcePlanName,
+      originalSubject: preferred.originalSubject || secondary.originalSubject,
+      originalTopic: preferred.originalTopic || secondary.originalTopic,
+      canonicalKey: preferred.canonicalKey || secondary.canonicalKey,
+      canonicalTitle: preferred.canonicalTitle || secondary.canonicalTitle,
+      createdAt: secondary.createdAt || preferred.createdAt,
+    };
+  }
+
   function dedupeEvidence(evidence = []) {
-    const seen = new Set();
-    return evidence.filter((item) => {
-      if (!item || !item.canonicalKey) return false;
-      const identity = item.id || evidenceIdentity(item);
-      if (seen.has(identity)) return false;
-      seen.add(identity);
-      return true;
-    }).map((item) => ({ ...item, id: item.id || evidenceIdentity(item) }));
+    const byIdentity = new Map();
+    evidence.forEach((item) => {
+      if (!item || !item.canonicalKey) return;
+      const normalized = { ...item, domain: "", id: item.id || evidenceIdentity(item) };
+      const previous = byIdentity.get(normalized.id);
+      byIdentity.set(normalized.id, previous ? mergeEvidence(previous, normalized) : normalized);
+    });
+    return [...byIdentity.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
   function emptyKnowledgeBase(now = nowIso()) {
@@ -155,7 +222,7 @@
         id: concept.id || normalized.id,
         canonicalKey: normalized.canonicalKey,
         canonicalTitle: text(concept.canonicalTitle) || normalized.canonicalTitle,
-        domain: text(concept.domain),
+        domain: "",
         createdAt: text(concept.createdAt) || nowIso(),
         updatedAt: text(concept.updatedAt) || text(concept.createdAt) || nowIso(),
       });
@@ -168,7 +235,7 @@
         id: existing?.id || `concept:${item.canonicalKey.replace(/\s+/g, "-")}`,
         canonicalKey: item.canonicalKey,
         canonicalTitle: existing?.canonicalTitle || item.canonicalTitle,
-        domain: existing?.domain || item.domain || "",
+        domain: "",
         createdAt,
         updatedAt: item.createdAt || item.completedAt || existing?.updatedAt || createdAt,
       });
@@ -212,11 +279,15 @@
           sourcePlanId: source.id || entry.sourceId,
           sourcePlanName: source.name || entry.sourceName,
           sourceType: source.sourceType || "legacy-backfill",
+          observedAt: source.snapshot?.savedAt || source.data?.savedAt || source.updatedAt,
         });
         if (!evidence) return;
         const rawCorrect = Math.round(nonNegativeNumber(entry.correctAnswers ?? entry.acertos));
         if (evidence.questions && rawCorrect > evidence.questions) {
           warnings.push({ type: "correct-answers-clamped", evidenceId: evidence.id, sourcePlanId: evidence.sourcePlanId });
+        }
+        if (evidence.timeNormalizationWarning) {
+          warnings.push({ type: evidence.timeNormalizationWarning, evidenceId: evidence.id, sourcePlanId: evidence.sourcePlanId });
         }
         additions.push(evidence);
       });
@@ -241,7 +312,7 @@
     const questions = evidence.reduce((sum, item) => sum + (Number(item.questions) || 0), 0);
     const correctAnswers = evidence.reduce((sum, item) => sum + (Number(item.correctAnswers) || 0), 0);
     const studiedMinutes = evidence.reduce((sum, item) => sum + (Number(item.studiedMinutes) || 0), 0);
-    const dates = evidence.map((item) => item.completedAt).filter(Boolean);
+    const dates = evidence.map((item) => ({ raw: item.completedAt, value: dateValue(item.completedAt) })).filter((item) => item.value).sort((left, right) => left.value - right.value);
     return {
       canonicalKey: key,
       canonicalTitle: evidence[0]?.canonicalTitle || (base.concepts || []).find((concept) => concept.canonicalKey === key)?.canonicalTitle || "",
@@ -251,8 +322,8 @@
       correctAnswers,
       accuracy: questions ? correctAnswers / questions : null,
       studiedMinutes,
-      firstCompletedAt: dates[0] || "",
-      lastCompletedAt: dates[dates.length - 1] || "",
+      firstCompletedAt: dates[0]?.raw || "",
+      lastCompletedAt: dates[dates.length - 1]?.raw || "",
     };
   }
 
@@ -289,6 +360,8 @@
     inspectKnowledgeBase,
     inspectConcept,
     normalizeMinutes,
+    legacyTimeDetails,
+    mergeEvidence,
     emptyKnowledgeBase,
   };
   global.KnowledgeBase = api;

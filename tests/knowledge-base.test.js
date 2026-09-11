@@ -39,7 +39,9 @@ const base = knowledge.buildKnowledgeBase({}, [planOne, planTwo]);
 
 assert.equal(base.schemaVersion, 1);
 assert.equal(base.concepts.length, 1, "Mesmo título canônico em matérias diferentes deve formar um conceito único.");
+assert.equal(base.concepts[0].domain, "", "A matéria do edital não pode virar domínio conceitual permanente.");
 assert.equal(base.evidence.length, 2, "Sessões de planos diferentes são evidências distintas.");
+assert.equal(base.evidence[0].originalSubject, "Administração Geral", "A matéria original deve permanecer apenas como origem da evidência.");
 assert.equal(base.topicMappings.length, 2, "O mapeamento mínimo por plano deve permanecer auditável.");
 assert.equal(base.evidence[0].completedAt, "21/07/2026", "A data original não pode ser trocada pela data do bootstrap.");
 assert.equal(base.evidence[0].studiedMinutes, 90);
@@ -105,5 +107,39 @@ assert.deepEqual(inspection, { schemaVersion: 1, concepts: 1, evidence: 2, mappi
 const conceptInspection = knowledge.inspectConcept(base, "Atos Administrativos");
 assert.equal(conceptInspection.evidence.length, 2);
 assert.equal(conceptInspection.mappings.length, 2);
+
+[
+  [.75, 45],
+  [1.5, 90],
+  [45, 45],
+  [90, 90],
+  ["1h 15min", 75],
+  ["00:45", 45],
+  ["01:30", 90],
+].forEach(([tempoEstudado, expected]) => {
+  const evidence = knowledge.evidenceFromStudyEntry({ materia: "Português", assunto: "Interpretação", tempoEstudado }, { sourcePlanId: "legacy-time" });
+  assert.equal(evidence.studiedMinutes, expected, `Tempo legado ${tempoEstudado} deve virar ${expected} minutos.`);
+});
+
+const correctionInitial = source("correction-plan", "Correção", [{
+  materia: "Contabilidade", assunto: "Lançamentos", questoes: 20, acertos: 15, tempoEstudado: 1, sessaoId: "session-correction", completedAt: "2026-08-01", status: "Concluído",
+}]);
+correctionInitial.snapshot.savedAt = "2026-08-01T10:00:00.000Z";
+const correctionUpdated = source("correction-plan", "Correção", [{
+  materia: "Contabilidade", assunto: "Lançamentos", questoes: 25, acertos: 20, tempoEstudado: 1.25, sessaoId: "session-correction", completedAt: "2026-08-01", status: "Concluído",
+}]);
+correctionUpdated.snapshot.savedAt = "2026-08-02T10:00:00.000Z";
+const corrected = knowledge.buildKnowledgeBase(knowledge.buildKnowledgeBase({}, [correctionInitial]), [correctionUpdated]);
+assert.equal(corrected.evidence.length, 1, "Uma sessão corrigida continua sendo uma única evidência.");
+assert.deepEqual([corrected.evidence[0].questions, corrected.evidence[0].correctAnswers, corrected.evidence[0].studiedMinutes], [25, 20, 75]);
+
+const unorderedDates = knowledge.buildKnowledgeBase({}, [source("date-plan", "Datas", [
+  { materia: "Português", assunto: "Sintaxe", questoes: 1, acertos: 1, sessaoId: "date-1", completedAt: "10/08/2026", status: "Concluído" },
+  { materia: "Português", assunto: "Sintaxe", questoes: 1, acertos: 1, sessaoId: "date-2", completedAt: "01/07/2026", status: "Concluído" },
+  { materia: "Português", assunto: "Sintaxe", questoes: 1, acertos: 1, sessaoId: "date-3", completedAt: "20/07/2026", status: "Concluído" },
+])]);
+const dateSummary = knowledge.summarizeConceptEvidence(unorderedDates, "Sintaxe");
+assert.equal(dateSummary.firstCompletedAt, "01/07/2026");
+assert.equal(dateSummary.lastCompletedAt, "10/08/2026");
 
 console.log("OK - base permanente consolida evidências executadas, preserva origem e suporta bootstrap incremental.");
