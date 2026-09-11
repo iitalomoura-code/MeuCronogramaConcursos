@@ -13092,6 +13092,43 @@ textarea:focus {
 }
 
 /* Registro de erros: rápido no modo foco, detalhado apenas quando fizer sentido. */
+.strategic-advisor-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 9px;
+  background: var(--card);
+}
+
+.strategic-advisor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.strategic-advisor-heading h3 { margin: 3px 0 0; font-size: 18px; }
+.strategic-advisor-heading > i { width: 20px; color: var(--primary); }
+.strategic-advisor-card > p { max-width: 780px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.strategic-advisor-glance { display: flex; flex-wrap: wrap; gap: 16px 28px; padding-top: 4px; }
+.strategic-advisor-glance > div { display: grid; gap: 3px; min-width: 0; }
+.strategic-advisor-glance span { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+.strategic-advisor-glance strong { font-size: 12px; font-weight: 650; }
+.strategic-advisor-card .text-action { justify-self: start; font-size: 12px; }
+.strategic-advisor-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; }
+.strategic-advisor-modal[hidden] { display: none; }
+.strategic-advisor-backdrop { position: absolute; inset: 0; border: 0; background: rgba(15, 23, 42, .42); }
+.strategic-advisor-dialog { position: relative; display: grid; gap: 18px; width: min(700px, 100%); max-height: min(760px, calc(100dvh - 36px)); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-card); }
+.strategic-advisor-dialog header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.strategic-advisor-dialog header h3 { margin: 4px 0 0; font-size: 24px; }
+.strategic-advisor-dialog header p { margin: 8px 0 0; color: var(--muted); line-height: 1.5; }
+.strategic-advisor-dialog-body { display: grid; gap: 16px; }
+.strategic-advisor-dialog-body > section { padding-top: 14px; border-top: 1px solid var(--divider); }
+.strategic-advisor-dialog-body h4 { margin: 0 0 9px; color: var(--text); font-size: 14px; }
+.strategic-advisor-dialog-body ul { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.strategic-advisor-dialog-body li { display: grid; gap: 3px; }
+.strategic-advisor-dialog-body li strong { font-size: 13px; }
+.strategic-advisor-dialog-body li span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.strategic-advisor-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 4px; }
+
+/* Registro de erros: rápido no modo foco, detalhado apenas quando fizer sentido. */
 .focused-error-tools {
   display: flex;
   align-items: center;

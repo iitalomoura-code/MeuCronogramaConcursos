@@ -203,6 +203,8 @@ let masteryDiagnosisCache = new Map();
 let errorAnalysisRevision = 0;
 let learningDiagnosisModelCache = null;
 let learningDiagnosisModelRevision = -1;
+let strategicAdvisorModelCache = null;
+let strategicAdvisorModelRevision = -1;
 let learningDiagnosisView = { subject: "all", attentionOnly: false, status: "", expandedSubjects: new Set() };
 let errorNotebookView = { subject: "all", topic: "all", type: "all", period: "all", editingId: "" };
 let recentFocusedErrorSubmission = { key: "", at: 0 };
@@ -229,6 +231,8 @@ function invalidateDerivedStudyCaches() {
   masteryDiagnosisCache.clear();
   learningDiagnosisModelCache = null;
   learningDiagnosisModelRevision = -1;
+  strategicAdvisorModelCache = null;
+  strategicAdvisorModelRevision = -1;
   errorAnalysisRevision += 1;
   window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
@@ -435,6 +439,7 @@ const els = {
   evolutionDiagnosisSummary: document.querySelector("#evolutionDiagnosisSummary"),
   evolutionEmpty: document.querySelector("#evolutionEmpty"),
   evolutionSections: document.querySelector("#evolutionSections"),
+  strategicAdvisorModal: document.querySelector("#strategicAdvisorModal"),
   evolutionPeriod: document.querySelector("#evolutionPeriod"),
   evolutionSubjectFilter: document.querySelector("#evolutionSubjectFilter"),
   evolutionActivityFilter: document.querySelector("#evolutionActivityFilter"),
@@ -5075,6 +5080,64 @@ function learningDiagnosisModel() {
   return learningDiagnosisModelCache;
 }
 
+function strategicAdvisorModel() {
+  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
+  const topics = learningDiagnosisModel().topics.map((topic) => {
+    const subject = subjectPlanningData(topic.materia);
+    const diagnosis = topic.diagnosis || {};
+    return {
+      ...topic,
+      subject,
+      historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({ materia: topic.materia, assunto: topic.assuntoOriginal || topic.assunto, subarea: topic.subarea }),
+      strategic: strategicPriorityForTarget({
+        materia: topic.materia,
+        assunto: topic.assuntoOriginal || topic.assunto,
+        subarea: topic.subarea,
+        subject,
+        diagnosis,
+        errorSignals: topic.errorSignals,
+        intervention: topic.intervention,
+        initialProfile: topic.initialProfile,
+        historyInheritance: diagnosis.historyInheritance,
+        daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
+      }),
+    };
+  });
+  strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [] };
+  strategicAdvisorModelRevision = errorAnalysisRevision;
+  return strategicAdvisorModelCache;
+}
+
+function strategicAdvisorItems(items = []) {
+  return items.map((item) => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.explanation)}</span></li>`).join("");
+}
+
+function strategicAdvisorCompactMarkup() {
+  const advisor = strategicAdvisorModel();
+  if (!advisor.summary?.length) return "";
+  const compactList = (label, items) => items.length ? `<div><span>${label}</span><strong>${items.map((item) => escapeHtml(item.title)).join(" · ")}</strong></div>` : "";
+  return `<section class="strategic-advisor-card"><div class="strategic-advisor-heading"><div><span class="section-kicker">Orientador estratégico</span><h3>Seu momento atual</h3></div><i data-lucide="compass" aria-hidden="true"></i></div><p>${escapeHtml(advisor.summary.join(" "))}</p><div class="strategic-advisor-glance">${compactList("Priorize", advisor.priorities)}${compactList("Reduza", advisor.reduceLoad)}${compactList("Observe", advisor.watch)}</div><button class="text-action" type="button" data-open-strategic-advisor>Ver análise completa</button></section>`;
+}
+
+function openStrategicAdvisorModal(trigger = null) {
+  if (!els.strategicAdvisorModal) return;
+  const advisor = strategicAdvisorModel();
+  const section = (title, items) => items.length ? `<section><h4>${title}</h4><ul>${strategicAdvisorItems(items)}</ul></section>` : "";
+  els.strategicAdvisorModal._trigger = trigger;
+  els.strategicAdvisorModal.innerHTML = `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>${escapeHtml(advisor.summary.join(" "))}</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${section("Prioridades agora", advisor.priorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
+  els.strategicAdvisorModal.hidden = false;
+  renderLucideIcons(els.strategicAdvisorModal);
+  els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
+}
+
+function closeStrategicAdvisorModal() {
+  if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden) return;
+  const trigger = els.strategicAdvisorModal._trigger;
+  els.strategicAdvisorModal.hidden = true;
+  els.strategicAdvisorModal.innerHTML = "";
+  trigger?.focus?.();
+}
+
 function learningRecoveryQueue() {
   return learningDiagnosisModel().topics
     .filter((topic) => ["critical", "deficiency", "attention", "insufficient"].includes(topic.diagnosis?.level))
@@ -8648,6 +8711,7 @@ function renderContinuePanel() {
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
+    ${strategicAdvisorCompactMarkup()}
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
     </div>
@@ -13940,6 +14004,23 @@ document.addEventListener("click", (event) => {
     if (learningDiagnosisView.expandedSubjects.has(materia)) learningDiagnosisView.expandedSubjects.delete(materia);
     else learningDiagnosisView.expandedSubjects.add(materia);
     renderLearningDiagnosis();
+    return;
+  }
+
+  const openAdvisor = event.target.closest("[data-open-strategic-advisor]");
+  if (openAdvisor) {
+    openStrategicAdvisorModal(openAdvisor);
+    return;
+  }
+
+  if (event.target.closest("[data-close-strategic-advisor]")) {
+    closeStrategicAdvisorModal();
+    return;
+  }
+
+  if (event.target.closest("[data-open-learning-diagnosis]")) {
+    closeStrategicAdvisorModal();
+    switchTab("aprendizado");
     return;
   }
 
