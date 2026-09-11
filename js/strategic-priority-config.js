@@ -46,6 +46,17 @@
       maintenance: Object.freeze({ kind: "maintenance", label: "Manutenção com questões", minutes: 30, questions: 10 }),
       recovery: Object.freeze({ kind: "review_questions", label: "Revisão e questões", minutes: 45, questions: 15 }),
     }),
+    timeAllocation: Object.freeze({
+      minimumSessionMinutes: 20,
+      sameTopicDecay: Object.freeze([1, .78, .58, .42]),
+      sameSubjectDecay: .94,
+      concentrationSoftCap: .5,
+      concentrationDecay: .72,
+      maintenanceMultiplier: .72,
+      recoveryMultiplier: 1.08,
+      maximumSessions: 6,
+      minimumOpportunity: .06,
+    }),
   });
 
   global.StrategicPriorityConfig = config;
