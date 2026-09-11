@@ -49,6 +49,27 @@ assert.equal(result.sessions[0].materia, "B", "Manutenção não deve competir i
 result = allocator.allocate({ availableMinutes: 45, topics: [topic("A", "Tema", 0), { materia: "B", assunto: "", strategic: { score: .9 } }] });
 assert.equal(result.sessions.length, 0, "Scores inválidos ou candidatos sem estrutura não devem dominar a alocação.");
 
+const recentWithMinutes = [{ materia: "Contabilidade", assunto: "Lançamentos", durationMinutes: 90 }];
+const recentBefore = JSON.stringify(recentWithMinutes);
+result = allocator.allocate({ availableMinutes: 120, recentAllocations: recentWithMinutes, topics: [topic("Contabilidade", "Lançamentos", .99, "recovery"), topic("Português", "Reescrita", .72)] });
+assert.equal(result.sessions[0].materia, "Português", "Minutos recentes devem participar do soft cap e evitar concentração indevida.");
+assert.equal(JSON.stringify(recentWithMinutes), recentBefore, "recentAllocations não pode ser alterado pelo motor.");
+
+result = allocator.allocate({ availableMinutes: 120, recentAllocations: [{ materia: "Contabilidade", assunto: "Lançamentos" }], topics: [topic("Contabilidade", "Lançamentos", .99, "recovery"), topic("Português", "Reescrita", .72)] });
+assert.ok(result.sessions.length, "Registros antigos sem duração devem continuar compatíveis.");
+
+const longDayTopics = Array.from({ length: 8 }, (_, index) => topic(`Matéria ${index + 1}`, "Tema", .9 - index * .03, "practice", 30));
+result = allocator.allocate({ availableMinutes: 240, topics: longDayTopics });
+assert.ok(result.sessions.length > 6 && result.allocatedMinutes === 240, "Quatro horas com candidatos úteis não podem parar artificialmente em seis sessões.");
+result = allocator.allocate({ availableMinutes: 1200, topics: Array.from({ length: 12 }, (_, index) => topic(`Segurança ${index + 1}`, "Tema", .8 - index * .02, "practice", 30)) });
+assert.ok(result.sessions.length <= 12, "Capacidade muito grande deve respeitar o teto de segurança configurado.");
+
+result = allocator.allocate({ availableMinutes: 45, topics: [topic("Auditoria", "Tema", .8)] });
+assert.ok(Object.prototype.hasOwnProperty.call(result.sessions[0], "marginalMultiplier") && Object.prototype.hasOwnProperty.call(result.sessions[0], "subjectMultiplier") && Object.prototype.hasOwnProperty.call(result.sessions[0], "concentrationMultiplier"), "Cada sessão deve expor todos os multiplicadores temporários para auditoria.");
+
+result = allocator.allocate({ availableMinutes: 30, recentAllocations: [{ materia: "Contabilidade", assunto: "Lançamentos", durationMinutes: 30 }], topics: [topic("Contabilidade", "Lançamentos", .9), topic("Contabilidade", "Estoques", .9)] });
+assert.equal(result.sessions[0].assunto, "Estoques", "Repetir o mesmo assunto deve receber penalização maior que outro assunto da mesma matéria.");
+
 const immutableTopics = [topic("A", "Tema", .8), topic("B", "Tema", .7)];
 const before = JSON.stringify(immutableTopics);
 const firstRun = allocator.allocate({ availableMinutes: 120, topics: immutableTopics });

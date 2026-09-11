@@ -44,14 +44,19 @@
   function countsFromRecent(recentAllocations = []) {
     const topicCounts = new Map();
     const subjectCounts = new Map();
+    const topicMinutes = new Map();
+    const subjectMinutes = new Map();
     (Array.isArray(recentAllocations) ? recentAllocations : []).forEach((entry) => {
       const topicKey = keyFor(entry);
       const subjectKey = text(entry.materia).toLocaleLowerCase();
+      const durationMinutes = Math.max(0, Number(entry.durationMinutes) || 0);
       if (!topicKey || topicKey === "::") return;
       topicCounts.set(topicKey, (topicCounts.get(topicKey) || 0) + 1);
       subjectCounts.set(subjectKey, (subjectCounts.get(subjectKey) || 0) + 1);
+      topicMinutes.set(topicKey, (topicMinutes.get(topicKey) || 0) + durationMinutes);
+      subjectMinutes.set(subjectKey, (subjectMinutes.get(subjectKey) || 0) + durationMinutes);
     });
-    return { topicCounts, subjectCounts };
+    return { topicCounts, subjectCounts, topicMinutes, subjectMinutes };
   }
 
   function stateMultiplier(state, settings) {
@@ -94,6 +99,8 @@
     return rationale;
   }
 
+  // recentAllocations representa somente blocos relevantes para a janela atual
+  // (por exemplo, o dia em andamento). O chamador não deve passar o histórico completo.
   function allocate({ availableMinutes = 0, topics = [], recentAllocations = [], options = {} } = {}) {
     const settings = { ...(config.timeAllocation || {}), ...(options || {}) };
     const available = Math.max(0, Math.floor(Number(availableMinutes) || 0));
@@ -104,14 +111,16 @@
     const counts = countsFromRecent(recentAllocations);
     const context = {
       ...counts,
-      topicMinutes: new Map(),
+      topicMinutes: counts.topicMinutes,
+      subjectMinutes: counts.subjectMinutes,
       availableMinutes: available,
       candidateCount: normalizedTopics.length,
       settings,
     };
     const sessions = [];
     let remaining = available;
-    const maximumSessions = Math.max(1, Number(settings.maximumSessions) || 6);
+    const capacitySessionLimit = Math.ceil(available / Number(settings.minimumSessionMinutes));
+    const maximumSessions = Math.max(1, Math.min(Number(settings.maximumSessions) || 12, capacitySessionLimit));
     while (remaining >= Number(settings.minimumSessionMinutes) && sessions.length < maximumSessions) {
       const candidates = normalizedTopics
         .map((topic) => ({ topic, utility: candidateUtility(topic, context) }))
@@ -133,6 +142,8 @@
         effectiveOpportunity: selected.utility.effectiveOpportunity,
         repetitionIndex: selected.utility.repetitionIndex,
         marginalMultiplier: selected.utility.marginalMultiplier,
+        subjectMultiplier: selected.utility.subjectMultiplier,
+        concentrationMultiplier: selected.utility.concentrationMultiplier,
         idealDuration: selected.topic.session.idealDuration,
         minimumDuration: selected.topic.session.minimumDuration,
         rationale: rationaleFor(selected.topic, selected.utility, durationMinutes),

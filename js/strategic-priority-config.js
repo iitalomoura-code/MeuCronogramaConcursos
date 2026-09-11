@@ -54,7 +54,7 @@
       concentrationDecay: .72,
       maintenanceMultiplier: .72,
       recoveryMultiplier: 1.08,
-      maximumSessions: 6,
+      maximumSessions: 12,
       minimumOpportunity: .06,
     }),
   });
