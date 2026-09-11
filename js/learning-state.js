@@ -23,15 +23,22 @@
     return hadStrongHistory && declinedEnough && reliable && persistent;
   }
 
-  function derive({ diagnosis = {}, hasContact = false, coverage = 0, intervention = null, errorSignals = null } = {}) {
+  function derive({ diagnosis = {}, hasContact = false, coverage = 0, intervention = null, errorSignals = null, initialProfile = null } = {}) {
     const signals = errorSignals || diagnosis.errorSignals || {};
     const questions = Math.max(0, Number(diagnosis.questions) || 0);
     const covered = Math.max(clamp(coverage), hasContact ? .5 : 0);
     const mastery = diagnosis.level || "insufficient";
     const recovery = hasRecoveryEvidence(diagnosis, intervention || {}, signals);
+    const profileLevel = initialProfile?.level || "unknown";
+    const profileIsActive = Boolean(initialProfile?.active);
+    const awaitingDiagnostic = !hasContact && !questions && covered < .1
+      && profileIsActive
+      && ["intermediate", "advanced"].includes(profileLevel);
     let key = "practice";
 
-    if (!hasContact && !questions && covered < .1) key = "not-started";
+    if (awaitingDiagnostic) key = "practice";
+    else if (!hasContact && !questions && covered < .1 && profileIsActive && profileLevel === "basic") key = "building";
+    else if (!hasContact && !questions && covered < .1) key = "not-started";
     else if (recovery) key = "recovery";
     else if (mastery === "insufficient" || mastery === "critical") key = "building";
     else if (["deficiency", "attention"].includes(mastery)) key = "consolidating";
@@ -49,10 +56,14 @@
       key,
       label: labels[key],
       mastery,
+      initialProfile: profileLevel,
+      awaitingDiagnostic,
       hasRecoveryEvidence: recovery,
       covered,
       reasons: recovery
         ? ["queda confirmada após desempenho anterior forte", "erros ou resposta insuficiente ao reforço"]
+        : awaitingDiagnostic
+          ? ["a base inicial informada será confirmada com questões diagnósticas"]
         : key === "not-started"
           ? ["ainda não há contato suficiente com este assunto"]
           : [],

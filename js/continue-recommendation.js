@@ -92,8 +92,8 @@
     if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
     if (helpers.normalizeStatus?.(block.status) === "Em andamento") factors.push("tema em andamento");
     if (helpers.normalizeStatus?.(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
-    const diagnosisReason = helpers.initialDiagnosisReason?.(block.materia);
-    if (diagnosisReason && (helpers.initialDiagnosisInfluence?.(block.materia)?.adjustment || 0) * (phase.diagnosisMultiplier || 1) >= .025) factors.push(diagnosisReason);
+    const diagnosisReason = helpers.initialDiagnosisReason?.(block.materia, block.assunto, block.subarea);
+    if (diagnosisReason && (helpers.initialDiagnosisInfluence?.(block.materia, block.assunto, block.subarea)?.adjustment || 0) * (phase.diagnosisMultiplier || 1) >= .025) factors.push(diagnosisReason);
     if (Number(helpers.subjectPlanningData?.(block.materia)?.dominio) >= 4) factors.push("dificuldade pessoal alta");
     (context.rotation?.reasons || [context.rotation?.reason || block.rotationReason].filter(Boolean)).forEach((reason) => {
       if (reason && !reason.includes("frequência recentemente")) factors.push(reason);

@@ -20,12 +20,12 @@ assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos q
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260908-priority-visual"), "O CSS deve usar o cache-busting atual.");
 assert.ok(index.includes("app.js?v=20260911-strategic-next-hour"), "O JavaScript deve usar o cache-busting atual.");
-assert.ok(index.includes("js/capacity-planning.js?v=20260908-priority-visual"), "A camada de capacidade deve carregar antes do app.");
+assert.ok(index.includes("js/capacity-planning.js?v=20260911-initial-profile"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");
 assert.ok(index.includes("js/program-validator.js?v=20260909-explicit-subject-markers"), "O validador deve carregar depois do modelo canônico e antes do app.");
 assert.ok(index.includes("js/document-structure-parser.js?v=20260907-canonical-program"), "O parser estrutural deve carregar antes do app.");
 assert.ok(index.includes("js/study-derived-state.js?v=20260902-continue-derived-state"), "O estado derivado deve carregar antes do app.");
-assert.ok(index.includes("js/continue-recommendation.js?v=20260902-diagnosis-override"), "O motor de recomendação deve carregar antes do app.");
+assert.ok(index.includes("js/continue-recommendation.js?v=20260911-initial-profile"), "O motor de recomendação deve carregar antes do app.");
 assert.ok(index.includes("js/study-alerts.js?v=20260907-contact-date-fix"), "A central de alertas deve ser carregada antes do app.");
 assert.ok(/\.sidebar-flow\s*\{[\s\S]*?overflow-x:\s*hidden;[\s\S]*?overflow-y:\s*auto;/.test(styles), "A navegação lateral não deve exibir rolagem horizontal.");
 assert.ok(index.includes('class="sidebar-utility-actions"') && index.includes('id="signOutButton"'), "Tema, configurações e sair devem permanecer no rodapé da sidebar.");
@@ -50,7 +50,7 @@ assert.ok(app.includes("function suspendFocusedStudy"), "Sair do modo focado dev
 assert.ok(app.includes("function operationalStudyUnits"), "O ciclo deve converter temas em partes operacionais vinculadas a uma meta.");
 assert.ok(app.includes("function metaProgressForBlock"), "A conclusão da meta deve considerar todas as partes necessárias.");
 assert.ok(index.includes("js/mastery-diagnosis.js?v=20260909-topic-isolation"), "O motor de domínio deve ser carregado antes do app.");
-assert.ok(index.includes("js/strategic-priority.js?v=20260911-next-hour") && index.includes("js/learning-state.js?v=20260911-next-hour"), "A prioridade estratégica e o estado operacional devem carregar antes do estado derivado.");
+assert.ok(index.includes("js/strategic-priority.js?v=20260911-initial-profile") && index.includes("js/learning-state.js?v=20260911-initial-profile"), "A prioridade estratégica e o estado operacional devem carregar antes do estado derivado.");
 assert.ok(index.includes("js/learning-intervention.js?v=20260902-recovery-cycle"), "O ciclo de recuperação deve carregar antes das revisões adaptativas.");
 assert.ok(index.includes("js/error-analysis.js?v=20260902-error-notebook"), "A análise de erros deve carregar antes do diagnóstico central.");
 assert.ok(app.includes("function masteryDiagnosisForTarget"), "Os módulos devem consultar uma fonte única de diagnóstico de domínio.");

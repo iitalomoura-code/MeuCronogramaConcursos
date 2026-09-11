@@ -114,7 +114,7 @@
     const levelNeed = { critical: 1, deficiency: .78, attention: .5, insufficient: .38, adequate: .18, strong: .04 }[diagnosis?.level] ?? 0;
     const trendNeed = diagnosis?.trend?.label === "falling" ? .18 : diagnosis?.trend?.label === "improving" ? -.06 : 0;
     const recencyNeed = Math.min(.18, Math.max(0, Number(diagnosis?.daysWithoutContact) || 0) / 120 * .18);
-    const unmeasuredNeed = !hasContact && ["none", "weak", "unknown"].includes(familiarity) ? .12 : 0;
+    const unmeasuredNeed = !hasContact && ["never-studied", "basic", "unknown", "none", "weak"].includes(familiarity) ? .12 : 0;
     return clamp(importanceScore * .48 + levelNeed * .34 + clamp(urgency) * .12 + recencyNeed + trendNeed + unmeasuredNeed);
   }
 

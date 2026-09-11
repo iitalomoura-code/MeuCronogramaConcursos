@@ -5,15 +5,16 @@
     weights: Object.freeze({
       importance: .14,
       difficulty: .07,
-      masteryNeed: .18,
-      recentPerformance: .15,
+      masteryNeed: .16,
+      recentPerformance: .14,
       historicalPerformance: .05,
       trend: .09,
       recurringErrors: .10,
       recency: .07,
-      coverage: .10,
+      coverage: .08,
       examUrgency: .03,
       incidence: .02,
+      initialProfile: .05,
     }),
     confidence: Object.freeze({
       maintenance: .55,
@@ -38,6 +39,7 @@
     ]),
     sessions: Object.freeze({
       diagnostic: Object.freeze({ kind: "theory_questions", label: "Teoria e questões", minutes: 30, questions: 10 }),
+      diagnosticQuestions: Object.freeze({ kind: "diagnostic_questions", label: "Questões diagnósticas", minutes: 30, questions: 15 }),
       building: Object.freeze({ kind: "theory_questions", label: "Teoria direcionada e questões", minutes: 45, questions: 12 }),
       consolidating: Object.freeze({ kind: "review_questions", label: "Revisão direcionada e questões", minutes: 30, questions: 12 }),
       practice: Object.freeze({ kind: "questions", label: "Questões e análise de erros", minutes: 30, questions: 15 }),

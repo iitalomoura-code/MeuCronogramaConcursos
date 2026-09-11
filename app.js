@@ -3729,13 +3729,13 @@ async function chooseSubjectFamiliarity(subject = {}) {
     message: "Isso serve só como ponto de partida; as primeiras sessões de questões passam a ter mais peso depois.",
     actions: [
       { id: "unknown", label: "Não sei avaliar", value: "unknown" },
-      { id: "none", label: "Nunca estudei", value: "none" },
-      { id: "weak", label: "Já estudei pouco", value: "weak" },
-      { id: "intermediate", label: "Já estudei razoavelmente", value: "intermediate" },
-      { id: "good", label: "Tenho boa base", variant: "primary", value: "good" },
+      { id: "never-studied", label: "Nunca estudei", value: "never-studied" },
+      { id: "basic", label: "Básico", value: "basic" },
+      { id: "intermediate", label: "Intermediário", value: "intermediate" },
+      { id: "advanced", label: "Avançado", variant: "primary", value: "advanced" },
     ],
   });
-  return ["none", "weak", "intermediate", "good", "unknown"].includes(choice) ? choice : "unknown";
+  return ["never-studied", "basic", "intermediate", "advanced", "unknown"].includes(choice) ? choice : "unknown";
 }
 
 function normalizeReferenceDurationHours(value, fallback = 1.5) {
@@ -4483,6 +4483,7 @@ function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true
   };
   state.initialDiagnosis = (state.initialDiagnosis || []).filter((item) => item !== current && item.subjectId !== subjectId);
   state.initialDiagnosis.push(record);
+  resetDerivedState();
   if (save) scheduleAutoSave();
 }
 
@@ -4495,15 +4496,15 @@ function ensureInitialDiagnosisForSubjects({ saveUnknown = false } = {}) {
   scheduleAutoSave();
 }
 
-function initialDiagnosisEvidence(materia = "") {
-  const entries = adaptivePerformanceForSubject(materia);
+function initialDiagnosisEvidence(materia = "", assunto = "", subarea = "") {
+  const entries = assunto ? adaptivePerformanceForTopic(materia, assunto) : adaptivePerformanceForSubject(materia);
   const unique = new Map();
   entries.forEach((entry) => {
     const key = [normalizeForMatch(entry.assunto), entryDateValue(entry), entry.questoes, entry.acertos, entry.tempoEstudado, entry.status].join("|");
     if (!unique.has(key)) unique.set(key, entry);
   });
   const records = [...unique.values()];
-  const relatedReviews = (state.reviews || []).filter((review) => topicMatches(review, materia));
+  const relatedReviews = (state.reviews || []).filter((review) => topicMatches(review, materia, assunto, subarea));
   return {
     questions: records.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0),
     sessions: records.filter((entry) => entryDateValue(entry) || Number(entry.tempoEstudado) > 0 || Number(entry.questoes) > 0).length,
@@ -4513,20 +4514,20 @@ function initialDiagnosisEvidence(materia = "") {
   };
 }
 
-function initialDiagnosisInfluence(materia = "") {
+function initialDiagnosisInfluence(materia = "", assunto = "", subarea = "") {
   const record = initialDiagnosisRecordFor(materia);
   const level = record?.initialKnowledgeLevel || "unknown";
-  const influence = window.InitialDiagnosisEngine?.influenceFor(level, initialDiagnosisEvidence(materia)) || {
+  const influence = window.InitialDiagnosisEngine?.influenceFor(level, initialDiagnosisEvidence(materia, assunto, subarea)) || {
     level: "unknown", label: "Não sei avaliar", confidence: 0, remainingWeight: 0, adjustment: 0, active: false, historyIsPrimary: false,
   };
   return { ...influence, record };
 }
 
-function initialDiagnosisReason(materia = "") {
-  const influence = initialDiagnosisInfluence(materia);
+function initialDiagnosisReason(materia = "", assunto = "", subarea = "") {
+  const influence = initialDiagnosisInfluence(materia, assunto, subarea);
   if (!influence.active || influence.historyIsPrimary) return "";
-  if (["none", "weak"].includes(influence.level)) return "você indicou pouca familiaridade inicial";
-  if (influence.level === "good") return "você indicou bom domínio inicial";
+  if (["never-studied", "basic"].includes(influence.level)) return "sua base inicial será construída gradualmente";
+  if (["intermediate", "advanced"].includes(influence.level)) return "sua base inicial será confirmada com questões diagnósticas";
   return "";
 }
 
@@ -4540,9 +4541,15 @@ function renderInitialDiagnosis() {
   const levels = Object.values(window.InitialDiagnosisEngine.LEVELS);
   els.initialDiagnosisList.innerHTML = subjects.map((subject) => {
     const influence = initialDiagnosisInfluence(subject.materia);
+    const subjectDiagnosis = masteryDiagnosisForTarget({ materia: subject.materia, prioridade: priorityScore(subject) });
+    const estimated = window.InitialDiagnosisEngine.estimatedLevel({
+      initialLevel: influence.level,
+      evidence: initialDiagnosisEvidence(subject.materia),
+      diagnosis: subjectDiagnosis,
+    });
     const historyNotice = influence.historyIsPrimary
       ? `<small>Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.</small>`
-      : "";
+      : `<small>Nível estimado agora: ${escapeHtml(estimated.label)} · ${estimated.source === "evidence" ? "baseado no desempenho registrado" : "aguardando evidências do estudo"}</small>`;
     return `<article class="initial-diagnosis-row" data-diagnosis-subject="${escapeHtml(subject.materia)}">
       <div class="initial-diagnosis-subject"><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} tema${subject.assuntos?.length === 1 ? "" : "s"}</span>${historyNotice}</div>
       <div class="initial-diagnosis-options" role="radiogroup" aria-label="Conhecimento inicial em ${escapeHtml(subject.materia)}">
@@ -4829,7 +4836,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const completedReviews = (state.reviews || []).filter((record) => normalizeReviewStatus(record.status) === "Concluída" && topicMatches(record, materia, assunto)).length;
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
-  const initial = initialDiagnosisInfluence(materia);
+  const initial = initialDiagnosisInfluence(materia, assunto, subarea);
   const errorSignals = errorSignalsForTarget(materia, assunto, subarea);
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
@@ -4974,11 +4981,18 @@ function learningDiagnosisModel() {
       subarea: topic.subarea,
       prioridade: priorityScore(subject),
     });
+    const initialProfile = initialDiagnosisInfluence(topic.materia, topic.assunto, topic.subarea);
     return {
       ...topic,
       assuntoOriginal: topic.assunto,
       assunto: themeTitle(topic.assunto),
       diagnosis,
+      initialProfile,
+      estimatedKnowledge: window.InitialDiagnosisEngine?.estimatedLevel?.({
+        initialLevel: initialProfile.level,
+        evidence: initialDiagnosisEvidence(topic.materia, topic.assunto, topic.subarea),
+        diagnosis,
+      }),
       errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
       intervention: learningInterventionFor(topic.materia, topic.assunto),
       daysWithoutContact: daysSinceLastSubjectContact(topic.materia),
@@ -5128,6 +5142,7 @@ function strategicPriorityForTarget(target = {}) {
     diagnosis,
     errorSignals: target.errorSignals || diagnosis.errorSignals || errorSignalsForTarget(materia, assunto, target.subarea || ""),
     intervention: target.intervention || learningInterventionFor(materia, assunto),
+    initialProfile: target.initialProfile || initialDiagnosisInfluence(materia, assunto, target.subarea || ""),
     hasContact: target.hasContact ?? diagnosis.hasContact,
     coverage: target.coverage ?? (diagnosis.hasContact ? 1 : 0),
     daysWithoutContact: target.daysWithoutContact ?? diagnosis.daysWithoutContact,
@@ -5734,7 +5749,7 @@ function activityForQueueItem(item = {}) {
   const strategic = item.strategicPriority || strategicPriorityForTarget(item);
   const currentActivity = strategic?.recommendedSession?.label || "Teoria e questões";
   const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
-  const diagnosedActivity = window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia), currentActivity) || currentActivity;
+  const diagnosedActivity = window.InitialDiagnosisEngine?.suggestedActivity(level, initialDiagnosisEvidence(item.materia, item.assunto, item.subarea), currentActivity) || currentActivity;
   const entries = adaptivePerformanceForTopic(item.materia, item.assunto);
   const diagnosis = masteryDiagnosisForTarget({ materia: item.materia, assunto: item.assunto });
   const phase = currentExamPhaseState();
@@ -7265,8 +7280,8 @@ function explainStudySuggestion(block, context = {}) {
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
-  const diagnosisReason = initialDiagnosisReason(block.materia);
-  if (diagnosisReason && initialDiagnosisInfluence(block.materia).adjustment * phase.diagnosisMultiplier >= 0.025) factors.push(diagnosisReason);
+  const diagnosisReason = initialDiagnosisReason(block.materia, block.assunto, block.subarea);
+  if (diagnosisReason && initialDiagnosisInfluence(block.materia, block.assunto, block.subarea).adjustment * phase.diagnosisMultiplier >= 0.025) factors.push(diagnosisReason);
   if (Number(subjectPlanningData(block.materia).dominio) >= 4) factors.push("dificuldade pessoal alta");
   const rotationReasons = context.rotation?.reasons || [context.rotation?.reason || block.rotationReason].filter(Boolean);
   rotationReasons.forEach((reason) => {

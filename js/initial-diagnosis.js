@@ -3,11 +3,12 @@
 
   const LEVELS = Object.freeze({
     unknown: { id: "unknown", label: "Não sei avaliar", value: 0.5, adjustment: 0, activity: "" },
-    none: { id: "none", label: "Não estudei", value: 0.1, adjustment: 0.13, activity: "Teoria" },
-    weak: { id: "weak", label: "Base fraca", value: 0.3, adjustment: 0.07, activity: "Teoria e questões" },
-    intermediate: { id: "intermediate", label: "Intermediário", value: 0.6, adjustment: -0.03, activity: "" },
-    good: { id: "good", label: "Bom domínio", value: 0.85, adjustment: -0.1, activity: "Questões" },
+    "never-studied": { id: "never-studied", label: "Nunca estudei", value: 0.1, adjustment: 0.12, activity: "Teoria e questões" },
+    basic: { id: "basic", label: "Básico", value: 0.3, adjustment: 0.06, activity: "Teoria e questões" },
+    intermediate: { id: "intermediate", label: "Intermediário", value: 0.6, adjustment: 0.01, activity: "Questões diagnósticas" },
+    advanced: { id: "advanced", label: "Avançado", value: 0.85, adjustment: 0, activity: "Questões diagnósticas" },
   });
+  const LEGACY_LEVELS = Object.freeze({ none: "never-studied", weak: "basic", good: "advanced" });
 
   function clamp(value, min = 0, max = 1) {
     return Math.max(min, Math.min(max, Number(value) || 0));
@@ -15,7 +16,8 @@
 
   function normalizeLevel(value) {
     const key = String(value || "").trim().toLowerCase();
-    return Object.prototype.hasOwnProperty.call(LEVELS, key) ? key : "unknown";
+    if (Object.prototype.hasOwnProperty.call(LEVELS, key)) return key;
+    return LEGACY_LEVELS[key] || "unknown";
   }
 
   function levelInfo(value) {
@@ -55,6 +57,29 @@
     return LEVELS[influence.level].activity || currentActivity;
   }
 
+  function estimatedLevel({ initialLevel = "unknown", evidence = {}, diagnosis = {} } = {}) {
+    const informed = levelInfo(initialLevel);
+    const confidence = historyConfidence(evidence);
+    const questions = Math.max(0, Number(evidence.questions) || 0);
+    const accuracy = Number.isFinite(diagnosis.accuracy) ? Number(diagnosis.accuracy) : null;
+    let level = informed.id;
+    let source = "informed";
+    if (questions >= 10 && confidence >= .25) {
+      source = "evidence";
+      if (diagnosis.level === "strong" || accuracy >= .85) level = "advanced";
+      else if (diagnosis.level === "adequate" || accuracy >= .70) level = "intermediate";
+      else if (["attention", "deficiency", "critical"].includes(diagnosis.level) || accuracy !== null) level = "basic";
+    }
+    return {
+      id: level,
+      label: levelInfo(level).label,
+      confidence,
+      source,
+      informedLevel: informed.id,
+      differsFromInformed: source === "evidence" && level !== informed.id,
+    };
+  }
+
   function subjectIdForName(name = "") {
     const normalized = String(name).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     let hash = 2166136261;
@@ -65,7 +90,7 @@
     return `subject-${(hash >>> 0).toString(16).padStart(8, "0")}`;
   }
 
-  const api = { LEVELS, normalizeLevel, levelInfo, historyConfidence, influenceFor, suggestedActivity, subjectIdForName };
+  const api = { LEVELS, LEGACY_LEVELS, normalizeLevel, levelInfo, historyConfidence, influenceFor, suggestedActivity, estimatedLevel, subjectIdForName };
   global.InitialDiagnosisEngine = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

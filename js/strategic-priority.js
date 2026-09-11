@@ -34,6 +34,16 @@
     }[level] ?? .22;
   }
 
+  function initialProfileNeed(profile = {}) {
+    const value = {
+      "never-studied": .75,
+      basic: .5,
+      intermediate: .3,
+      advanced: .18,
+    }[profile.level] || 0;
+    return value * clamp(profile.remainingWeight);
+  }
+
   function recencyNeed(days, state) {
     const thresholds = config.thresholds || {};
     const value = Math.max(0, Number(days) || 0);
@@ -47,7 +57,9 @@
   function sessionFor({ learningState = {}, diagnosis = {}, errorSignals = {}, intervention = null } = {}) {
     const sessions = config.sessions || {};
     const typeText = (errorSignals.types || []).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    let base = sessions[learningState.key === "not-started" ? "diagnostic" : learningState.key] || sessions.practice || {};
+    let base = learningState.awaitingDiagnostic
+      ? sessions.diagnosticQuestions
+      : sessions[learningState.key === "not-started" ? "diagnostic" : learningState.key] || sessions.practice || {};
     if (learningState.key === "consolidating" && /distracao|leitura do enunciado|interpretacao/.test(typeText) && !/conceitual|conteudo nao dominado|memoria|calculo/.test(typeText)) {
       base = { ...sessions.practice, kind: "questions_attention", label: "Questões com treino de atenção" };
     } else if (learningState.key === "consolidating" && /calculo/.test(typeText)) {
@@ -84,7 +96,8 @@
     const difficulty = clamp(input.difficulty ?? ((Number(subject.dominio) || 3) / 5));
     const hasContact = Boolean(input.hasContact ?? diagnosis.hasContact);
     const coverage = Math.max(clamp(input.coverage), hasContact ? .55 : 0);
-    const learningState = input.learningState || LearningState?.derive?.({ diagnosis, hasContact, coverage, intervention: input.intervention, errorSignals }) || { key: "practice", label: "Questões" };
+    const initialProfile = input.initialProfile || {};
+    const learningState = input.learningState || LearningState?.derive?.({ diagnosis, hasContact, coverage, intervention: input.intervention, errorSignals, initialProfile }) || { key: "practice", label: "Questões" };
     const confidence = clamp(diagnosis.confidence);
     const recentAccuracy = Number.isFinite(diagnosis.accuracy) ? Number(diagnosis.accuracy) : null;
     const historicalAccuracy = Number.isFinite(diagnosis.overallAccuracy) ? Number(diagnosis.overallAccuracy) : null;
@@ -102,6 +115,7 @@
       coverage: hasContact ? clamp(1 - coverage) * .35 : 1,
       examUrgency: clamp(input.examUrgency ?? input.phase?.urgency?.value),
       incidence: clamp(input.incidence?.normalized ?? input.incidence),
+      initialProfile: initialProfileNeed(initialProfile),
       confidenceAdjustment: confidence,
     };
     const weights = config.weights || {};
@@ -117,6 +131,8 @@
     if (recentAccuracy !== null && historicalAccuracy !== null && Math.abs(historicalAccuracy - recentAccuracy) >= .03) reasons.push(`desempenho histórico: ${Math.round(historicalAccuracy * 100)}%`);
     if (diagnosis.trend?.label === "falling") reasons.push("tendência de queda confirmada");
     if (errorSignals.recurrence === "high") reasons.push("erros recorrentes");
+    if (learningState.awaitingDiagnostic) reasons.push("base inicial informada: confirmar com questões diagnósticas");
+    else if (initialProfile.active && initialProfile.remainingWeight >= .2) reasons.push(`base inicial informada: ${initialProfile.label.toLowerCase()}`);
     if (!hasContact) reasons.push("assunto ainda sem contato suficiente");
     if (Number(input.daysWithoutContact ?? diagnosis.daysWithoutContact) >= Number(config.thresholds?.buildingContactDays || 12)) reasons.push("contato precisa ser retomado");
     if (learningState.key === "maintenance") reasons.push("bom domínio reduz a necessidade de novo contato imediato");

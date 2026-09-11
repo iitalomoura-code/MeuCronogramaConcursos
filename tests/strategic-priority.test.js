@@ -73,6 +73,33 @@ const noContact = engine.calculate(candidate({
 assert.equal(noContact.learningState.key, "not-started", "Ausência de evidência deve representar cobertura, não estado crítico.");
 assert.ok(noContact.score > 0, "Tema importante sem contato deve ganhar prioridade gradual de cobertura.");
 
+const neverStudiedProfile = engine.calculate(candidate({
+  hasContact: false,
+  coverage: 0,
+  initialProfile: { level: "never-studied", label: "Nunca estudei", active: true, remainingWeight: 1 },
+  diagnosis: diagnosis({ level: "insufficient", confidence: 0, accuracy: null, overallAccuracy: null, questions: 0, trend: { label: "insufficient" } }),
+}));
+assert.equal(neverStudiedProfile.learningState.key, "not-started", "Nunca estudei deve começar como cobertura inicial, sem rótulo de deficiência.");
+assert.equal(neverStudiedProfile.recommendedSession.kind, "theory_questions", "Nunca estudei deve iniciar por teoria e questões.");
+
+const basicProfile = engine.calculate(candidate({
+  hasContact: false,
+  coverage: 0,
+  initialProfile: { level: "basic", label: "Básico", active: true, remainingWeight: 1 },
+  diagnosis: diagnosis({ level: "insufficient", confidence: 0, accuracy: null, overallAccuracy: null, questions: 0, trend: { label: "insufficient" } }),
+}));
+assert.equal(basicProfile.learningState.key, "building", "Perfil básico sem evidência deve iniciar com construção guiada.");
+assert.equal(basicProfile.recommendedSession.kind, "theory_questions", "Perfil básico deve começar com teoria e questões.");
+
+const advancedProfile = engine.calculate(candidate({
+  hasContact: false,
+  coverage: 0,
+  initialProfile: { level: "advanced", label: "Avançado", active: true, remainingWeight: 1 },
+  diagnosis: diagnosis({ level: "insufficient", confidence: 0, accuracy: null, overallAccuracy: null, questions: 0, trend: { label: "insufficient" } }),
+}));
+assert.equal(advancedProfile.learningState.awaitingDiagnostic, true, "Perfil avançado sem dados deve aguardar confirmação, não ser tratado como deficiência.");
+assert.equal(advancedProfile.recommendedSession.kind, "diagnostic_questions", "Perfil avançado deve iniciar por questões diagnósticas.");
+
 const lowStrong = engine.calculate(candidate({
   peso: 1,
   dominio: 2,
