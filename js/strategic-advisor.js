@@ -183,7 +183,23 @@
       stability: coverage.level === "broad" && !hasChange,
       awaitingEvidence,
       confidence: items.length ? items.reduce((total, item) => total + item.confidence, 0) / items.length : 0,
-      snapshot: { generatedAt: new Date().toISOString(), itemCount: items.length, categories: items.map((item) => ({ materia: item.materia, assunto: item.assunto, category: item.category, level: item.diagnosis?.level || "insufficient" })) },
+      topicStates: items.map((item) => ({
+        materia: item.materia,
+        assunto: item.assunto,
+        subarea: item.subarea || "",
+        category: item.category,
+        learningState: item.strategic?.learningState?.key || "",
+        diagnosisLevel: item.diagnosis?.level || "insufficient",
+        strategicScore: clamp(item.strategic?.score),
+        confidence: item.confidence,
+        recentAccuracy: Number.isFinite(item.diagnosis?.accuracy) ? item.diagnosis.accuracy : null,
+        overallAccuracy: Number.isFinite(item.diagnosis?.overallAccuracy) ? item.diagnosis.overallAccuracy : null,
+        questions: Number(item.diagnosis?.questions) || 0,
+        trend: item.diagnosis?.trend?.label || "stable",
+        errorRecurrence: item.errorSignals?.recurrence || "none",
+        evidenceStage: hasLocalEvidence(item) ? "evidenced" : "initial",
+        reasons: [...item.reasons],
+      })),
     };
   }
 

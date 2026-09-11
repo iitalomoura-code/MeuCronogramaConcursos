@@ -42,6 +42,7 @@ assert.ok(localized.priorities[0].title.includes("AFO:") && localized.priorities
 assert.notEqual(advisor.categoryFor(input[3]), "prioritize", "Poucos dados não podem ser classificados como deficiência automaticamente.");
 assert.ok(index.includes("js/strategic-advisor.js") && index.indexOf("js/strategic-advisor.js") < index.indexOf("app.js?v="), "O módulo do Orientador deve carregar antes da aplicação.");
 assert.ok(index.includes("strategicAdvisorModal") && app.includes("strategicAdvisorCompactMarkup") && app.includes("data-open-strategic-advisor"), "O card compacto e a análise completa devem estar integrados sem nova aba.");
+assert.ok(index.includes("js/strategic-advisor-history.js") && app.includes("strategicAdvisorSnapshots") && app.includes("data-register-strategic-advisor"), "Marcos estratégicos devem usar a persistência do planejamento e uma ação explícita.");
 
 const mixedSubject = advisor.build({ topics: [
   topic("AFO", "Receita Pública", { level: "deficiency", accuracy: .55 }, { score: .8 }),

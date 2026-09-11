@@ -13112,6 +13112,7 @@ textarea:focus {
 .strategic-advisor-glance span { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .strategic-advisor-glance strong { font-size: 12px; font-weight: 650; }
 .strategic-advisor-card .text-action { justify-self: start; font-size: 12px; }
+.strategic-advisor-temporal { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .strategic-advisor-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; }
 .strategic-advisor-modal[hidden] { display: none; }
 .strategic-advisor-backdrop { position: absolute; inset: 0; border: 0; background: rgba(15, 23, 42, .42); }

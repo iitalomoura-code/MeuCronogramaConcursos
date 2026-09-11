@@ -106,6 +106,7 @@ const state = {
   reviews: [],
   errors: [],
   interventionHistory: [],
+  strategicAdvisorSnapshots: [],
   notebook: {},
   activeFocusSession: null,
   adaptiveSelection: null,
@@ -5103,7 +5104,7 @@ function strategicAdvisorModel() {
       }),
     };
   });
-  strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [] };
+  strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] };
   strategicAdvisorModelRevision = errorAnalysisRevision;
   return strategicAdvisorModelCache;
 }
@@ -5112,11 +5113,46 @@ function strategicAdvisorItems(items = []) {
   return items.map((item) => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.explanation)}</span></li>`).join("");
 }
 
+function strategicAdvisorHistoryState() {
+  const snapshots = Array.isArray(state.strategicAdvisorSnapshots) ? state.strategicAdvisorSnapshots : [];
+  if (!snapshots.length) return { snapshots, status: "empty", comparison: null };
+  if (snapshots.length === 1) return { snapshots, status: "initial", comparison: null };
+  return { snapshots, status: "compared", comparison: window.StrategicAdvisorHistory?.compare?.(snapshots.at(-2), snapshots.at(-1)) || null };
+}
+
+function strategicAdvisorEvolutionMarkup() {
+  const history = strategicAdvisorHistoryState();
+  if (history.status === "empty") return `<section><h4>O que mudou desde a última análise</h4><p class="muted-note">Registre a análise atual para criar seu primeiro marco estratégico.</p></section>`;
+  if (history.status === "initial") return `<section><h4>O que mudou desde a última análise</h4><p class="muted-note">Este é o primeiro marco estratégico registrado. A partir das próximas análises, o sistema mostrará o que mudou.</p></section>`;
+  const comparison = history.comparison || {};
+  const section = (title, items) => items?.length ? `<section><h4>${title}</h4><ul>${strategicAdvisorItems(items)}</ul></section>` : "";
+  return `<section><h4>O que mudou desde a última análise</h4><p class="muted-note">${escapeHtml(comparison.summary || "Nenhuma mudança estratégica relevante desde o último marco estratégico.")}</p></section>${section("Melhorou", comparison.grouped?.improvements || comparison.improvements)}${section("Precisa de mais atenção", comparison.grouped?.declines || comparison.declines)}${section("Consolidou", comparison.grouped?.stabilized || comparison.stabilized)}${section("Cobertura", comparison.coverageChanges)}`;
+}
+
+function registerStrategicAdvisorSnapshot() {
+  const api = window.StrategicAdvisorHistory;
+  if (!api?.createSnapshot || !api?.appendSnapshot) return;
+  const current = api.createSnapshot({ advisor: strategicAdvisorModel() });
+  const result = api.appendSnapshot(state.strategicAdvisorSnapshots, current);
+  if (!result.added) {
+    showToast(result.message);
+    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    return;
+  }
+  state.strategicAdvisorSnapshots = result.snapshots;
+  void saveAppStateNow("Marco estratégico registrado");
+  showToast(result.message);
+  openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+  if (getActiveTabName() === "continuar") renderContinuePanel();
+}
+
 function strategicAdvisorCompactMarkup() {
   const advisor = strategicAdvisorModel();
   if (!advisor.summary?.length) return "";
   const compactList = (label, items) => items.length ? `<div><span>${label}</span><strong>${items.map((item) => escapeHtml(item.title)).join(" · ")}</strong></div>` : "";
-  return `<section class="strategic-advisor-card"><div class="strategic-advisor-heading"><div><span class="section-kicker">Orientador estratégico</span><h3>Seu momento atual</h3></div><i data-lucide="compass" aria-hidden="true"></i></div><p>${escapeHtml(advisor.summary.join(" "))}</p><div class="strategic-advisor-glance">${compactList("Priorize", advisor.priorities)}${compactList("Reduza", advisor.reduceLoad)}${compactList("Observe", advisor.watch)}</div><button class="text-action" type="button" data-open-strategic-advisor>Ver análise completa</button></section>`;
+  const comparison = strategicAdvisorHistoryState().comparison;
+  const temporal = comparison ? `<small class="strategic-advisor-temporal">${escapeHtml(comparison.summary)}</small>` : "";
+  return `<section class="strategic-advisor-card"><div class="strategic-advisor-heading"><div><span class="section-kicker">Orientador estratégico</span><h3>Seu momento atual</h3></div><i data-lucide="compass" aria-hidden="true"></i></div><p>${escapeHtml(advisor.summary.join(" "))}</p>${temporal}<div class="strategic-advisor-glance">${compactList("Priorize", advisor.priorities)}${compactList("Reduza", advisor.reduceLoad)}${compactList("Observe", advisor.watch)}</div><button class="text-action" type="button" data-open-strategic-advisor>Ver análise completa</button></section>`;
 }
 
 function openStrategicAdvisorModal(trigger = null) {
@@ -5124,7 +5160,7 @@ function openStrategicAdvisorModal(trigger = null) {
   const advisor = strategicAdvisorModel();
   const section = (title, items) => items.length ? `<section><h4>${title}</h4><ul>${strategicAdvisorItems(items)}</ul></section>` : "";
   els.strategicAdvisorModal._trigger = trigger;
-  els.strategicAdvisorModal.innerHTML = `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>${escapeHtml(advisor.summary.join(" "))}</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", advisor.priorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
+  els.strategicAdvisorModal.innerHTML = `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>${escapeHtml(advisor.summary.join(" "))}</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${strategicAdvisorEvolutionMarkup()}${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", advisor.priorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
   els.strategicAdvisorModal.hidden = false;
   renderLucideIcons(els.strategicAdvisorModal);
   els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
@@ -12860,6 +12896,7 @@ function captureAppState() {
     reviews: state.reviews,
     errors: state.errors,
     interventionHistory: state.interventionHistory,
+    strategicAdvisorSnapshots: state.strategicAdvisorSnapshots,
     notebook: state.notebook,
     activeFocusSession: state.activeFocusSession,
     adaptiveSelection: state.adaptiveSelection,
@@ -12951,6 +12988,7 @@ function applyAppSnapshot(saved = {}) {
   repairedCycleLabels = repairStoredCycleLabels();
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.interventionHistory = Array.isArray(saved.interventionHistory) ? saved.interventionHistory : [];
+  state.strategicAdvisorSnapshots = Array.isArray(saved.strategicAdvisorSnapshots) ? saved.strategicAdvisorSnapshots.slice(-20) : [];
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   state.adaptiveSelection = saved.adaptiveSelection?.materia && saved.adaptiveSelection?.assunto ? saved.adaptiveSelection : null;
   continueManualOverride = state.adaptiveSelection;
@@ -14015,6 +14053,11 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-close-strategic-advisor]")) {
     closeStrategicAdvisorModal();
+    return;
+  }
+
+  if (event.target.closest("[data-register-strategic-advisor]")) {
+    registerStrategicAdvisorSnapshot();
     return;
   }
 
