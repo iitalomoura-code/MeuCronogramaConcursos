@@ -11,6 +11,11 @@
   const TOPIC_ALIASES = Object.freeze([
     ["receita publica", "receitas publicas"],
   ]);
+  const SUBJECT_RELATION_GROUPS = Object.freeze([
+    ["administracao geral e publica", "administracao geral", "administracao publica", "direito administrativo"],
+    ["governanca publica", "administracao geral", "administracao publica"],
+  ]);
+  const CONTENT_STOP_WORDS = new Set(["administracao", "administracoes", "administrativo", "administrativos", "administrativa", "administrativas", "direito", "publica", "publico", "geral", "gerais", "conceito", "conceitos", "introducao", "aspectos", "parte", "principais", "tema", "temas"]);
 
   function clamp(value, minimum = 0, maximum = 1) {
     return Math.max(minimum, Math.min(maximum, Number(value) || 0));
@@ -22,6 +27,10 @@
 
   function tokens(value = "") {
     return normalize(value).split(" ").filter((word) => word.length > 2 && !["dos", "das", "para", "com", "por", "nos", "nas", "uma", "uns", "uma", "sobre"].includes(word));
+  }
+
+  function contentTokens(value = "") {
+    return [...new Set(tokens(value).filter((word) => !CONTENT_STOP_WORDS.has(word)))];
   }
 
   function sameAlias(left = "", right = "", aliases = []) {
@@ -50,19 +59,102 @@
       : { score: 0, confidence: "low", kind: "none" };
   }
 
+  function subjectCompatibility(target = "", source = "") {
+    const direct = subjectMatch(target, source);
+    if (direct.score) return direct;
+    const a = normalize(target);
+    const b = normalize(source);
+    if (SUBJECT_RELATION_GROUPS.some((group) => group.includes(a) && group.includes(b))) {
+      return { score: .55, confidence: "medium", kind: "related" };
+    }
+    return direct;
+  }
+
+  function splitTopic(value = "") {
+    const raw = String(value || "").trim();
+    const separator = raw.indexOf(":");
+    return separator >= 0
+      ? { title: raw.slice(0, separator).trim(), details: raw.slice(separator + 1).trim() }
+      : { title: raw, details: "" };
+  }
+
+  function textFrom(value) {
+    return Array.isArray(value) ? value.filter(Boolean).join("; ") : String(value || "").trim();
+  }
+
+  function canonicalHistoricalTopic(entry = {}) {
+    const parsed = splitTopic(entry.assunto);
+    const title = String(entry.metaTitulo || parsed.title || entry.assunto || "").trim();
+    const details = textFrom(entry.conteudoBloco) || textFrom(entry.metaConteudos) || parsed.details || textFrom(entry.conteudosOriginais);
+    return { title, details, subject: String(entry.materia || ""), rawTopic: String(entry.assunto || "") };
+  }
+
+  function canonicalTargetTopic(target = {}) {
+    const parsed = splitTopic(target.assunto);
+    const title = String(target.titulo || parsed.title || target.assunto || "").trim();
+    const details = textFrom(target.descricao) || textFrom(target.conteudosOriginais) || parsed.details;
+    return { title, details, subject: String(target.materia || ""), rawTopic: String(target.assunto || title) };
+  }
+
   function topicMatch(target = "", source = "") {
     const a = normalize(target);
     const b = normalize(source);
     if (!a || !b || GENERIC_TOPICS.has(a) || GENERIC_TOPICS.has(b)) return { score: 0, confidence: "low", kind: "none" };
     if (a === b) return { score: 1, confidence: "high", kind: "exact", direction: "equivalent" };
     if (sameAlias(a, b, TOPIC_ALIASES)) return { score: .96, confidence: "high", kind: "alias", direction: "equivalent" };
-    const shortest = Math.min(a.length, b.length);
-    if (shortest >= 4 && a.includes(b)) return { score: .78, confidence: "medium", kind: "contained", direction: "broad-to-specific" };
-    if (shortest >= 4 && b.includes(a)) return { score: .84, confidence: "medium", kind: "contained", direction: "specific-to-broad" };
+    const targetTokens = [...new Set(tokens(a))];
+    const sourceTokens = [...new Set(tokens(b))];
+    const containsAll = (container, contained) => contained.length && contained.every((token) => container.includes(token));
+    if (containsAll(targetTokens, sourceTokens)) return { score: .78, confidence: "medium", kind: "contained", direction: "broad-to-specific" };
+    if (containsAll(sourceTokens, targetTokens)) return { score: .84, confidence: "medium", kind: "contained", direction: "specific-to-broad" };
     const score = overlap(a, b);
     return score >= .72
       ? { score, confidence: score >= .86 ? "high" : "medium", kind: "partial", direction: "partial" }
       : { score: 0, confidence: "low", kind: "none", direction: "none" };
+  }
+
+  function detailCoverage(target = {}, source = {}) {
+    const targetTerms = contentTokens(`${target.title} ${target.details}`);
+    const sourceTerms = contentTokens(`${source.title} ${source.details}`);
+    if (!targetTerms.length || !sourceTerms.length) return 0;
+    return targetTerms.filter((term) => sourceTerms.includes(term)).length / targetTerms.length;
+  }
+
+  function hasStructuralCoverage(target = {}, source = {}) {
+    const targetTerms = contentTokens(`${target.title} ${target.details}`);
+    const sourceTerms = contentTokens(`${source.title} ${source.details}`);
+    const shared = targetTerms.filter((term) => sourceTerms.includes(term)).length;
+    if (!targetTerms.length || !sourceTerms.length) return false;
+    const coverage = shared / targetTerms.length;
+    return targetTerms.length <= 2 ? coverage >= .5 && shared >= 1 : coverage >= .25 && shared >= 2;
+  }
+
+  function candidateMatch(target = {}, entry = {}) {
+    const targetTopic = canonicalTargetTopic(target);
+    const sourceTopic = canonicalHistoricalTopic(entry);
+    const title = topicMatch(targetTopic.title, sourceTopic.title);
+    const coverage = detailCoverage(targetTopic, sourceTopic);
+    const subject = subjectCompatibility(targetTopic.subject, sourceTopic.subject);
+    const exactCanonicalTitle = title.kind === "exact" || title.kind === "alias";
+    const titleContained = title.kind === "contained" && subject.score >= .45;
+    const structuralCoverage = hasStructuralCoverage(targetTopic, sourceTopic) && subject.score >= .55;
+    const accepted = exactCanonicalTitle || titleContained || (title.score >= .72 && subject.score >= .45) || structuralCoverage;
+    const matchBasis = exactCanonicalTitle
+      ? title.kind === "alias" ? "controlled-alias" : "canonical-title-exact"
+      : titleContained ? "title-containment"
+        : structuralCoverage ? "detail-coverage"
+          : title.score >= .72 ? "title-overlap" : "none";
+    const direction = exactCanonicalTitle ? "equivalent" : title.direction && title.direction !== "none" ? title.direction : "partial";
+    return {
+      target: targetTopic,
+      source: sourceTopic,
+      title,
+      detailCoverage: coverage,
+      subject,
+      accepted,
+      matchBasis,
+      direction,
+    };
   }
 
   function dateValue(entry = {}) {
@@ -165,19 +257,19 @@
   function matchingEntries(target = {}, sources = []) {
     const matches = [];
     sources.forEach((source) => snapshotBlocks(source).forEach((entry) => {
-      const topic = topicMatch(target.assunto, entry.assunto);
-      if (topic.score < .72) return;
-      const subject = subjectMatch(target.materia, entry.materia);
-      // Um título igual ainda pode ser reaproveitado entre matérias relacionadas,
-      // mas uma semelhança ampla nunca é suficiente por si só.
-      if (subject.score < .45 && topic.score < .96) return;
-      const score = clamp(topic.score * .82 + subject.score * .18);
+      const candidate = candidateMatch(target, entry);
+      if (!candidate.accepted) return;
+      const score = clamp(candidate.title.score * .68 + candidate.detailCoverage * .2 + candidate.subject.score * .12);
       matches.push({
         entry,
         source,
         score,
-        topic,
-        subject,
+        topic: { ...candidate.title, direction: candidate.direction },
+        subject: candidate.subject,
+        canonicalTarget: candidate.target,
+        canonicalSource: candidate.source,
+        detailCoverage: candidate.detailCoverage,
+        matchBasis: candidate.matchBasis,
         difficulty: sourceDifficulty(source, entry.materia),
       });
     }));
@@ -194,20 +286,34 @@
       }
     }));
     examined.forEach(({ source, entry }) => {
-      const subject = subjectMatch(target.materia, entry.materia);
-      const topic = topicMatch(target.assunto, entry.assunto);
-      const acceptedMatch = topic.score >= .72 && !(subject.score < .45 && topic.score < .96);
-      const candidate = { source, entry, subject, topic, reason: acceptedMatch ? "accepted" : subject.score < .45 ? "subject-mismatch" : "topic-mismatch" };
-      if (acceptedMatch) accepted.push(candidate);
+      const match = candidateMatch(target, entry);
+      const reason = match.accepted ? "accepted" : match.subject.score < .45 ? "subject-mismatch" : "topic-mismatch";
+      const candidate = {
+        source,
+        entry,
+        targetCanonicalTitle: match.target.title,
+        sourceCanonicalTitle: match.source.title,
+        targetSubject: match.target.subject,
+        sourceSubject: match.source.subject,
+        titleScore: match.title.score,
+        detailCoverage: match.detailCoverage,
+        subjectScore: match.subject.score,
+        matchBasis: match.matchBasis,
+        direction: match.direction,
+        subject: match.subject,
+        topic: match.title,
+        reason,
+      };
+      if (match.accepted) accepted.push(candidate);
       else rejected.push(candidate);
     });
     const bestRejected = rejected
       .filter((candidate) => candidate.reason !== "no-execution-evidence")
-      .sort((left, right) => (right.topic.score + right.subject.score) - (left.topic.score + left.subject.score))[0] || null;
+      .sort((left, right) => (right.titleScore + right.detailCoverage + right.subjectScore) - (left.titleScore + left.detailCoverage + left.subjectScore))[0] || null;
     return {
       examinedExecutionBlocks: examined.length,
-      subjectMatches: examined.filter(({ entry }) => subjectMatch(target.materia, entry.materia).score >= .45).length,
-      topicMatches: examined.filter(({ entry }) => topicMatch(target.assunto, entry.assunto).score >= .72).length,
+      subjectMatches: examined.filter(({ entry }) => candidateMatch(target, entry).subject.score >= .45).length,
+      topicMatches: examined.filter(({ entry }) => candidateMatch(target, entry).title.score >= .72 || candidateMatch(target, entry).detailCoverage >= .3).length,
       accepted,
       rejected,
       bestRejected,
@@ -224,8 +330,10 @@
     const bySource = new Map();
     matches.forEach((match) => {
       const id = match.source.id || match.entry.sourceId || match.entry.sourceName;
-      const current = bySource.get(id) || { ...match, entries: [] };
+      const current = bySource.get(id) || { ...match, entries: [], matchBases: new Set(), canonicalTitles: new Set() };
       current.entries.push(match.entry);
+      current.matchBases.add(match.matchBasis);
+      current.canonicalTitles.add(normalize(match.canonicalSource.title));
       current.score = Math.max(current.score, match.score);
       bySource.set(id, current);
     });
@@ -248,6 +356,10 @@
         matchScore: group.score,
         matchConfidence: group.topic.confidence === "high" && group.subject.confidence !== "low" ? "high" : group.topic.confidence,
         matchKind: group.topic.kind,
+        matchBasis: group.canonicalTitles.size > 1 && ![...group.matchBases].some((basis) => basis === "canonical-title-exact" || basis === "controlled-alias")
+          ? "composite-coverage"
+          : group.matchBasis,
+        detailCoverage: group.detailCoverage,
         matchDirection: group.topic.direction || "partial",
         matchedSubject: group.entry.materia,
         matchedTopic: group.entry.assunto,
@@ -324,7 +436,20 @@
     };
   }
 
-  const api = { normalize, subjectMatch, topicMatch, snapshotBlocks, matchingEntries, inspectSource, inspectTarget, derive };
+  const api = {
+    normalize,
+    subjectMatch,
+    subjectCompatibility,
+    topicMatch,
+    canonicalHistoricalTopic,
+    canonicalTargetTopic,
+    detailCoverage,
+    snapshotBlocks,
+    matchingEntries,
+    inspectSource,
+    inspectTarget,
+    derive,
+  };
   global.HistoryInheritance = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

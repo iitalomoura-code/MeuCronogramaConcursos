@@ -155,6 +155,6 @@ assert.equal(inheritance.topicMatch("Receita Pública", "Receitas Públicas").co
 assert.equal(inheritance.subjectMatch("Administração Pública", "Governança Pública").score, 0);
 assert.ok(app.includes("function refreshHistoryInheritanceSources") && app.includes("function historyInheritanceForTarget"), "O aplicativo deve carregar fontes anteriores de forma derivada.");
 assert.ok(app.includes("historyInheritance: target.historyInheritance"), "A prioridade estratégica deve receber a herança sem alterar o diagnóstico atual.");
-assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance-active-blocks"), "O motor de herança deve carregar antes do aplicativo.");
+assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance-canonical-matching"), "O motor de herança deve carregar antes do aplicativo.");
 
 console.log("OK - herança entre ciclos usa correspondência conservadora, recência e evidências separadas.");

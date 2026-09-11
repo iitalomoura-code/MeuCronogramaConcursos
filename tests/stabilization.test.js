@@ -19,8 +19,8 @@ assert.ok(app.includes("function reconstructPdfPageLines"), "A extração de PDF
 assert.ok(app.includes("convertToHtml"), "A leitura DOCX deve preservar blocos quando Mammoth oferecer HTML.");
 assert.ok(!/\b(?:alert|confirm|prompt)\s*\(/.test(app), "Os fluxos principais não devem usar diálogos nativos.");
 assert.ok(index.includes("styles.css?v=20260911-history-inheritance-visible"), "O CSS deve usar o cache-busting atual.");
-assert.ok(index.includes("app.js?v=20260911-history-inheritance-diagnosis-fix"), "O JavaScript deve usar o cache-busting atual.");
-assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance-active-blocks"), "A herança histórica deve usar a versão que inclui blocos executados do ciclo vivo.");
+assert.ok(index.includes("app.js?v=20260911-history-inheritance-canonical-matching"), "O JavaScript deve usar o cache-busting atual.");
+assert.ok(index.includes("js/history-inheritance.js?v=20260911-history-inheritance-canonical-matching"), "A herança histórica deve usar a versão com matching canônico.");
 assert.ok(index.includes("js/strategic-cycle-reconciliation.js?v=20260911-cycle-reconciliation-stabilized"), "A reconciliação estratégica deve carregar antes do app.");
 assert.ok(index.includes("js/capacity-planning.js?v=20260911-initial-profile"), "A camada de capacidade deve carregar antes do app.");
 assert.ok(index.includes("js/program-model.js?v=20260907-canonical-program"), "O modelo canônico deve carregar antes do parser e do app.");

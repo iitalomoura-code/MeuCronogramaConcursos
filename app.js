@@ -4652,7 +4652,14 @@ function historyInheritanceSummaryForSubject(subject = {}) {
   const rows = state.rows.filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject.materia) && row.estudar !== "Nao");
   const topics = rows.map((row) => ({
     row,
-    inheritance: historyInheritanceForTarget({ materia: row.materia, assunto: row.assunto || row.titulo, subarea: row.subarea || "" }),
+    inheritance: historyInheritanceForTarget({
+      materia: row.materia,
+      titulo: row.titulo || "",
+      assunto: row.assunto || row.titulo,
+      descricao: row.descricao || "",
+      conteudosOriginais: row.conteudosOriginais || [],
+      subarea: row.subarea || "",
+    }),
   })).filter((item) => item.inheritance.level !== "none");
   const sourceNames = [...new Set(topics.flatMap((item) => item.inheritance.sources || []).map((source) => source.sourceName).filter(Boolean))];
   return {
@@ -4692,16 +4699,16 @@ function historyInheritanceSubjectMarkup(summary = {}, index = 0) {
   return `<div class="history-inheritance-summary"><strong>Histórico anterior encontrado</strong><span>${summary.matchedTopics} de ${summary.totalTopics} temas com evidência anterior${breakdown ? ` · ${breakdown}` : ""}</span><small>${escapeHtml(sourceLabel)}</small><button class="text-action" type="button" data-toggle-history-subject="${index}" aria-expanded="false" aria-controls="${detailId}">Ver temas reconhecidos</button><div id="${detailId}" class="history-inheritance-details" hidden><p>Este histórico é uma referência inicial. O nível atual será confirmado conforme você registrar novas questões neste planejamento.</p><ul>${summary.topics.map(historyInheritanceTopicDetailMarkup).join("")}</ul></div>${summary.profileMismatch ? `<small class="history-inheritance-mismatch">Seu histórico anterior indica contato com alguns temas desta matéria. Vamos manter sua avaliação e confirmar essa diferença com questões.</small>` : ""}</div>`;
 }
 
-function historyInheritanceForTarget({ materia = "", assunto = "", subarea = "" } = {}) {
+function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
   const engine = window.HistoryInheritance;
-  if (!engine?.derive || !materia || !assunto) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
+  if (!engine?.derive || !materia || !(titulo || assunto)) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
   const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
   const profile = initialDiagnosisInfluence(materia, assunto, subarea);
-  const signature = [materia, assunto, subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level]
+  const signature = [materia, titulo, assunto, descricao, JSON.stringify(conteudosOriginais || []), subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level]
     .map((value) => normalizeForMatch(String(value ?? ""))).join("|");
   if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
   const inherited = engine.derive({
-    target: { materia, assunto, subarea },
+    target: { materia, titulo, assunto, descricao, conteudosOriginais, subarea },
     sources: historyInheritanceSources,
     currentEvidence: evidence,
     initialProfile: profile,
@@ -5024,7 +5031,7 @@ function masteryDiagnosisForTarget(target = {}) {
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
   const initial = initialDiagnosisInfluence(materia, assunto, subarea);
-  const historyInheritance = historyInheritanceForTarget({ materia, assunto, subarea });
+  const historyInheritance = historyInheritanceForTarget({ ...target, materia, assunto, subarea });
   const errorSignals = errorSignalsForTarget(materia, assunto, subarea);
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
@@ -5227,7 +5234,15 @@ function strategicPlanningTopics() {
       ...topic,
       programUnit,
       subject,
-      historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({ materia: topic.materia, assunto: topic.assuntoOriginal || topic.assunto, subarea: topic.subarea }),
+      historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({
+        ...topic,
+        materia: topic.materia,
+        titulo: programUnit.titulo || topic.titulo || "",
+        assunto: topic.assuntoOriginal || topic.assunto,
+        descricao: programUnit.descricao || topic.descricao || "",
+        conteudosOriginais: programUnit.conteudosOriginais || topic.conteudosOriginais || [],
+        subarea: topic.subarea,
+      }),
       strategic,
     };
     return { ...entry, advisorCategory: window.StrategicAdvisor?.categoryFor?.(entry) || "" };
@@ -5513,7 +5528,7 @@ function strategicPriorityForTarget(target = {}) {
     errorSignals: target.errorSignals || diagnosis.errorSignals || errorSignalsForTarget(materia, assunto, target.subarea || ""),
     intervention: target.intervention || learningInterventionFor(materia, assunto),
     initialProfile: target.initialProfile || initialDiagnosisInfluence(materia, assunto, target.subarea || ""),
-    historyInheritance: target.historyInheritance || diagnosis.historyInheritance || historyInheritanceForTarget({ materia, assunto, subarea: target.subarea || "" }),
+    historyInheritance: target.historyInheritance || diagnosis.historyInheritance || historyInheritanceForTarget({ ...target, materia, assunto, subarea: target.subarea || "" }),
     hasContact: target.hasContact ?? diagnosis.hasContact,
     coverage: target.coverage ?? (diagnosis.hasContact ? 1 : 0),
     daysWithoutContact: target.daysWithoutContact ?? diagnosis.daysWithoutContact,

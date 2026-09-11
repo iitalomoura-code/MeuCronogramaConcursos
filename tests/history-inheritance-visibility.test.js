@@ -10,6 +10,7 @@ const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 assert.ok(app.includes("function historyInheritanceSummaryForSubject"), "O Diagnóstico deve agregar a herança por matéria sem criar outro motor.");
 assert.ok(app.includes("function historyInheritanceTopicDetailMarkup"), "Os temas reconhecidos devem reaproveitar as métricas retornadas pelo motor existente.");
+assert.ok(app.includes("conteudosOriginais: row.conteudosOriginais || []"), "A tela deve fornecer o tema estruturado ao motor de herança.");
 assert.ok(!app.includes("resetDerivedState()"), "A autoavaliação inicial deve invalidar apenas os caches derivados disponíveis.");
 assert.ok(app.includes('normalizeForMatch(String(value ?? ""))'), "A assinatura do cache precisa aceitar metadados estruturados sem interromper o Diagnóstico.");
 assert.ok(app.includes("Verificando seus planejamentos anteriores"), "O carregamento assíncrono deve ser visível, mas discreto.");
