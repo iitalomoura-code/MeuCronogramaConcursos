@@ -321,11 +321,13 @@
     const uniqueTopics = (items) => new Set(items.map((item) => `${item.materia || ""}:${item.assunto || ""}:${item.title}`)).size;
     const improvementCount = uniqueTopics([...improvements, ...resolvedPriorities]);
     const attentionCount = uniqueTopics([...declines, ...newPriorities]);
+    const independentPriorityCount = uniqueTopics(independentPriorityChanges);
     const summary = !notableChanges.length
       ? "Nenhuma mudança estratégica relevante desde o último marco estratégico."
       : improvementCount || attentionCount
         ? `Desde o último marco: ${improvementCount} ${improvementCount === 1 ? "avanço" : "avanços"} e ${attentionCount} ${attentionCount === 1 ? "novo ponto de atenção" : "novos pontos de atenção"}.`
-        : coverageChanges[0]?.explanation || "Nenhuma mudança estratégica relevante desde o último marco estratégico.";
+        : coverageChanges[0]?.explanation
+          || (independentPriorityCount ? `Desde o último marco: ${independentPriorityCount} ${independentPriorityCount === 1 ? "conteúdo mudou" : "conteúdos mudaram"} de prioridade estratégica.` : "Nenhuma mudança estratégica relevante desde o último marco estratégico.");
     return {
       improvements,
       declines,

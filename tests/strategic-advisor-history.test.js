@@ -79,6 +79,11 @@ comparison = history.compare(snapshot([topic({ strategicScore: .45 })], undefine
 assert.equal(comparison.priorityChanges.length, 1, "Variação relevante de score deve aparecer na comparação.");
 assert.equal(comparison.independentPriorityChanges.length, 1, "Mudança de prioridade independente deve chegar à síntese exibível.");
 assert.ok(comparison.notableChanges.some((item) => item.type === "priority-change"), "Mudança de prioridade independente deve aparecer entre as mudanças notáveis.");
+assert.ok(!comparison.summary.includes("Nenhuma mudança") && comparison.summary.includes("prioridade estratégica"), "Mudança independente de prioridade deve ser reconhecida no resumo.");
+
+comparison = history.compare(snapshot([topic({ category: "prioritize", diagnosisLevel: "deficiency", strategicScore: .45 })], undefined, "advance-score-before"), snapshot([topic({ category: "prioritize", diagnosisLevel: "attention", strategicScore: .7 })], undefined, "advance-score-after"));
+assert.equal(comparison.independentPriorityChanges.length, 0, "Mudança de score absorvida por avanço não deve duplicar a síntese.");
+assert.ok(comparison.summary.includes("avanço") && !comparison.summary.includes("prioridade estratégica"), "O resumo deve priorizar o avanço quando ele existir.");
 
 comparison = history.compare(snapshot([topic({ recentAccuracy: .74 })], undefined, "accuracy-before"), snapshot([topic({ recentAccuracy: .72 })], undefined, "accuracy-after"));
 assert.equal(comparison.declines.length, 0, "Oscilação pequena de acerto isolada não pode virar piora automática.");
