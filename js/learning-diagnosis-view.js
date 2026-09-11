@@ -69,12 +69,35 @@
     return parts.join(" · ") || "Ainda sem evidências suficientes.";
   }
 
+  function subjectVisualState(topics = []) {
+    const total = Math.max(1, topics.length);
+    const count = (levels) => topics.filter((topic) => levels.includes(topic.level)).length;
+    const insufficient = count(["insufficient"]);
+    const needsAttention = count(["critical", "deficiency"]);
+    const monitoring = count(["attention"]);
+    if (insufficient / total >= .6) return { label: "Em construção", tone: "insufficient" };
+    if (needsAttention > 0) return { label: "Com pontos de atenção", tone: "attention" };
+    if (monitoring > 0 || insufficient > 0) return { label: "Em acompanhamento", tone: "attention" };
+    return { label: "Base consistente", tone: "strong" };
+  }
+
+  function originLabel(diagnosis = {}, topic = {}) {
+    const origin = diagnosis.diagnosisOrigin || diagnosis.historyInheritance?.origin || topic.historyInheritance?.origin || "none";
+    return {
+      "current-cycle": "Dados do ciclo atual",
+      "previous-history": "Histórico de ciclos anteriores",
+      "self-assessment": "Autopercepção inicial",
+      mixed: "Histórico + dados atuais",
+      none: "Ainda sem evidência suficiente",
+    }[origin] || "Registros disponíveis";
+  }
+
   function technicalDetails(topic, escape, actionButton) {
     const diagnosis = topic.diagnosis || {};
     const errors = topic.errorSignals || {};
     const trend = diagnosis.trend?.label === "falling" ? "Queda" : diagnosis.trend?.label === "improving" ? "Melhora" : "Estável";
     const percentage = (value) => value === null || typeof value === "undefined" ? "Sem registro" : `${Math.round(value * 100)}%`;
-    const source = topic.historyInheritance?.origin === "previous-history" ? "Histórico de ciclos anteriores" : diagnosis.basis === "subject" ? "Registros deste assunto" : "Registros disponíveis";
+    const source = originLabel(diagnosis, topic);
     const errorDetail = errors.recurrence === "high" ? `Recorrentes em ${errors.sessionsWithErrors || 0} sessões` : Number(errors.postInterventionErrors) >= 2 ? "Persistentes após reforço" : "Sem recorrência relevante";
     return `<details class="learning-diagnosis-topic-details"><summary>Ver detalhes</summary><dl><div><dt>Desempenho recente</dt><dd>${escape(percentage(diagnosis.accuracy))}</dd></div><div><dt>Desempenho histórico</dt><dd>${escape(percentage(diagnosis.overallAccuracy))}</dd></div><div><dt>Questões</dt><dd>${escape(diagnosis.questions || 0)}</dd></div><div><dt>Sessões</dt><dd>${escape(diagnosis.sessions || 0)}</dd></div><div><dt>Tendência</dt><dd>${escape(trend)}</dd></div><div><dt>Confiança</dt><dd>${Math.round((Number(diagnosis.confidence) || 0) * 100)}%</dd></div><div><dt>Último contato</dt><dd>${topic.daysWithoutContact > 0 ? `${escape(topic.daysWithoutContact)} dias atrás` : "Hoje ou sem registro anterior"}</dd></div><div><dt>Erros</dt><dd>${escape(errorDetail)}</dd></div><div><dt>Origem</dt><dd>${escape(source)}</dd></div></dl><div class="learning-diagnosis-detail-action"><span>Próxima ação disponível</span><strong>${escape(topic.action.label)}</strong><small>${escape(topic.action.detail)}</small><button class="secondary-button compact-button" type="button" data-reinforce-topic="${escape(topic.materia)}" data-reinforce-subject="${escape(topic.assuntoOriginal || topic.assunto)}"><i data-lucide="zap"></i><span>${actionButton(topic)}</span></button></div></details>`;
   }
@@ -113,7 +136,7 @@
     const subjects = [...bySubject.values()].map((subject) => {
       const levels = subject.topics.map((topic) => topic.levelInfo.rank);
       const weakest = subject.topics[0];
-      return { ...subject, weakest, levelInfo: weakest?.levelInfo || LEVELS.insufficient, topics: subject.topics, levelRank: Math.min(...levels) };
+      return { ...subject, weakest, levelInfo: weakest?.levelInfo || LEVELS.insufficient, visualState: subjectVisualState(subject.topics), topics: subject.topics, levelRank: Math.min(...levels) };
     }).sort((a, b) => a.levelRank - b.levelRank || a.materia.localeCompare(b.materia));
     const counts = prepared.reduce((result, topic) => {
       if (topic.level === "strong") result.strong += 1;
@@ -148,7 +171,7 @@
       <div class="learning-diagnosis-summary">${[
         ["strong", "Domínio forte", model.counts.strong], ["attention", "Atenção", model.counts.monitoring + model.counts.deficiency], ["insufficient", "Mais dados", model.counts.insufficient],
       ].map(([key, label, count]) => `<button type="button" class="learning-diagnosis-metric ${status === key ? "is-active" : ""}" data-learning-diagnosis-status="${key}"><strong>${count}</strong><span>${label}</span></button>`).join("")}</div>
-      <section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Diagnóstico por matéria</span><h3>Como está cada matéria</h3><p>Abra uma matéria para ver os assuntos e investigue as evidências somente quando precisar.</p></div></div><div class="learning-diagnosis-subject-list">${subjectItems.map((item) => { const isExpanded = expanded.has(item.materia); return `<article class="learning-diagnosis-subject ${isExpanded ? "is-expanded" : ""}"><button class="learning-diagnosis-subject-trigger" type="button" data-learning-diagnosis-expand="${escape(item.materia)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? "Recolher" : "Expandir"} ${escape(item.materia)}"><span><strong>${escape(item.materia)}</strong>${badge(item.weakest)}</span><span class="learning-diagnosis-subject-overview"><b>${escape(item.levelInfo.label)}</b><small>${escape(subjectSummary(item.topics))}</small></span><i data-lucide="chevron-down" aria-hidden="true"></i></button>${isExpanded ? `<div class="learning-diagnosis-subject-topics">${item.topics.map((topic) => `<article class="learning-diagnosis-topic"><div><strong>${escape(topic.assunto)}</strong>${badge(topic)}</div>${technicalDetails(topic, escape, actionButton)}</article>`).join("")}</div>` : ""}</article>`; }).join("") || "<p class=\"muted-note\">Nenhuma matéria corresponde aos filtros.</p>"}</div></section>
+      <section class="learning-diagnosis-section"><div class="learning-diagnosis-section-heading"><div><span class="section-kicker">Diagnóstico por matéria</span><h3>Como está cada matéria</h3><p>Abra uma matéria para ver os assuntos e investigue as evidências somente quando precisar.</p></div></div><div class="learning-diagnosis-subject-list">${subjectItems.map((item) => { const isExpanded = expanded.has(item.materia); return `<article class="learning-diagnosis-subject ${isExpanded ? "is-expanded" : ""}"><button class="learning-diagnosis-subject-trigger" type="button" data-learning-diagnosis-expand="${escape(item.materia)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? "Recolher" : "Expandir"} ${escape(item.materia)}"><span><strong>${escape(item.materia)}</strong></span><span class="learning-diagnosis-subject-overview"><b class="learning-diagnosis-status ${item.visualState.tone}">${escape(item.visualState.label)}</b><small>${escape(subjectSummary(item.topics))}</small></span><i data-lucide="chevron-down" aria-hidden="true"></i></button>${isExpanded ? `<div class="learning-diagnosis-subject-topics">${item.topics.map((topic) => `<article class="learning-diagnosis-topic"><div><strong>${escape(topic.assunto)}</strong>${badge(topic)}</div>${technicalDetails(topic, escape, actionButton)}</article>`).join("")}</div>` : ""}</article>`; }).join("") || "<p class=\"muted-note\">Nenhuma matéria corresponde aos filtros.</p>"}</div></section>
       <details class="learning-diagnosis-map learning-diagnosis-section"><summary><span class="section-kicker">Mapa de domínio</span><strong>Ver mapa completo de assuntos</strong><i data-lucide="chevron-down" aria-hidden="true"></i></summary><div class="learning-diagnosis-map-content"><div class="learning-diagnosis-map-head"><span>Assunto</span><span>Situação</span><span>Tendência</span><span>Confiança</span><span>Ação</span></div>${mapRows || "<p class=\"muted-note\">Ainda não há temas para exibir.</p>"}</div></details>`;
   }
 

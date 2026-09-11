@@ -5066,7 +5066,8 @@ function learningDiagnosisModel() {
       }),
       errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
       intervention: learningInterventionFor(topic.materia, topic.assunto),
-      daysWithoutContact: daysSinceLastSubjectContact(topic.materia),
+      // A recência específica do alvo evita atribuir contato de outro assunto da matéria.
+      daysWithoutContact: diagnosis.daysWithoutContact ?? daysSinceLastSubjectContact(topic.materia),
     };
   });
   learningDiagnosisModelCache = window.LearningDiagnosisView?.build?.({ topics }) || { topics: [], subjects: [], counts: {}, priorities: [], errorPatterns: [], responses: [] };
