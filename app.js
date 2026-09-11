@@ -4204,6 +4204,8 @@ function confirmRows(options = {}) {
     return;
   }
 
+  // A busca começa antes da navegação, mas nunca bloqueia a abertura do Diagnóstico Inicial.
+  const historyRefresh = refreshHistoryInheritanceSources();
   // A confirmação e a navegação não esperam tarefas auxiliares de renderização ou sincronização.
   finishContentConfirmationNavigation();
   try {
@@ -4212,7 +4214,7 @@ function confirmRows(options = {}) {
   } catch (error) {
     console.error("Não foi possível atualizar a visualização após confirmar o conteúdo", error);
   }
-  void refreshHistoryInheritanceSources();
+  void historyRefresh;
 }
 
 function renderPlanningBase() {
@@ -4227,12 +4229,14 @@ function renderPlanningBase() {
     const objectiveImportance = Number(planningSubject.examImportance?.questionCount) > 0 && ["current-edital", "previous-edital"].includes(planningSubject.examImportance?.sourceType);
     const priority = priorityInfo(subject.prioridade);
     const isOpen = index === priorityEditIndex;
+    const historicalSummary = historyInheritanceSummaryForSubject(subject);
     return `
       <article class="priority-row ${isOpen ? "is-open" : ""} ${planningSubject.active ? "" : "is-paused"}">
         <div class="priority-row-main">
           <div class="priority-subject">
             <strong>${escapeHtml(subject.materia)}</strong>
             <span>${subject.assuntos.length} tema${subject.assuntos.length === 1 ? "" : "s"} &middot; ${planningSubject.active ? "Ativa" : "Em espera"}</span>
+            ${historicalSummary.matchedTopics ? `<small class="priority-history-note" title="Histórico anterior considerado como referência inicial; o desempenho atual continua sendo confirmado neste planejamento.">${historicalSummary.matchedTopics} tema${historicalSummary.matchedTopics === 1 ? "" : "s"} com base anterior</small>` : ""}
           </div>
           <div class="priority-cell">
             <span>${objectiveImportance ? "Importância relativa na prova" : "Importância na prova"}</span>
@@ -4634,9 +4638,52 @@ async function refreshHistoryInheritanceSources() {
     historyInheritanceSources = sources;
     historyInheritanceSourcesKey = sourceKey;
     invalidateDerivedStudyCaches();
+    // O carregamento é opcional para o fluxo, mas a superfície atualiza assim que terminar.
+    if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();
+    if (getActiveTabName() === "pesos") renderPlanningBase();
     return historyInheritanceSources;
   })().finally(() => { historyInheritanceLoadPromise = null; });
   return historyInheritanceLoadPromise;
+}
+
+function historyInheritanceSummaryForSubject(subject = {}) {
+  const rows = state.rows.filter((row) => normalizeForMatch(row.materia) === normalizeForMatch(subject.materia) && row.estudar !== "Nao");
+  const topics = rows.map((row) => ({
+    row,
+    inheritance: historyInheritanceForTarget({ materia: row.materia, assunto: row.assunto || row.titulo, subarea: row.subarea || "" }),
+  })).filter((item) => item.inheritance.level !== "none");
+  const sourceNames = [...new Set(topics.flatMap((item) => item.inheritance.sources || []).map((source) => source.sourceName).filter(Boolean))];
+  return {
+    subject: subject.materia,
+    totalTopics: rows.length || Number(subject.assuntos?.length) || 0,
+    matchedTopics: topics.length,
+    strong: topics.filter((item) => item.inheritance.level === "strong").length,
+    partial: topics.filter((item) => item.inheritance.level === "partial").length,
+    contact: topics.filter((item) => item.inheritance.level === "contact").length,
+    sourceNames,
+    profileMismatch: topics.some((item) => item.inheritance.profileMismatch),
+    topics,
+  };
+}
+
+function historyInheritanceTopicDetailMarkup(item = {}) {
+  const inheritance = item.inheritance || {};
+  const source = inheritance.sources?.[0] || {};
+  const metrics = inheritance.metrics || {};
+  const accuracy = Number.isFinite(metrics.accuracy) ? `${Math.round(metrics.accuracy * 100)}% de acerto anterior` : "sem percentual anterior consolidado";
+  const contact = Number.isFinite(metrics.daysSinceContact) ? `último contato há ${metrics.daysSinceContact} dias` : "data anterior não informada";
+  const match = inheritance.matchConfidence === "high" ? "Correspondência alta" : inheritance.matchConfidence === "medium" ? "Correspondência média" : "Correspondência compatível";
+  const origin = inheritance.origin === "mixed" ? "Histórico anterior + desempenho atual." : "Ainda não confirmado neste planejamento.";
+  return `<li><strong>${escapeHtml(item.row.assunto || item.row.titulo || "Tema")}</strong><span>${escapeHtml(inheritance.label || "Histórico anterior")}${source.sourceName ? ` · ${escapeHtml(source.sourceName)}` : ""}</span><small>${metrics.questions || 0} questões · ${accuracy} · ${metrics.sessions || 0} sessões · ${Number(metrics.hours || 0).toFixed(1)}h · ${contact} · ${match}</small><em>${escapeHtml(inheritance.recommendation || "Questões diagnósticas")}. ${origin}</em></li>`;
+}
+
+function historyInheritanceSubjectMarkup(summary = {}, index = 0) {
+  if (!summary.matchedTopics) return "";
+  const breakdown = [[summary.strong, "base forte"], [summary.partial, "base parcial"], [summary.contact, "contato prévio"]]
+    .filter(([count]) => count).map(([count, label]) => `${count} ${label}`).join(" · ");
+  const detailId = `history-inheritance-${index}`;
+  const sourceLabel = summary.sourceNames.length === 1 ? `Principal fonte: ${summary.sourceNames[0]}` : `Histórico encontrado em ${summary.sourceNames.length} planejamentos`;
+  return `<div class="history-inheritance-summary"><strong>Histórico anterior encontrado</strong><span>${summary.matchedTopics} de ${summary.totalTopics} temas com evidência anterior${breakdown ? ` · ${breakdown}` : ""}</span><small>${escapeHtml(sourceLabel)}</small><button class="text-action" type="button" data-toggle-history-subject="${index}" aria-expanded="false" aria-controls="${detailId}">Ver temas reconhecidos</button><div id="${detailId}" class="history-inheritance-details" hidden><p>Este histórico é uma referência inicial. O nível atual será confirmado conforme você registrar novas questões neste planejamento.</p><ul>${summary.topics.map(historyInheritanceTopicDetailMarkup).join("")}</ul></div>${summary.profileMismatch ? `<small class="history-inheritance-mismatch">Seu histórico anterior indica contato com alguns temas desta matéria. Vamos manter sua avaliação e confirmar essa diferença com questões.</small>` : ""}</div>`;
 }
 
 function historyInheritanceForTarget({ materia = "", assunto = "", subarea = "" } = {}) {
@@ -4664,7 +4711,15 @@ function renderInitialDiagnosis() {
     return;
   }
   const levels = Object.values(window.InitialDiagnosisEngine.LEVELS);
-  els.initialDiagnosisList.innerHTML = subjects.map((subject) => {
+  const histories = subjects.map(historyInheritanceSummaryForSubject);
+  const matchedTopics = histories.reduce((total, summary) => total + summary.matchedTopics, 0);
+  const sourceNames = [...new Set(histories.flatMap((summary) => summary.sourceNames))];
+  const loading = Boolean(historyInheritanceLoadPromise);
+  const globalNotice = loading
+    ? `<p class="history-inheritance-loading">Verificando seus planejamentos anteriores...</p>`
+    : matchedTopics ? `<p class="history-inheritance-global">Encontramos histórico aproveitável em ${matchedTopics} dos ${histories.reduce((total, summary) => total + summary.totalTopics, 0)} temas deste planejamento.${sourceNames.length ? ` Dados vindos de ${sourceNames.length} planejamento${sourceNames.length === 1 ? "" : "s"} anterior${sourceNames.length === 1 ? "" : "es"}.` : ""}</p>`
+      : "";
+  els.initialDiagnosisList.innerHTML = `${globalNotice}${subjects.map((subject, index) => {
     const influence = initialDiagnosisInfluence(subject.materia);
     const subjectDiagnosis = masteryDiagnosisForTarget({ materia: subject.materia, prioridade: priorityScore(subject) });
     const estimated = window.InitialDiagnosisEngine.estimatedLevel({
@@ -4676,12 +4731,12 @@ function renderInitialDiagnosis() {
       ? `<small>Seu planejamento já utiliza principalmente seu desempenho real. Alterar esta avaliação terá pouco impacto.</small>`
       : `<small>Nível estimado agora: ${escapeHtml(estimated.label)} · ${estimated.source === "evidence" ? "baseado no desempenho registrado" : "aguardando evidências do estudo"}</small>`;
     return `<article class="initial-diagnosis-row" data-diagnosis-subject="${escapeHtml(subject.materia)}">
-      <div class="initial-diagnosis-subject"><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} tema${subject.assuntos?.length === 1 ? "" : "s"}</span>${historyNotice}</div>
+      <div class="initial-diagnosis-subject"><strong>${escapeHtml(subject.materia)}</strong><span>${subject.assuntos?.length || 0} tema${subject.assuntos?.length === 1 ? "" : "s"}</span>${historyInheritanceSubjectMarkup(histories[index], index)}${historyNotice}</div>
       <div class="initial-diagnosis-options" role="radiogroup" aria-label="Conhecimento inicial em ${escapeHtml(subject.materia)}">
         ${levels.map((level) => `<label class="initial-diagnosis-option"><input type="radio" name="diagnosis-${escapeHtml(initialDiagnosisSubjectId(subject.materia))}" value="${level.id}" ${influence.level === level.id ? "checked" : ""}><span>${escapeHtml(level.label)}</span></label>`).join("")}
       </div>
     </article>`;
-  }).join("");
+  }).join("")}`;
 }
 
 function entryDateValue(entry = {}) {
@@ -15829,6 +15884,16 @@ els.initialDiagnosisList?.addEventListener("change", (event) => {
   if (!input || !row) return;
   setInitialDiagnosisLevel(row.dataset.diagnosisSubject, input.value);
   renderInitialDiagnosis();
+});
+els.initialDiagnosisList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-toggle-history-subject]");
+  if (!button) return;
+  const details = els.initialDiagnosisList.querySelector(`#history-inheritance-${CSS.escape(button.dataset.toggleHistorySubject)}`);
+  if (!details) return;
+  const expanded = button.getAttribute("aria-expanded") === "true";
+  button.setAttribute("aria-expanded", expanded ? "false" : "true");
+  button.textContent = expanded ? "Ver temas reconhecidos" : "Ocultar temas reconhecidos";
+  details.hidden = expanded;
 });
 els.applyDiagnosisBulkButton?.addEventListener("click", () => {
   const level = els.diagnosisBulkLevel?.value || "unknown";
