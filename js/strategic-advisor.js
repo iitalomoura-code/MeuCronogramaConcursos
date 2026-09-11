@@ -92,8 +92,11 @@
     });
   }
 
-  function summaryFor(groups) {
+  function summaryFor(groups, coverage) {
     const sentences = [];
+    if (coverage.level === "partial") {
+      sentences.push("A visão global ainda é parcial porque muitos conteúdos não possuem evidência suficiente.");
+    }
     if (groups.priorities.length) sentences.push(`${groups.priorities[0].title} concentra a maior oportunidade de ganho neste momento.`);
     if (groups.reduceLoad.length) sentences.push(`${groups.reduceLoad.map((item) => item.materia).join(" e ")} ${groups.reduceLoad.length === 1 ? "pode" : "podem"} receber menos carga e seguir em manutenção.`);
     if (groups.watch.length) sentences.push(`${groups.watch.map((item) => item.title).join(" e ")} ${groups.watch.length === 1 ? "merece" : "merecem"} observação temporária.`);
@@ -101,31 +104,67 @@
     return sentences.slice(0, 4);
   }
 
-  function hasEvidence(items = []) {
-    if (!items.length) return false;
-    const evidenced = items.filter((item) => clamp(item.confidence) >= .45 || Number(item.diagnosis?.questions) >= 10 || Number(item.diagnosis?.sessionCount || item.diagnosis?.sessions) >= 2).length;
-    return evidenced >= Math.max(1, Math.ceil(items.length * .6));
+  function hasLocalEvidence(item = {}) {
+    return clamp(item.confidence) >= .45
+      || Number(item.diagnosis?.questions) >= 10
+      || Number(item.diagnosis?.sessionCount || item.diagnosis?.sessions) >= 2;
+  }
+
+  function coverageFor(items = []) {
+    const evidencedTopics = items.filter(hasLocalEvidence).length;
+    const totalTopics = items.length;
+    const ratio = totalTopics ? evidencedTopics / totalTopics : 0;
+    const evidencedSubjects = new Set(items.filter(hasLocalEvidence).map((item) => item.materia)).size;
+    const totalSubjects = new Set(items.map((item) => item.materia)).size;
+    const subjectRatio = totalSubjects ? evidencedSubjects / totalSubjects : 0;
+    let level = "low";
+    if (ratio >= .6 && subjectRatio >= .45) level = "broad";
+    else if (ratio >= .15 || evidencedTopics >= 3) level = "partial";
+    return { evidencedTopics, totalTopics, ratio, evidencedSubjects, totalSubjects, subjectRatio, level };
+  }
+
+  function mixedSubjectsFor(items = []) {
+    return groupBySubject(items).map(({ materia, topics }) => {
+      const focus = topics.filter((item) => ["prioritize", "recovery"].includes(item.category) || (item.category === "watch" && hasLocalEvidence(item)));
+      const maintain = topics.filter((item) => ["maintain", "reduce"].includes(item.category));
+      if (!focus.length || !maintain.length) return null;
+      const focusNames = focus.map((item) => item.assunto).filter(Boolean);
+      const maintainNames = maintain.map((item) => item.assunto).filter(Boolean);
+      const focusLabel = focusNames.join(" e ") || materia;
+      const maintainLabel = maintainNames.join(" e ") || "os demais temas analisados";
+      return {
+        materia,
+        focus: focusNames,
+        maintain: maintainNames,
+        title: materia,
+        explanation: `${focusLabel} ${focusNames.length === 1 ? "ainda exige" : "ainda exigem"} reforço, enquanto ${maintainLabel} ${maintainNames.length === 1 ? "pode seguir" : "podem seguir"} em manutenção.`,
+      };
+    }).filter(Boolean);
   }
 
   function build({ topics = [] } = {}) {
     const items = topics.map(normalize);
+    const mixedSubjects = mixedSubjectsFor(items);
+    const mixedSubjectNames = new Set(mixedSubjects.map((item) => item.materia));
     const riskySubjects = new Set(groupBySubject(items.filter((item) => ["prioritize", "recovery"].includes(item.category) || ["critical", "deficiency"].includes(item.diagnosis?.level) || item.errorSignals?.recurrence === "high")).map((group) => group.materia));
     const categories = {
       priorities: compactSubjectItems(items.filter((item) => ["prioritize", "recovery"].includes(item.category))).sort((a, b) => clamp(b.strategic?.score) - clamp(a.strategic?.score)).slice(0, LIMIT),
-      reduceLoad: compactSubjectItems(items.filter((item) => item.category === "reduce" && !riskySubjects.has(item.materia))).sort((a, b) => clamp(a.strategic?.score) - clamp(b.strategic?.score)).slice(0, LIMIT),
-      maintain: compactSubjectItems(items.filter((item) => item.category === "maintain")).slice(0, LIMIT),
+      reduceLoad: compactSubjectItems(items.filter((item) => item.category === "reduce" && !riskySubjects.has(item.materia) && !mixedSubjectNames.has(item.materia))).sort((a, b) => clamp(a.strategic?.score) - clamp(b.strategic?.score)).slice(0, LIMIT),
+      maintain: compactSubjectItems(items.filter((item) => item.category === "maintain" && !mixedSubjectNames.has(item.materia))).slice(0, LIMIT),
       watch: compactSubjectItems(items.filter((item) => item.category === "watch")).sort((a, b) => clamp(b.strategic?.score) - clamp(a.strategic?.score)).slice(0, LIMIT),
       building: compactSubjectItems(items.filter((item) => item.category === "building")).sort((a, b) => clamp(b.strategic?.score) - clamp(a.strategic?.score)).slice(0, LIMIT),
       diagnostic: compactSubjectItems(items.filter((item) => item.category === "diagnostic")).sort((a, b) => clamp(b.strategic?.score) - clamp(a.strategic?.score)).slice(0, LIMIT),
     };
     const bottlenecks = categories.priorities.filter((item) => ["critical", "deficiency"].includes(item.diagnosis?.level) || item.errorSignals?.recurrence === "high").slice(0, LIMIT);
     const positiveSignals = [...categories.reduceLoad, ...categories.maintain].slice(0, LIMIT);
-    const sufficient = hasEvidence(items);
+    const coverage = coverageFor(items);
+    const locallyConfident = items.some((item) => hasLocalEvidence(item) && ["prioritize", "recovery", "reduce", "maintain", "watch"].includes(item.category));
     const hasChange = categories.priorities.length || categories.reduceLoad.length || categories.watch.length || categories.building.length || categories.diagnostic.length;
-    const summary = !sufficient
+    const awaitingEvidence = coverage.level === "low" && !locallyConfident;
+    const summary = awaitingEvidence
       ? ["Ainda há poucos dados para uma orientação estratégica confiável. Continue registrando sessões e questões para que o sistema possa identificar prioridades com maior segurança."]
       : hasChange
-        ? summaryFor(categories)
+        ? summaryFor(categories, coverage)
         : ["Sua preparação está estável neste momento. Não foram identificados gargalos relevantes que justifiquem mudança ampla de estratégia. Mantenha a distribuição atual e os contatos periódicos previstos."];
     return {
       summary,
@@ -137,15 +176,18 @@
       insufficientEvidence: categories.diagnostic,
       bottlenecks,
       positiveSignals,
+      mixedSubjects,
+      coverage,
+      globalAssessment: awaitingEvidence ? "low-evidence" : coverage.level,
       changes: [],
-      stability: sufficient && !hasChange,
-      awaitingEvidence: !sufficient,
+      stability: coverage.level === "broad" && !hasChange,
+      awaitingEvidence,
       confidence: items.length ? items.reduce((total, item) => total + item.confidence, 0) / items.length : 0,
       snapshot: { generatedAt: new Date().toISOString(), itemCount: items.length, categories: items.map((item) => ({ materia: item.materia, assunto: item.assunto, category: item.category, level: item.diagnosis?.level || "insufficient" })) },
     };
   }
 
-  const api = { build, categoryFor, reasonList };
+  const api = { build, categoryFor, reasonList, coverageFor };
   global.StrategicAdvisor = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

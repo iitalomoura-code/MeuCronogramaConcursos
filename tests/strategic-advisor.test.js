@@ -72,4 +72,57 @@ const diagnosisOrder = advisor.build({ topics: [
 ] });
 assert.deepEqual(diagnosisOrder.insufficientEvidence.map((item) => item.materia), ["Legislação B", "Legislação C", "Legislação A"], "Conteúdos que pedem diagnóstico devem ser ordenados pelo score estratégico.");
 
+const partiallyCoveredTopics = Array.from({ length: 200 }, (_, index) => topic(`Edital ${index + 1}`, "Tema", { level: "insufficient", hasContact: false, confidence: 0 }, { score: .2 }, { historyInheritance: { level: "none" } }));
+partiallyCoveredTopics[0] = topic("Contabilidade", "Lançamentos", { level: "deficiency", accuracy: .55, questions: 80 }, { score: .9 }, { errorSignals: { recurrence: "high" } });
+partiallyCoveredTopics[1] = topic("RLM", "Lógica", { level: "strong", accuracy: .9, questions: 50 }, { score: .2 });
+for (let index = 2; index < 40; index += 1) {
+  partiallyCoveredTopics[index] = topic(`Matéria avaliada ${index}`, "Tema", { level: "adequate", accuracy: .8, questions: 15 }, { score: .4 });
+}
+const partialCoverage = advisor.build({ topics: partiallyCoveredTopics });
+assert.equal(partialCoverage.coverage.level, "partial", "Uma parte relevante de um edital grande deve gerar cobertura parcial.");
+assert.equal(partialCoverage.globalAssessment, "partial", "A avaliação global precisa registrar cobertura parcial sem bloquear as decisões locais.");
+assert.ok(partialCoverage.summary[0].includes("visão global ainda é parcial"), "O resumo deve contextualizar a cobertura parcial.");
+assert.ok(partialCoverage.priorities.some((item) => item.materia === "Contabilidade"), "Deficiência com evidência local forte deve continuar recomendada sob cobertura parcial.");
+assert.ok(partialCoverage.reduceLoad.some((item) => item.materia === "RLM"), "Sinal local forte também deve permitir manutenção ou redução sob cobertura parcial.");
+
+const trulyEarly = advisor.build({ topics: [
+  topic("Início A", "Tema", { level: "insufficient", hasContact: false, confidence: .1 }, { score: .2 }, { historyInheritance: { level: "none" } }),
+  topic("Início B", "Tema", { level: "insufficient", hasContact: false, confidence: .1 }, { score: .2 }, { historyInheritance: { level: "none" } }),
+] });
+assert.equal(trulyEarly.globalAssessment, "low-evidence", "Pouca evidência sem recomendação local deve manter o fallback cauteloso.");
+assert.ok(trulyEarly.summary[0].includes("poucos dados"), "O fallback de poucos dados deve ser preservado quando ele for realmente necessário.");
+
+const broadCoverage = advisor.build({
+  topics: Array.from({ length: 10 }, (_, index) => topic(
+    `Coberta ${index}`,
+    "Tema",
+    { level: index === 0 ? "deficiency" : "adequate", questions: 20, accuracy: index === 0 ? .55 : .82 },
+    { score: index === 0 ? .8 : .3 },
+  )),
+});
+assert.equal(broadCoverage.coverage.level, "broad", "Cobertura ampla deve ser reconhecida separadamente.");
+assert.ok(!broadCoverage.summary.join(" ").includes("visão global ainda é parcial"), "Cobertura ampla não deve usar linguagem de cobertura parcial.");
+
+const completeMixed = advisor.build({ topics: [
+  topic("AFO", "Receita", { level: "deficiency", accuracy: .52, questions: 40 }, { score: .82 }),
+  topic("AFO", "Despesa", { level: "strong", accuracy: .9, questions: 40 }, { score: .2 }),
+  topic("AFO", "Créditos", { level: "adequate", accuracy: .82, questions: 35 }, { score: .35 }),
+] });
+assert.equal(completeMixed.reduceLoad.length, 0, "Matéria mista não pode aparecer como redução global de carga.");
+assert.equal(completeMixed.mixedSubjects.length, 1, "A matéria com foco e manutenção deve ganhar uma síntese derivada de situação mista.");
+assert.deepEqual(completeMixed.mixedSubjects[0].focus, ["Receita"], "A síntese mista deve destacar o assunto que exige reforço.");
+assert.deepEqual(completeMixed.mixedSubjects[0].maintain, ["Despesa", "Créditos"], "A síntese mista deve preservar os temas que seguem em manutenção.");
+assert.ok(completeMixed.mixedSubjects[0].explanation.includes("enquanto"), "A explicação mista deve ligar o gargalo localizado aos sinais positivos.");
+
+const localizedPositive = advisor.build({ topics: [
+  topic("Contabilidade", "Lançamentos", { level: "critical", accuracy: .4, questions: 50 }, { score: .9 }),
+  ...["Estoques", "Demonstrações", "Custos", "Ativo", "Passivo"].map((assunto) => topic("Contabilidade", assunto, { level: "strong", accuracy: .9, questions: 35 }, { score: .2 })),
+] });
+assert.equal(localizedPositive.priorities[0].title, "Contabilidade: Lançamentos", "A prioridade deve continuar localizada no tema crítico.");
+assert.equal(localizedPositive.mixedSubjects[0].maintain.length, 5, "Sinais positivos do restante da matéria devem continuar disponíveis na síntese mista.");
+
+const categoryBeforeCoverage = partiallyCoveredTopics.map((item) => advisor.categoryFor(item));
+advisor.build({ topics: partiallyCoveredTopics });
+assert.deepEqual(partiallyCoveredTopics.map((item) => advisor.categoryFor(item)), categoryBeforeCoverage, "Cobertura global não pode alterar categorias, scores ou diagnósticos existentes.");
+
 console.log("OK - Orientador Estratégico interpreta diagnósticos existentes sem criar novo score ou alterar a origem.");
