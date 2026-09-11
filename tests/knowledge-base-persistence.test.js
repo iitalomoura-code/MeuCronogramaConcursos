@@ -20,6 +20,7 @@ assert.ok(app.includes("requestIdleCallback(run, { timeout: 2500 })"), "O bootst
 assert.ok(app.includes("restoreKnowledgeBaseFromBackup"), "O backup deve preservar a base independente.");
 assert.ok(app.includes("function knowledgeBaseNeedsCloudSync") && app.includes("if (!cloudRecord?.data) return true;"), "Uma base local existente deve ir para a nuvem ainda vazia.");
 assert.ok(app.includes("mergeKnowledgeBases(cloud, local, imported)"), "A restauração deve reconciliar cloud, local e backup sem apagar evidências.");
+assert.ok(app.includes("knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState)"), "A assinatura factual deve sincronizar a correção do snapshot para a nuvem.");
 assert.ok(!app.includes("historyInheritanceSources = sources;\n    knowledgeBase"), "A base não deve reusar o cache visual da herança entre planos.");
 
 console.log("OK - persistência da base permanente usa armazenamento próprio, autenticação existente e backup compatível.");

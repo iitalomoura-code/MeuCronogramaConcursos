@@ -142,4 +142,37 @@ const dateSummary = knowledge.summarizeConceptEvidence(unorderedDates, "Sintaxe"
 assert.equal(dateSummary.firstCompletedAt, "01/07/2026");
 assert.equal(dateSummary.lastCompletedAt, "10/08/2026");
 
+const legacyBrokenBase = {
+  schemaVersion: 1,
+  evidence: [{
+    id: "session:plan-a:s1", sessionId: "s1", sourcePlanId: "plan-a", sourcePlanName: "Plano A",
+    originalSubject: "Informática", originalTopic: "Arquivos eletrônicos", canonicalKey: "arquivos eletronicos", canonicalTitle: "Arquivos eletrônicos",
+    studiedMinutes: 2700, questions: 24, correctAnswers: 21, completedAt: "2026-09-01", activityType: "Estudo", createdAt: "2026-09-01",
+  }],
+};
+const repairedSource = source("plan-a", "Plano A", [{
+  materia: "Informática", assunto: "Arquivos eletrônicos", questoes: 24, acertos: 21, tempoEstudado: 45, sessaoId: "s1", completedAt: "2026-09-01", status: "Concluído",
+}]);
+repairedSource.snapshot.savedAt = "2026-09-11T12:00:00.000Z";
+const repaired = knowledge.buildKnowledgeBase(legacyBrokenBase, [repairedSource]);
+assert.equal(repaired.evidence.length, 1);
+assert.equal(repaired.evidence[0].studiedMinutes, 45, "O snapshot atual deve reparar 2700 minutos legados para 45.");
+assert.equal(repaired.evidence[0].legacyTimeOutlier, false);
+assert.equal(knowledge.buildKnowledgeBase(repaired, [repairedSource]).evidence[0].studiedMinutes, 45, "A reparação precisa ser idempotente.");
+
+const lowerCorrectionBase = {
+  schemaVersion: 1,
+  evidence: [{
+    id: "session:plan-b:s2", sessionId: "s2", sourcePlanId: "plan-b", canonicalKey: "balanco patrimonial", canonicalTitle: "Balanço patrimonial",
+    studiedMinutes: 60, questions: 25, correctAnswers: 22, completedAt: "2026-09-01", observedAt: "2026-09-01T10:00:00.000Z",
+  }],
+};
+const lowerCorrectionSource = source("plan-b", "Plano B", [{
+  materia: "Contabilidade", assunto: "Balanço patrimonial", questoes: 20, acertos: 18, tempoEstudado: 1, sessaoId: "s2", completedAt: "2026-09-01", status: "Concluído",
+}]);
+lowerCorrectionSource.snapshot.savedAt = "2026-09-12T10:00:00.000Z";
+const lowerCorrected = knowledge.buildKnowledgeBase(lowerCorrectionBase, [lowerCorrectionSource]);
+assert.equal(lowerCorrected.evidence.length, 1);
+assert.deepEqual([lowerCorrected.evidence[0].questions, lowerCorrected.evidence[0].correctAnswers], [20, 18], "Uma correção recente pode reduzir questões e acertos.");
+
 console.log("OK - base permanente consolida evidências executadas, preserva origem e suporta bootstrap incremental.");

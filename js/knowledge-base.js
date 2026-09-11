@@ -155,13 +155,15 @@
     const incomingObserved = dateValue(incoming.observedAt || incoming.updatedAt);
     const existingFacts = factualCompleteness(existing);
     const incomingFacts = factualCompleteness(incoming);
-    const incomingMagnitude = (Number(incoming.questions) || 0) * 1000000 + (Number(incoming.correctAnswers) || 0) * 1000 + (Number(incoming.studiedMinutes) || 0);
-    const existingMagnitude = (Number(existing.questions) || 0) * 1000000 + (Number(existing.correctAnswers) || 0) * 1000 + (Number(existing.studiedMinutes) || 0);
-    const preferIncoming = incomingObserved && existingObserved && incomingObserved !== existingObserved
+    // Uma sessão reextraída de snapshot observável corrige a evidência legada
+    // sem observedAt. Nunca usamos números maiores como sinônimo de atualização.
+    const preferIncoming = incomingObserved && existingObserved
       ? incomingObserved > existingObserved
-      : incomingFacts !== existingFacts
-        ? incomingFacts > existingFacts
-        : incomingMagnitude > existingMagnitude;
+      : incomingObserved && !existingObserved
+        ? true
+        : !incomingObserved && existingObserved
+          ? false
+          : incomingFacts > existingFacts;
     const preferred = preferIncoming ? incoming : existing;
     const secondary = preferIncoming ? existing : incoming;
     return {
@@ -208,7 +210,11 @@
       schemaVersion: SCHEMA_VERSION,
       createdAt,
       concepts: Array.isArray(base.concepts) ? base.concepts.map((concept) => ({ ...concept })) : [],
-      evidence: Array.isArray(base.evidence) ? base.evidence.map((item) => ({ ...item })) : [],
+      evidence: Array.isArray(base.evidence) ? base.evidence.map((item) => ({
+        ...item,
+        domain: "",
+        legacyTimeOutlier: Number(item.studiedMinutes) > MAX_RELIABLE_SESSION_MINUTES && !text(item.observedAt || item.updatedAt),
+      })) : [],
       topicMappings: Array.isArray(base.topicMappings) ? base.topicMappings.map((item) => ({ ...item })) : [],
     };
   }
@@ -292,7 +298,12 @@
         additions.push(evidence);
       });
     });
-    const evidence = dedupeEvidence([...normalizedBase.evidence, ...additions]);
+    // Reprocessar fontes acessíveis torna esta sanitização idempotente: uma
+    // sessão antiga com 2700 min é substituída pelos fatos do snapshot atual.
+    const evidence = dedupeEvidence([...normalizedBase.evidence, ...additions]).map((item) => ({
+      ...item,
+      legacyTimeOutlier: Number(item.studiedMinutes) > MAX_RELIABLE_SESSION_MINUTES && !text(item.observedAt || item.updatedAt),
+    }));
     const concepts = [...conceptMap(normalizedBase.concepts, evidence).values()];
     const mappings = dedupeMappings([...normalizedBase.topicMappings, ...evidence.map(mappingFromEvidence)]);
     return {
@@ -302,7 +313,7 @@
       concepts,
       evidence,
       topicMappings: mappings,
-      warnings,
+      warnings: [...warnings, ...evidence.filter((item) => item.legacyTimeOutlier).map((item) => ({ type: "legacy-time-outlier-needs-reconciliation", evidenceId: item.id, sourcePlanId: item.sourcePlanId }))],
     };
   }
 
