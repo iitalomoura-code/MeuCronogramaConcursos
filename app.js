@@ -4124,12 +4124,44 @@ function applyProgramComparisonPreview() {
   notifyContent("Atualização comparada. Confira a estrutura e confirme para salvar.", "success");
 }
 
+function contentConfirmationDecision(validationIssues = [], { force = false, reviewCount = 0 } = {}) {
+  const errors = validationIssues.filter((issue) => issue.severity === "error");
+  const warnings = validationIssues.filter((issue) => issue.severity !== "error");
+  const needsReview = warnings.length > 0 || Number(reviewCount) > 0;
+  return {
+    errors,
+    warnings,
+    needsReview,
+    canCommit: !errors.length && (!needsReview || force),
+  };
+}
+
+function finishContentConfirmationNavigation() {
+  if (setupIsIncomplete()) {
+    // O diagnóstico inicial não pode impedir a troca para a próxima etapa.
+    try {
+      ensureInitialDiagnosisForSubjects({ saveUnknown: true });
+    } catch (error) {
+      console.error("Não foi possível preparar o diagnóstico inicial", error);
+    }
+    setSetupStep(3);
+    switchTab("diagnostico");
+    return;
+  }
+  if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
+  switchTab("pesos");
+}
+
 function confirmRows(options = {}) {
   syncRowsFromTable();
   renumberRows({ sync: false, preserveState: true });
   const validationIssues = contentValidationIssues();
-  const blockingIssues = validationIssues.filter((issue) => issue.severity === "error");
-  if (blockingIssues.length) {
+  const reviewProblems = validationIssues.length ? validationIssues : contentProblemAnalysis();
+  const decision = contentConfirmationDecision(validationIssues, {
+    force: options.force === true,
+    reviewCount: reviewProblems.length,
+  });
+  if (decision.errors.length) {
     openContentProblemsModal(validationIssues.length);
     return;
   }
@@ -4138,40 +4170,47 @@ function confirmRows(options = {}) {
     void dialogAlert("Confirme pelo menos uma mat\u00e9ria com tema antes de continuar.");
     return;
   }
-  const problems = validationIssues.length ? validationIssues : contentProblemAnalysis();
-  if (problems.length && !options.force) {
-    openContentProblemsModal(problems.length);
+  if (!decision.canCommit) {
+    openContentProblemsModal(reviewProblems.length);
     return;
   }
 
-  if (pendingProgramVersionChange) {
-    const committedAt = new Date().toISOString();
-    pendingProgramVersionChange.previous.appliedAt = committedAt;
-    pendingProgramVersionChange.next.appliedAt = committedAt;
-    state.programVersions = [...(Array.isArray(state.programVersions) ? state.programVersions : []), pendingProgramVersionChange.previous, pendingProgramVersionChange.next];
-    state.currentProgramVersionId = pendingProgramVersionChange.next.id;
-    pendingProgramVersionChange = null;
+  try {
+    state.contentDraftPendingConfirmation = false;
+    refreshPlanningBaseFromRows({ preservePriorities: true });
+    if (!state.planningBase?.materias?.length) {
+      throw new Error("A confirmação não criou matérias para o planejamento.");
+    }
+    if (pendingProgramVersionChange) {
+      const committedAt = new Date().toISOString();
+      pendingProgramVersionChange.previous.appliedAt = committedAt;
+      pendingProgramVersionChange.next.appliedAt = committedAt;
+      state.programVersions = [...(Array.isArray(state.programVersions) ? state.programVersions : []), pendingProgramVersionChange.previous, pendingProgramVersionChange.next];
+      state.currentProgramVersionId = pendingProgramVersionChange.next.id;
+      pendingProgramVersionChange = null;
+    }
+    state.confirmed = true;
+    updateExamPhaseStatus();
+    els.confirmationStatus.textContent = "\u2713 Conte\u00fado confirmado";
+    els.confirmationStatus.classList.add("confirmed");
+    ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
+  } catch (error) {
+    console.error("Não foi possível confirmar o conteúdo programático", error);
+    state.confirmed = false;
+    state.contentDraftPendingConfirmation = true;
+    notifyContent("Não foi possível criar o planejamento com este conteúdo. Revise as matérias e temas reconhecidos.", "error");
+    return;
   }
 
-  state.contentDraftPendingConfirmation = false;
-  refreshPlanningBaseFromRows({ preservePriorities: true });
-  // A consulta ocorre em segundo plano: confirmar o edital continua imediato.
-  void refreshHistoryInheritanceSources();
-  state.confirmed = true;
-  updateExamPhaseStatus();
-  els.confirmationStatus.textContent = "\u2713 Conte\u00fado confirmado";
-  els.confirmationStatus.classList.add("confirmed");
-  ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
-  renderPlanningBase();
-  updateContentFlowSteps();
-  if (setupIsIncomplete()) {
-    ensureInitialDiagnosisForSubjects({ saveUnknown: true });
-    setSetupStep(3);
-    switchTab("diagnostico");
-  } else {
-    if (planningSettingsContextTab) planningSettingsContextTab = "pesos";
-    switchTab("pesos");
+  // A confirmação e a navegação não esperam tarefas auxiliares de renderização ou sincronização.
+  finishContentConfirmationNavigation();
+  try {
+    renderPlanningBase();
+    updateContentFlowSteps();
+  } catch (error) {
+    console.error("Não foi possível atualizar a visualização após confirmar o conteúdo", error);
   }
+  void refreshHistoryInheritanceSources();
 }
 
 function renderPlanningBase() {
