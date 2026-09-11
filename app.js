@@ -4638,11 +4638,13 @@ async function refreshHistoryInheritanceSources() {
     historyInheritanceSources = sources;
     historyInheritanceSourcesKey = sourceKey;
     invalidateDerivedStudyCaches();
-    // O carregamento é opcional para o fluxo, mas a superfície atualiza assim que terminar.
+    return historyInheritanceSources;
+  })().finally(() => {
+    // Limpa o estado antes de redesenhar, para a tela nunca manter o aviso de carga.
+    historyInheritanceLoadPromise = null;
     if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();
     if (getActiveTabName() === "pesos") renderPlanningBase();
-    return historyInheritanceSources;
-  })().finally(() => { historyInheritanceLoadPromise = null; });
+  });
   return historyInheritanceLoadPromise;
 }
 
@@ -4668,13 +4670,17 @@ function historyInheritanceSummaryForSubject(subject = {}) {
 
 function historyInheritanceTopicDetailMarkup(item = {}) {
   const inheritance = item.inheritance || {};
-  const source = inheritance.sources?.[0] || {};
+  const [primarySource = {}, ...otherSources] = inheritance.sources || [];
   const metrics = inheritance.metrics || {};
   const accuracy = Number.isFinite(metrics.accuracy) ? `${Math.round(metrics.accuracy * 100)}% de acerto anterior` : "sem percentual anterior consolidado";
   const contact = Number.isFinite(metrics.daysSinceContact) ? `último contato há ${metrics.daysSinceContact} dias` : "data anterior não informada";
   const match = inheritance.matchConfidence === "high" ? "Correspondência alta" : inheritance.matchConfidence === "medium" ? "Correspondência média" : "Correspondência compatível";
   const origin = inheritance.origin === "mixed" ? "Histórico anterior + desempenho atual." : "Ainda não confirmado neste planejamento.";
-  return `<li><strong>${escapeHtml(item.row.assunto || item.row.titulo || "Tema")}</strong><span>${escapeHtml(inheritance.label || "Histórico anterior")}${source.sourceName ? ` · ${escapeHtml(source.sourceName)}` : ""}</span><small>${metrics.questions || 0} questões · ${accuracy} · ${metrics.sessions || 0} sessões · ${Number(metrics.hours || 0).toFixed(1)}h · ${contact} · ${match}</small><em>${escapeHtml(inheritance.recommendation || "Questões diagnósticas")}. ${origin}</em></li>`;
+  const additionalSources = [...new Set(otherSources.map((source) => source?.sourceName).filter(Boolean))];
+  const sourceMarkup = primarySource.sourceName
+    ? `<span>Principal: ${escapeHtml(primarySource.sourceName)}</span>${additionalSources.length ? `<small>Também encontrado em: ${additionalSources.map(escapeHtml).join(", ")}</small>` : ""}`
+    : "";
+  return `<li><strong>${escapeHtml(item.row.assunto || item.row.titulo || "Tema")}</strong><span>${escapeHtml(inheritance.label || "Histórico anterior")}</span>${sourceMarkup}<small>${metrics.questions || 0} questões · ${accuracy} · ${metrics.sessions || 0} sessões · ${Number(metrics.hours || 0).toFixed(1)}h · ${contact} · ${match}</small><em>${escapeHtml(inheritance.recommendation || "Questões diagnósticas")}. ${origin}</em></li>`;
 }
 
 function historyInheritanceSubjectMarkup(summary = {}, index = 0) {
