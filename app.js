@@ -4553,7 +4553,7 @@ function setInitialDiagnosisLevel(materia = "", level = "unknown", { save = true
   };
   state.initialDiagnosis = (state.initialDiagnosis || []).filter((item) => item !== current && item.subjectId !== subjectId);
   state.initialDiagnosis.push(record);
-  resetDerivedState();
+  invalidateDerivedStudyCaches();
   if (save) scheduleAutoSave();
 }
 
@@ -4697,7 +4697,8 @@ function historyInheritanceForTarget({ materia = "", assunto = "", subarea = "" 
   if (!engine?.derive || !materia || !assunto) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
   const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
   const profile = initialDiagnosisInfluence(materia, assunto, subarea);
-  const signature = [materia, assunto, subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level].map(normalizeForMatch).join("|");
+  const signature = [materia, assunto, subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level]
+    .map((value) => normalizeForMatch(String(value ?? ""))).join("|");
   if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
   const inherited = engine.derive({
     target: { materia, assunto, subarea },

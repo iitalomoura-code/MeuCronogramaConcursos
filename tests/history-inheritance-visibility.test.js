@@ -10,6 +10,8 @@ const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 assert.ok(app.includes("function historyInheritanceSummaryForSubject"), "O Diagnóstico deve agregar a herança por matéria sem criar outro motor.");
 assert.ok(app.includes("function historyInheritanceTopicDetailMarkup"), "Os temas reconhecidos devem reaproveitar as métricas retornadas pelo motor existente.");
+assert.ok(!app.includes("resetDerivedState()"), "A autoavaliação inicial deve invalidar apenas os caches derivados disponíveis.");
+assert.ok(app.includes('normalizeForMatch(String(value ?? ""))'), "A assinatura do cache precisa aceitar metadados estruturados sem interromper o Diagnóstico.");
 assert.ok(app.includes("Verificando seus planejamentos anteriores"), "O carregamento assíncrono deve ser visível, mas discreto.");
 assert.ok(/finally\(\(\) => \{\s*\/\/ Limpa o estado antes de redesenhar[\s\S]*?historyInheritanceLoadPromise = null;[\s\S]*?renderInitialDiagnosis\(\)/.test(app), "O rerender final precisa acontecer somente depois de limpar o estado de carregamento.");
 assert.ok(app.includes('if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();'), "O Diagnóstico deve atualizar assim que as fontes terminarem de carregar.");
