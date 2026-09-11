@@ -5135,26 +5135,40 @@ function learningDiagnosisModel() {
 }
 
 function strategicPlanningTopics() {
+  const rowsByKey = new Map(state.rows.map((row) => {
+    const unit = canonicalProgramUnit(row);
+    return [programUnitKey(unit), unit];
+  }));
   return learningDiagnosisModel().topics.map((topic) => {
     const subject = subjectPlanningData(topic.materia);
     const diagnosis = topic.diagnosis || {};
-    return {
+    const topicUnit = canonicalProgramUnit({
+      materia: topic.materia,
+      subarea: topic.subarea || "",
+      assunto: topic.assuntoOriginal || topic.assunto,
+      titulo: topic.assuntoOriginal || topic.assunto,
+    });
+    const programUnit = rowsByKey.get(programUnitKey(topicUnit)) || topicUnit;
+    const strategic = strategicPriorityForTarget({
+      materia: topic.materia,
+      assunto: topic.assuntoOriginal || topic.assunto,
+      subarea: topic.subarea,
+      subject,
+      diagnosis,
+      errorSignals: topic.errorSignals,
+      intervention: topic.intervention,
+      initialProfile: topic.initialProfile,
+      historyInheritance: diagnosis.historyInheritance,
+      daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
+    });
+    const entry = {
       ...topic,
+      programUnit,
       subject,
       historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({ materia: topic.materia, assunto: topic.assuntoOriginal || topic.assunto, subarea: topic.subarea }),
-      strategic: strategicPriorityForTarget({
-        materia: topic.materia,
-        assunto: topic.assuntoOriginal || topic.assunto,
-        subarea: topic.subarea,
-        subject,
-        diagnosis,
-        errorSignals: topic.errorSignals,
-        intervention: topic.intervention,
-        initialProfile: topic.initialProfile,
-        historyInheritance: diagnosis.historyInheritance,
-        daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
-      }),
+      strategic,
     };
+    return { ...entry, advisorCategory: window.StrategicAdvisor?.categoryFor?.(entry) || "" };
   });
 }
 
@@ -6332,6 +6346,19 @@ function strategicCyclePreviewMessage(preview = {}) {
   return `${preview.changes.length} troca${preview.changes.length === 1 ? "" : "s"} sugerida${preview.changes.length === 1 ? "" : "s"}. Carga total preservada.\n\n${changes}`;
 }
 
+function reconcileDistributionFromBlocks(blocks = state.generatedBlocks) {
+  const counts = new Map();
+  blocks.filter((block) => !isStrategicPlanSessionBlock(block)).forEach((block) => {
+    counts.set(block.materia, (counts.get(block.materia) || 0) + 1);
+  });
+  const known = new Map((state.distribution || []).map((item) => [item.materia, item]));
+  state.distribution = [...counts.keys()].map((materia) => {
+    const existing = known.get(materia);
+    const subject = subjectPlanningData(materia);
+    return { ...(existing || subject), materia, blocos: counts.get(materia) || 0, foraDoCiclo: false };
+  }).sort((left, right) => right.blocos - left.blocos || left.materia.localeCompare(right.materia));
+}
+
 async function reconcileCurrentCycle() {
   const engine = window.StrategicCycleReconciliation;
   const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
@@ -6367,6 +6394,8 @@ async function reconcileCurrentCycle() {
     return;
   }
   state.generatedBlocks = result.blocks;
+  // A distribuição representa a composição viva do ciclo e acompanha as trocas confirmadas.
+  reconcileDistributionFromBlocks(result.blocks);
   result.preview.changes.forEach((change) => {
     recordCycleAdaptation({
       type: "strategic-replaced",
