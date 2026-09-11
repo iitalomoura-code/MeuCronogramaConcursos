@@ -2280,6 +2280,91 @@ textarea:focus {
   color: #fff;
 }
 
+.strategic-time-plan-card {
+  display: grid;
+  gap: 14px;
+  box-shadow: none;
+}
+
+.strategic-time-plan-card .continue-card-header { margin-bottom: 0; }
+.strategic-time-plan-card .continue-card-header h3 { font-size: 18px; }
+.strategic-time-plan-card .continue-card-header p { max-width: 560px; font-size: 13px; line-height: 1.45; }
+
+.strategic-time-quick-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.strategic-time-quick-picks .continue-filter-chip { min-height: 34px; }
+
+.strategic-time-custom {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.strategic-time-custom label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.strategic-time-custom input {
+  width: 108px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-main);
+  color: var(--text);
+  font: inherit;
+  padding: 6px 9px;
+}
+
+.strategic-time-plan-result { display: grid; gap: 12px; padding-top: 2px; }
+.strategic-time-plan-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.strategic-time-plan-result-heading h3 { margin: 2px 0 0; font-size: 17px; }
+.strategic-time-session-list { display: grid; gap: 8px; }
+
+.strategic-time-session {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.strategic-time-session-duration {
+  min-width: 48px;
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.strategic-time-session-content { min-width: 0; }
+.strategic-time-session-content > strong { display: block; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .02em; text-transform: uppercase; }
+.strategic-time-session-content h4 { margin: 3px 0 0; color: var(--text); font-size: 15px; line-height: 1.3; }
+.strategic-time-session-content p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.strategic-time-session details { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.strategic-time-session summary { width: fit-content; cursor: pointer; color: var(--primary); font-weight: 700; }
+.strategic-time-session ul { display: grid; gap: 3px; margin: 7px 0 0; padding-left: 17px; line-height: 1.4; }
+.strategic-time-plan-unused,
+.strategic-time-plan-message { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+@media (max-width: 700px) {
+  .strategic-time-plan-card { padding: 18px; }
+  .strategic-time-session { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .strategic-time-session .primary-button { grid-column: 2; justify-self: start; }
+  .strategic-time-session-duration { padding-top: 3px; text-align: left; }
+  .strategic-time-custom { align-items: end; }
+  .strategic-time-plan-result-heading { align-items: start; }
+}
+
 .continue-active-session {
   display: flex;
   align-items: center;

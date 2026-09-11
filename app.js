@@ -147,6 +147,8 @@ let showPendingOnly = false;
 let continueSuggestionOffset = 0;
 let continueRecommendationFilters = { minutes: 0, activity: "" };
 let continueManualOverride = null;
+let strategicTimePlanUI = { availableMinutes: 0, result: null, generatedAt: "" };
+let strategicTimePlanCustomOpen = false;
 let pendingProgramComparison = null;
 let pendingProgramVersionChange = null;
 let animatedMetricPanels = new Set();
@@ -5081,9 +5083,8 @@ function learningDiagnosisModel() {
   return learningDiagnosisModelCache;
 }
 
-function strategicAdvisorModel() {
-  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
-  const topics = learningDiagnosisModel().topics.map((topic) => {
+function strategicPlanningTopics() {
+  return learningDiagnosisModel().topics.map((topic) => {
     const subject = subjectPlanningData(topic.materia);
     const diagnosis = topic.diagnosis || {};
     return {
@@ -5104,6 +5105,11 @@ function strategicAdvisorModel() {
       }),
     };
   });
+}
+
+function strategicAdvisorModel() {
+  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
+  const topics = strategicPlanningTopics();
   strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] };
   strategicAdvisorModelRevision = errorAnalysisRevision;
   return strategicAdvisorModelCache;
@@ -5153,6 +5159,69 @@ function strategicAdvisorCompactMarkup() {
   const comparison = strategicAdvisorHistoryState().comparison;
   const temporal = comparison ? `<small class="strategic-advisor-temporal">${escapeHtml(comparison.summary)}</small>` : "";
   return `<section class="strategic-advisor-card"><div class="strategic-advisor-heading"><div><span class="section-kicker">Orientador estratégico</span><h3>Seu momento atual</h3></div><i data-lucide="compass" aria-hidden="true"></i></div><p>${escapeHtml(advisor.summary.join(" "))}</p>${temporal}<div class="strategic-advisor-glance">${compactList("Priorize", advisor.priorities)}${compactList("Reduza", advisor.reduceLoad)}${compactList("Observe", advisor.watch)}</div><button class="text-action" type="button" data-open-strategic-advisor>Ver análise completa</button></section>`;
+}
+
+function todayCompletedAllocations() {
+  return window.StrategicTimePlan?.completedAllocationsForToday?.(weeklyStudyEvents(), new Date()) || [];
+}
+
+function buildStrategicTimePlan(availableMinutes) {
+  const minutes = Math.max(0, Math.floor(Number(availableMinutes) || 0));
+  const result = window.StrategicTimePlan?.build?.({
+    availableMinutes: minutes,
+    topics: strategicPlanningTopics(),
+    recentAllocations: todayCompletedAllocations(),
+  });
+  strategicTimePlanUI = { availableMinutes: minutes, result, generatedAt: new Date().toISOString() };
+  return result;
+}
+
+function strategicTimePlanSessionMarkup(session = {}, index = 0) {
+  const rationale = Array.isArray(session.rationale) ? session.rationale.slice(0, 3) : [];
+  return `<article class="strategic-time-session"><div class="strategic-time-session-duration">${escapeHtml(formatMinutesShort(session.durationMinutes))}</div><div class="strategic-time-session-content"><strong>${escapeHtml(session.materia)}</strong><h4>${escapeHtml(themeTitle(session.assunto))}</h4><p>${escapeHtml(session.sessionType || "Sessão de estudo")}</p>${rationale.length ? `<details><summary>Por que este bloco?</summary><ul>${rationale.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : ""}</div><button class="primary-button compact-button" type="button" data-study-strategic-plan-session="${index}">Estudar agora</button></article>`;
+}
+
+function strategicTimePlanMarkup() {
+  const quickPicks = [30, 60, 90, 120, 180];
+  const { availableMinutes, result } = strategicTimePlanUI;
+  const selected = Number(availableMinutes) || 0;
+  let outcome = "";
+  if (result) {
+    if (selected && selected < Number(result.diagnostics?.minimumSessionMinutes || 20)) {
+      outcome = `<p class="strategic-time-plan-message">Com ${escapeHtml(formatMinutesShort(selected))}, não há um bloco completo recomendado pelo Orientador neste momento. Informe pelo menos ${escapeHtml(formatMinutesShort(result.diagnostics?.minimumSessionMinutes || 20))} para montar uma sessão estratégica.</p>`;
+    } else if (!result.diagnostics?.candidateCount) {
+      outcome = `<p class="strategic-time-plan-message">O Orientador ainda não encontrou conteúdos suficientes para montar uma alocação estratégica. Continue registrando seus estudos ou consulte o Diagnóstico.</p>`;
+    } else if (!result.sessions?.length) {
+      outcome = `<p class="strategic-time-plan-message">Não há um bloco completo recomendado pelo Orientador neste momento.</p>`;
+    } else {
+      outcome = `<div class="strategic-time-plan-result"><div class="strategic-time-plan-result-heading"><div><span class="section-kicker">Seu plano para agora</span><h3>${escapeHtml(formatMinutesShort(selected))} disponíveis</h3></div><button class="text-action" type="button" data-recalculate-strategic-time-plan>Recalcular</button></div><div class="strategic-time-session-list">${result.sessions.map(strategicTimePlanSessionMarkup).join("")}</div>${result.unusedMinutes ? `<p class="strategic-time-plan-unused">${escapeHtml(formatMinutesShort(result.unusedMinutes))} ficaram livres porque não formavam outro bloco de estudo útil.</p>` : ""}</div>`;
+    }
+  }
+  return `<section class="continue-side-card strategic-time-plan-card"><div class="continue-card-header compact"><div><span class="section-kicker">Planejamento por capacidade</span><h3>Quanto tempo você tem disponível agora?</h3><p>Use este tempo apenas para organizar o estudo deste momento.</p></div></div><div class="strategic-time-quick-picks" role="group" aria-label="Tempo disponível agora">${quickPicks.map((minutes) => `<button class="continue-filter-chip ${selected === minutes ? "is-active" : ""}" type="button" aria-pressed="${selected === minutes}" data-strategic-time-minutes="${minutes}">${escapeHtml(formatMinutesShort(minutes))}</button>`).join("")}<button class="continue-filter-chip ${strategicTimePlanCustomOpen ? "is-active" : ""}" type="button" aria-expanded="${strategicTimePlanCustomOpen}" data-open-strategic-time-custom>Outro</button></div>${strategicTimePlanCustomOpen ? `<div class="strategic-time-custom"><label for="strategicTimePlanCustomMinutes">Minutos disponíveis</label><input id="strategicTimePlanCustomMinutes" type="number" min="1" inputmode="numeric" value="${selected || ""}" /><button class="ghost-button compact-button" type="button" data-generate-strategic-time-custom>Montar plano</button></div>` : ""}${outcome}</section>`;
+}
+
+function startStrategicPlanSession(index) {
+  const session = strategicTimePlanUI.result?.sessions?.[Number(index)];
+  if (!session) return;
+  if (normalizeActiveFocusSession(state.activeFocusSession)) {
+    showToast("Há uma sessão em andamento. Retome ou descarte a sessão atual antes de iniciar outra.");
+    return;
+  }
+  const source = state.generatedBlocks.find((block) => topicMatches(block, session.materia, session.assunto)) || {};
+  const temporary = {
+    ...source,
+    id: `strategic-time-plan:${programUnitKey(session)}:${Date.now()}`,
+    materia: session.materia,
+    assunto: session.assunto,
+    duracao: Number((session.durationMinutes / 60).toFixed(2)),
+    status: "Não iniciado",
+    tipoAtividade: session.sessionType || source.tipoAtividade || "Estudo",
+    atividadeSugerida: session.sessionType || source.atividadeSugerida || "Estudo",
+    reviewSessionOnly: true,
+    strategicPlanSessionOnly: true,
+  };
+  state.generatedBlocks.push(temporary);
+  openFocusedStudy(state.generatedBlocks.length - 1, { context: "estudo", standaloneReview: true });
 }
 
 function openStrategicAdvisorModal(trigger = null) {
@@ -6663,6 +6732,7 @@ function weeklyStudyEvents() {
       activityType: block.atividadeSugerida || block.tipoAtividade || block.tipo || "",
       questions: Number(block.questoes) || 0,
       correct: Number(block.acertos) || 0,
+      durationMinutes: Number(block.tempoEstudado) > 0 ? Math.round(Number(block.tempoEstudado) * 60) : 0,
     });
   };
   state.generatedBlocks.forEach((block) => add(block, "", "current"));
@@ -6672,6 +6742,9 @@ function weeklyStudyEvents() {
     (cycle.completedHistory || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || "", `cycle-history:${cycle.label || ""}`));
   });
   state.cycleResults.forEach((cycle) => (cycle.completed || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || cycle.closedAt || "", `result:${cycle.label || ""}`)));
+  // Sessões estratégicas concluídas reutilizam o histórico de intervenção já existente,
+  // sem criar um segundo histórico de execução.
+  (state.interventionHistory || []).forEach((block) => add(block, "", "intervention"));
   const byId = new Map();
   events.forEach((event) => {
     const previous = byId.get(event.eventId);
@@ -8346,11 +8419,11 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
   block.pontosRevisar = Boolean(draft.pontosRevisar);
   block.atualizadoEm = new Date().toISOString();
   updateBlockAccuracy(block);
-  if (block.diagnosticInterventionOnly) {
+  if (block.diagnosticInterventionOnly || block.strategicPlanSessionOnly) {
     state.interventionHistory = Array.isArray(state.interventionHistory) ? state.interventionHistory : [];
     const sessionId = String(draft.sessionId || createStudySessionId());
     if (!state.interventionHistory.some((item) => item.sessaoId === sessionId)) {
-      state.interventionHistory.push({ ...block, sessaoId: sessionId, completedAt: new Date().toISOString(), savedAt: new Date().toISOString() });
+      state.interventionHistory.push({ ...block, sessaoId: sessionId, completedAt: new Date().toISOString(), savedAt: new Date().toISOString(), strategicPlanSession: Boolean(block.strategicPlanSessionOnly) });
       state.interventionHistory = state.interventionHistory.slice(-120);
     }
   }
@@ -8750,6 +8823,7 @@ function renderContinuePanel() {
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
+    ${strategicTimePlanMarkup()}
     ${strategicAdvisorCompactMarkup()}
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
@@ -14260,6 +14334,39 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-open-priority]")) {
     if (setupIsIncomplete()) switchTab("pesos");
     else openPlanningSettings("pesos");
+    return;
+  }
+
+  const timeQuickPick = event.target.closest("[data-strategic-time-minutes]");
+  if (timeQuickPick) {
+    buildStrategicTimePlan(Number(timeQuickPick.dataset.strategicTimeMinutes));
+    renderContinuePanel();
+    return;
+  }
+
+  if (event.target.closest("[data-open-strategic-time-custom]")) {
+    strategicTimePlanCustomOpen = !strategicTimePlanCustomOpen;
+    renderContinuePanel();
+    if (strategicTimePlanCustomOpen) document.querySelector("#strategicTimePlanCustomMinutes")?.focus();
+    return;
+  }
+
+  if (event.target.closest("[data-generate-strategic-time-custom]")) {
+    const minutes = Number(document.querySelector("#strategicTimePlanCustomMinutes")?.value);
+    buildStrategicTimePlan(minutes);
+    renderContinuePanel();
+    return;
+  }
+
+  if (event.target.closest("[data-recalculate-strategic-time-plan]")) {
+    buildStrategicTimePlan(strategicTimePlanUI.availableMinutes);
+    renderContinuePanel();
+    return;
+  }
+
+  const strategicPlanSession = event.target.closest("[data-study-strategic-plan-session]");
+  if (strategicPlanSession) {
+    startStrategicPlanSession(Number(strategicPlanSession.dataset.studyStrategicPlanSession));
     return;
   }
 
