@@ -1892,13 +1892,14 @@ function updateNavigationState() {
   const hasContest = Boolean(els.contestName?.value.trim() || els.jobRole?.value.trim());
   const hasContent = state.rows.some((row) => normalizeForMatch(String(row.estudar || "")) === "sim");
   const hasPriorities = Boolean(state.planningBase?.materias?.length);
-  const pending = state.generatedBlocks.filter(isPendingBlock).length;
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  const pending = cycleBlocks.filter(isPendingBlock).length;
   const reviewCount = openReviewCount();
   const states = {
     concurso: hasContest ? "✓" : "",
     conteudo: state.confirmed ? "✓" : hasContent ? "Em revisão" : "",
     pesos: hasPriorities ? "✓" : "",
-    cronograma: pending ? `${pending} pendente${pending === 1 ? "" : "s"}` : state.generatedBlocks.length ? "✓" : "",
+    cronograma: pending ? `${pending} pendente${pending === 1 ? "" : "s"}` : cycleBlocks.length ? "✓" : "",
     revisoes: reviewCount ? `${reviewCount} disponível${reviewCount === 1 ? "" : "is"}` : "",
   };
   Object.entries(states).forEach(([tab, value]) => {
@@ -1912,7 +1913,7 @@ function updateNavigationState() {
     else button.removeAttribute("aria-current");
   });
   setTabEnabled("pesos", Boolean(state.confirmed), "Confirme o conteúdo programático antes de definir as prioridades.");
-  setTabEnabled("cronograma", Boolean(state.generatedBlocks.length), "Defina as prioridades e gere o ciclo antes de acessar esta área.");
+  setTabEnabled("cronograma", Boolean(cycleBlocks.length), "Defina as prioridades e gere o ciclo antes de acessar esta área.");
   updateMobilePlanTitle();
   renderSetupProgress();
 }
@@ -3809,7 +3810,7 @@ function daysBetween(start, end) {
 
 function progressCounts() {
   const counts = Object.fromEntries(STATUS_OPTIONS.map((status) => [status, 0]));
-  state.generatedBlocks.forEach((block) => {
+  state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)).forEach((block) => {
     const status = normalizeStatus(block.status);
     counts[status] = (counts[status] || 0) + 1;
   });
@@ -4701,7 +4702,7 @@ function adaptiveHistoryEntries() {
   };
 
   state.completedHistory.forEach((block) => pushBlock(block, "completedHistory"));
-  state.generatedBlocks.forEach((block) => pushBlock(block, "generatedBlocks"));
+  state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)).forEach((block) => pushBlock(block, "generatedBlocks"));
   state.cycleHistory.forEach((cycle) => {
     (cycle.generatedBlocks || []).forEach((block) => pushBlock(block, "cycleHistory"));
     (cycle.completedHistory || []).forEach((block) => pushBlock(block, "cycleHistory"));
@@ -4709,7 +4710,7 @@ function adaptiveHistoryEntries() {
   state.cycleResults.forEach((result) => {
     (result.completed || []).forEach((block) => pushBlock({ ...block, savedAt: result.savedAt || result.closedAt || "" }, "cycleResults"));
   });
-  (state.interventionHistory || []).forEach((block) => pushBlock(block, "diagnosticIntervention"));
+  (state.interventionHistory || []).forEach((block) => pushBlock(block, block.strategicPlanSession ? "strategicPlanStudy" : "diagnosticIntervention"));
 
   adaptiveHistoryCache = entries.sort((a, b) => entryDateValue(a) - entryDateValue(b));
   return adaptiveHistoryCache;
@@ -6487,7 +6488,7 @@ function renderAppViews(options = {}) {
 function renderGeneratedSchedule() {
   if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
 
-  if (!state.generatedBlocks.length) {
+  if (!state.generatedBlocks.some((block) => !isStrategicPlanSessionBlock(block))) {
     if (els.scheduleStatus) els.scheduleStatus.textContent = "Nenhum ciclo gerado";
     syncPendingFilterControl();
     els.summaryGrid.innerHTML = "";
@@ -6498,10 +6499,11 @@ function renderGeneratedSchedule() {
 
   const config = scheduleConfig();
   updateDeadlineDisplays(config);
-  if (els.scheduleStatus) els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo`;
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  if (els.scheduleStatus) els.scheduleStatus.textContent = `${cycleBlocks.length} blocos no ciclo`;
   syncPendingFilterControl();
-  const completedCount = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").length;
-  const totalBlocks = state.generatedBlocks.length;
+  const completedCount = cycleBlocks.filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo").length;
+  const totalBlocks = cycleBlocks.length;
   const remainingCount = Math.max(0, totalBlocks - completedCount);
   const progress = totalBlocks ? Math.round((completedCount / totalBlocks) * 100) : 0;
   els.summaryGrid.classList.add("cycle-summary");
@@ -6526,7 +6528,7 @@ function renderGeneratedSchedule() {
   if (els.scheduleActions) els.scheduleActions.hidden = false;
   const visibleBlocks = state.generatedBlocks
     .map((block, index) => ({ block, index }))
-    .filter(({ block, index }) => !showPendingOnly || isPendingBlock(block) || index === performanceEditIndex);
+    .filter(({ block, index }) => !isStrategicPlanSessionBlock(block) && (!showPendingOnly || isPendingBlock(block) || index === performanceEditIndex));
   const visiblePerformancePanel = performanceEditIndex >= 0
     && state.generatedBlocks[performanceEditIndex]
     && (!showPendingOnly || isPendingBlock(state.generatedBlocks[performanceEditIndex]) || visibleBlocks.some((item) => item.index === performanceEditIndex));
@@ -6621,7 +6623,7 @@ function organizeCycleBlocksByStatus() {
 function pendingCycleEntries() {
   return state.generatedBlocks
     .map((block, index) => ({ block, index }))
-    .filter(({ block }) => isPendingBlock(block));
+    .filter(({ block }) => !isStrategicPlanSessionBlock(block) && isPendingBlock(block));
 }
 
 function activeCycleSubjectNames() {
@@ -6710,12 +6712,17 @@ function weeklyEventDate(block = {}, fallback = "") {
   return "";
 }
 
+function executionCompletedAt(block = {}) {
+  return window.StrategicTimePlan?.canonicalExecutionCompletedAt?.(block) || "";
+}
+
 function weeklyStudyEvents() {
   const events = [];
   const add = (block = {}, fallback = "", source = "") => {
     if (!block?.materia || !block?.assunto) return;
     const completedAt = weeklyEventDate(block, fallback);
     if (!completedAt) return;
+    const actualCompletedAt = executionCompletedAt(block);
     const status = normalizeStatus(block.status);
     const hasActivity = status === "Concluído" || Number(block.tempoEstudado) > 0 || Number(block.questoes) > 0;
     if (!hasActivity) return;
@@ -6724,6 +6731,7 @@ function weeklyStudyEvents() {
       key,
       eventId: String(block.sessaoId || block.lastSavedSessionId || `${key}:${completedAt}`),
       completedAt,
+      executionCompletedAt: actualCompletedAt,
       hours: blockDurationValue(block),
       status,
       materia: block.materia,
@@ -6735,7 +6743,7 @@ function weeklyStudyEvents() {
       durationMinutes: Number(block.tempoEstudado) > 0 ? Math.round(Number(block.tempoEstudado) * 60) : 0,
     });
   };
-  state.generatedBlocks.forEach((block) => add(block, "", "current"));
+  state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)).forEach((block) => add(block, "", "current"));
   state.completedHistory.forEach((block) => add(block, "", "history"));
   state.cycleHistory.forEach((cycle) => {
     (cycle.generatedBlocks || []).forEach((block) => add(block, cycle.finalizedAt || cycle.savedAt || "", `cycle:${cycle.label || ""}`));
@@ -8773,8 +8781,9 @@ function renderContinuePanel() {
   const weeklyProgress = weeklyGoal ? weeklyProgressFor(weeklyGoal) : weeklyProgressFromSummary(weeklyClosure);
   renderContinueWeeklySummary(weeklyGoal || weeklyClosure, weeklyProgress);
   const pending = rankedContinueEntries();
-  const total = state.generatedBlocks.length;
-  const completed = state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  const total = cycleBlocks.length;
+  const completed = cycleBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
   const progress = total ? Math.round((completed / total) * 100) : 0;
   renderContinueCycleProgress(completed, total, progress);
   const recommendationResult = buildContinueRecommendation(pending, continueAlternativesOpen);
@@ -8878,13 +8887,17 @@ function normalizeReviewStatus(status) {
   return raw || "Pendente";
 }
 
+function isStrategicPlanSessionBlock(block = {}) {
+  return Boolean(block?.strategicPlanSessionOnly);
+}
+
 function isPendingBlock(block) {
-  return normalizeStatus(block?.status) !== "Conclu\u00eddo";
+  return !isStrategicPlanSessionBlock(block) && normalizeStatus(block?.status) !== "Conclu\u00eddo";
 }
 
 function syncPendingFilterControl() {
   if (!els.pendingOnlyToggle) return;
-  els.pendingOnlyToggle.disabled = !state.generatedBlocks.length;
+  els.pendingOnlyToggle.disabled = !state.generatedBlocks.some((block) => !isStrategicPlanSessionBlock(block));
   els.pendingOnlyToggle.classList.toggle("is-active", showPendingOnly);
   els.pendingOnlyToggle.setAttribute("aria-pressed", showPendingOnly ? "true" : "false");
 }
@@ -9423,12 +9436,12 @@ function blockDurationValue(block) {
 
 function studiedCycleHours(blocks = state.generatedBlocks) {
   return blocks
-    .filter((block) => normalizeStatus(block.status) === "Conclu\u00eddo")
+    .filter((block) => !isStrategicPlanSessionBlock(block) && normalizeStatus(block.status) === "Conclu\u00eddo")
     .reduce((sum, block) => sum + blockDurationValue(block), 0);
 }
 
 function performanceTotals(blocks = state.generatedBlocks) {
-  return blocks.reduce((total, block) => {
+  return blocks.filter((block) => !isStrategicPlanSessionBlock(block)).reduce((total, block) => {
     updateBlockAccuracy(block);
     total.questoes += Number(block.questoes) || 0;
     total.acertos += Number(block.acertos) || 0;
@@ -9649,7 +9662,7 @@ function aggregateHistoricalSubjects(results = state.cycleResults) {
 }
 
 function hasRecordedCycleActivity(blocks = state.generatedBlocks) {
-  return (blocks || []).some((block) => {
+  return (blocks || []).filter((block) => !isStrategicPlanSessionBlock(block)).some((block) => {
     const status = normalizeStatus(block?.status);
     return status !== "Não iniciado" ||
       Number(block?.questoes) > 0 ||
@@ -12963,7 +12976,7 @@ function captureAppState() {
     confirmed: state.confirmed,
     planningBase: state.planningBase,
     distribution: state.distribution,
-    generatedBlocks: state.generatedBlocks.filter((block) => !block.reviewSessionOnly || block.manualAdaptiveSession),
+    generatedBlocks: state.generatedBlocks.filter((block) => !block.strategicPlanSessionOnly && (!block.reviewSessionOnly || block.manualAdaptiveSession)),
     completedHistory: state.completedHistory,
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
