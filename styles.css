@@ -13278,6 +13278,11 @@ textarea:focus {
 .strategic-advisor-dialog-body li strong { font-size: 13px; }
 .strategic-advisor-dialog-body li span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .strategic-advisor-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 4px; }
+.strategic-advisor-loading { display: grid; min-height: 220px; align-content: center; justify-items: center; gap: 10px; color: var(--muted); text-align: center; }
+.strategic-advisor-loading i { width: 24px; height: 24px; color: var(--primary); animation: strategic-advisor-spin 900ms linear infinite; }
+.strategic-advisor-loading strong { color: var(--text); font-size: 15px; }
+.strategic-advisor-loading span { max-width: 360px; font-size: 13px; line-height: 1.45; }
+@keyframes strategic-advisor-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 700px) {
   .strategic-advisor-modal { align-items: stretch; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
@@ -13308,6 +13313,7 @@ textarea:focus {
 .ai-coach-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .ai-coach-heading > i { width: 19px; color: var(--primary); }
 .ai-coach-first-note { margin: 0; color: var(--muted); font-size: 13px; }
+.ai-coach-context-loading { margin: 0; color: var(--muted); font-size: 13px; }
 .ai-coach-delta-facts { display: grid; gap: 8px; }
 .ai-coach-delta-facts > span { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .ai-coach-delta-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
