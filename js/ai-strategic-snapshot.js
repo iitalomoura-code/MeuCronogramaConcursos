@@ -5,7 +5,11 @@
   const DAY = 24 * 60 * 60 * 1000;
   const VERSION = 1;
   const text = (value = "") => String(value ?? "").trim();
-  const numberOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  function numberOrNull(value) {
+    if (value === null || value === undefined || value === "" || (typeof value === "string" && !value.trim())) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
   const clamp = (value, minimum = 0, maximum = 1) => Math.max(minimum, Math.min(maximum, Number(value) || 0));
   const unique = (values = []) => [...new Set(values.filter(Boolean))];
 
@@ -365,6 +369,34 @@
     };
   }
 
+  function cycleReferenceAt(cycle = {}, explicitReference = "") {
+    return isoDate(explicitReference || cycle.referenceAt || cycle.closedAt || cycle.finalizedAt || cycle.endsAt || cycle.savedAt || cycle.updatedAt || cycle.createdAt);
+  }
+
+  function comparisonBasis({ currentAt = "", previousTopicAt = "", previousCycle = {}, previousCycleAt = "", previousCycleStartedAt = "" } = {}) {
+    const currentSnapshotAt = isoDate(currentAt);
+    const previousTopicSnapshotAt = isoDate(previousTopicAt);
+    const previousCycleReferenceAt = cycleReferenceAt(previousCycle, previousCycleAt);
+    const cycleStartedAt = isoDate(previousCycleStartedAt || previousCycle.startedAt);
+    const topicTime = dateValue(previousTopicSnapshotAt);
+    const cycleReferenceTime = dateValue(previousCycleReferenceAt);
+    const cycleStartTime = dateValue(cycleStartedAt);
+    const currentTime = dateValue(currentSnapshotAt);
+    const temporallyAligned = Boolean(previousTopicSnapshotAt && previousCycleReferenceAt && topicTime && cycleReferenceTime
+      && topicTime <= cycleReferenceTime
+      && (!cycleStartTime || topicTime >= cycleStartTime)
+      && (!currentTime || topicTime <= currentTime));
+    return {
+      currentSnapshotAt,
+      previousTopicSnapshotAt,
+      previousCycleReferenceAt,
+      previousCycleStartedAt: cycleStartedAt,
+      cycle: temporallyAligned ? "previous-cycle" : null,
+      topics: previousTopicSnapshotAt ? (temporallyAligned ? "previous-cycle" : "previous-strategic-snapshot") : null,
+      temporallyAligned,
+    };
+  }
+
   function meaningfulChanges(topics = [], previousTopics = []) {
     const changes = [];
     const previousByKey = new Map(previousTopics.map((topic) => [topicIdentity(topic), topic]));
@@ -417,6 +449,7 @@
       "Historical knowledge is context and baseline, not current performance.",
       "Low confidence means caution, not low ability.",
       "An isolated bad week does not prove a structural trend when confidence is low.",
+      "Unknown/null numerical values are not zero performance.",
       "Missing evidence is unknown, not weakness; null accuracy must remain unknown.",
       "Planning is not execution, and remaining planned capacity is not debt.",
       "strategic.score is calculated by the local engine and must not be recomputed.",
@@ -427,6 +460,7 @@
       "Never turn missing execution into student failure.",
       "Treat trend as a trend only when the local engine has already classified it as such.",
       "If an AI recommendation diverges from strategic.rank, use relationToEngine=override-suggestion and explain the reason.",
+      "Temporal comparisons must respect comparison.basis; do not describe a previous strategic snapshot as the previous weekly cycle unless temporallyAligned is true.",
       "Separate fact, interpretation, and recommendation in any future response.",
     ],
   });
@@ -469,7 +503,8 @@
     const executionDistribution = distribution(input.executionDistribution || input.executedBlocks || input.executionBlocks || weeklySource.executedBlocks || [], "executed");
     const previousTopics = Array.isArray(input.previousTopics) ? input.previousTopics.map((topic) => buildTopic(topic, { now })) : Array.isArray(input.previousCycle?.topics) ? input.previousCycle.topics : [];
     const currentCycle = normalizeCycle(input.currentCycle || weeklySource, input);
-    const previousCycle = input.previousCycle ? normalizeCycle(input.previousCycle, input) : null;
+    const previousCycleSource = input.previousCycle || null;
+    const previousCycle = previousCycleSource ? normalizeCycle(previousCycleSource, input) : null;
     const hasPreviousStrategicState = Boolean(previousCycle || previousTopics.length);
     const comparison = hasPreviousStrategicState ? compareCycles(currentCycle, previousCycle || {}, topics, previousTopics) : null;
     const uncertainties = topics.filter((topic) => topic.confidence.level === "low" || topic.confidence.evidenceStage === "unknown" || topic.confidence.evidenceStage === "early").map((topic) => ({
@@ -506,6 +541,13 @@
         currentCycle,
         previousCycle,
         rollingWindow: rollingWindow(input.rollingWindow),
+        basis: comparisonBasis({
+          currentAt: input.now,
+          previousTopicAt: input.previousTopicSnapshotAt,
+          previousCycle: previousCycleSource || {},
+          previousCycleAt: input.previousCycleReferenceAt,
+          previousCycleStartedAt: input.previousCycleStartedAt,
+        }),
         deltas: comparison,
         meaningfulChanges: hasPreviousStrategicState ? meaningfulChanges(topics, previousTopics) : [],
       },
@@ -520,7 +562,7 @@
     };
   }
 
-  const api = { VERSION, AI_READ_INSTRUCTIONS, AI_OUTPUT_SCHEMA, buildStrategicSnapshot, stableStringify, signatureFor: (snapshot) => hash(stableStringify({ ...snapshot, generatedAt: undefined, signature: undefined })) };
+  const api = { VERSION, AI_READ_INSTRUCTIONS, AI_OUTPUT_SCHEMA, buildStrategicSnapshot, numberOrNull, stableStringify, signatureFor: (snapshot) => hash(stableStringify({ ...snapshot, generatedAt: undefined, signature: undefined })) };
   global.AIStrategicSnapshot = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -4,6 +4,12 @@ const assert = require("node:assert/strict");
 const snapshotEngine = require("../js/ai-strategic-snapshot.js");
 
 const now = "2026-09-12T12:00:00.000Z";
+assert.equal(snapshotEngine.numberOrNull(null), null);
+assert.equal(snapshotEngine.numberOrNull(undefined), null);
+assert.equal(snapshotEngine.numberOrNull(""), null);
+assert.equal(snapshotEngine.numberOrNull("   "), null);
+assert.equal(snapshotEngine.numberOrNull(0), 0);
+assert.equal(snapshotEngine.numberOrNull("0"), 0);
 const currentTopics = [
   {
     subject: "Português",
@@ -119,6 +125,60 @@ assert.ok(historicalRankChange.comparison.meaningfulChanges.some((change) => cha
 assert.notEqual(historicalRankChange.signature.value, snapshot.signature.value, "Mudança estratégica anterior deve participar da assinatura.");
 assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("isolated bad week")));
 assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("override-suggestion")));
+assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("Unknown/null numerical values are not zero performance")));
+assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("Temporal comparisons must respect comparison.basis")));
+
+const noFacts = snapshotEngine.buildStrategicSnapshot({
+  now,
+  topics: [{ subject: "Direito", topic: "Tema sem questões", diagnosis: {}, currentEvidence: {}, inheritedKnowledge: { available: true, accuracy: "" } }],
+  weeklyCycle: { accuracy: "" },
+  previousCycle: { accuracy: null, startedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-08T00:00:00.000Z", closedAt: "2026-09-08T00:00:00.000Z" },
+  previousTopicSnapshotAt: "2026-09-05T00:00:00.000Z",
+  previousTopics: [{ subject: "Direito", topic: "Tema sem questões", diagnosis: {}, strategic: { rank: 1 }, currentEvidence: {} }],
+});
+assert.equal(noFacts.topics[0].currentEvidence.accuracy, null);
+assert.equal(noFacts.topics[0].inheritedKnowledge.accuracy, null);
+assert.equal(noFacts.weeklyCycle.accuracy, null);
+assert.equal(noFacts.comparison.deltas.accuracyDelta, null);
+
+const alignedComparison = snapshotEngine.buildStrategicSnapshot({
+  now,
+  previousCycle: { startedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-08T00:00:00.000Z", closedAt: "2026-09-08T00:00:00.000Z", accuracy: .6 },
+  previousTopicSnapshotAt: "2026-09-05T12:00:00.000Z",
+  previousTopics: [{ subject: "Direito", topic: "A", diagnosis: { masteryLevel: "attention" }, strategic: { score: .2, rank: 8 }, currentEvidence: { questions: 10, sessions: 1 } }],
+  topics: [{ subject: "Direito", topic: "A", diagnosis: { level: "attention" }, strategic: { score: .8, rank: 2 }, currentEvidence: { questions: 20, sessions: 2 } }],
+});
+assert.equal(alignedComparison.comparison.basis.temporallyAligned, true);
+assert.equal(alignedComparison.comparison.basis.cycle, "previous-cycle");
+assert.equal(alignedComparison.comparison.basis.topics, "previous-cycle");
+
+const oldTopicComparison = snapshotEngine.buildStrategicSnapshot({
+  now,
+  previousCycle: { startedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-08T00:00:00.000Z", closedAt: "2026-09-08T00:00:00.000Z" },
+  previousTopicSnapshotAt: "2026-08-01T12:00:00.000Z",
+  previousTopics: [{ subject: "Direito", topic: "A", strategic: { rank: 1 }, currentEvidence: {} }],
+  topics: [{ subject: "Direito", topic: "A", strategic: { rank: 1 }, currentEvidence: {} }],
+});
+assert.equal(oldTopicComparison.comparison.basis.temporallyAligned, false);
+assert.equal(oldTopicComparison.comparison.basis.topics, "previous-strategic-snapshot");
+assert.equal(oldTopicComparison.comparison.basis.cycle, null);
+
+const futureTopicComparison = snapshotEngine.buildStrategicSnapshot({
+  now,
+  previousCycle: { startedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-08T00:00:00.000Z", closedAt: "2026-09-08T00:00:00.000Z" },
+  previousTopicSnapshotAt: "2026-09-09T12:00:00.000Z",
+  previousTopics: [{ subject: "Direito", topic: "A", strategic: { rank: 1 }, currentEvidence: {} }],
+  topics: [{ subject: "Direito", topic: "A", strategic: { rank: 1 }, currentEvidence: {} }],
+});
+assert.equal(futureTopicComparison.comparison.basis.temporallyAligned, false);
+assert.equal(futureTopicComparison.comparison.basis.topics, "previous-strategic-snapshot");
+assert.equal(futureTopicComparison.comparison.basis.previousTopicSnapshotAt, "2026-09-09T12:00:00.000Z");
+
+const noStrategicHistory = snapshotEngine.buildStrategicSnapshot({ now, topics: [{ subject: "Direito", topic: "A", currentEvidence: {} }] });
+assert.deepEqual(noStrategicHistory.comparison.basis, { currentSnapshotAt: now, previousTopicSnapshotAt: null, previousCycleReferenceAt: null, previousCycleStartedAt: null, cycle: null, topics: null, temporallyAligned: false });
+assert.deepEqual(noStrategicHistory.comparison.meaningfulChanges, []);
+assert.equal(alignedComparison.comparison.basis.previousTopicSnapshotAt, "2026-09-05T12:00:00.000Z");
+assert.notEqual(alignedComparison.signature.value, oldTopicComparison.signature.value, "Timestamp histórico relevante deve participar da assinatura.");
 
 assert.equal(snapshot.weeklyCycle.plannedMinutes, 1159);
 assert.equal(snapshot.weeklyCycle.executedMinutes, 720);
@@ -126,7 +186,7 @@ assert.equal(snapshot.weeklyCycle.remainingPlannedMinutes, 439);
 assert.equal(snapshot.weeklyCycle.remainingMeaning, "capacidade planejada ainda não utilizada");
 assert.equal(snapshot.weeklyCycle.plannedDistribution[0].minutes, 60);
 assert.equal(snapshot.weeklyCycle.executionDistribution[0].minutes, 45);
-assert.equal(snapshot.comparison.deltas.questionsDelta, -30);
+assert.equal(snapshot.comparison.deltas.questionsDelta, null);
 assert.equal(snapshot.comparison.deltas.studyMinutesDelta, 120);
 assert.equal(snapshot.comparison.meaningfulChanges[0].type, "confidence-increased");
 assert.ok(!JSON.stringify(snapshot).toLowerCase().includes("dívida"));

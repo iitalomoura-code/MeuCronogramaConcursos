@@ -5317,9 +5317,28 @@ function aiStrategicRankMap(topics = []) {
     .map((entry, rank) => [entry.index, rank + 1]));
 }
 
-function previousStrategicAdvisorTopics() {
+function aiStrategicSnapshotTime(value) {
+  const timestamp = new Date(value || "").getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function previousStrategicAdvisorSnapshot(referenceAt = "") {
   const snapshots = Array.isArray(state.strategicAdvisorSnapshots) ? state.strategicAdvisorSnapshots : [];
-  const previous = snapshots.at(-1);
+  if (!snapshots.length) return null;
+  const referenceTime = aiStrategicSnapshotTime(referenceAt);
+  const eligible = referenceTime
+    ? snapshots.filter((snapshot) => {
+      const createdAt = aiStrategicSnapshotTime(snapshot?.createdAt);
+      return createdAt > 0 && createdAt <= referenceTime;
+    })
+    : snapshots;
+  const candidates = eligible.length ? eligible : snapshots;
+  return [...candidates].sort((left, right) => aiStrategicSnapshotTime(left?.createdAt) - aiStrategicSnapshotTime(right?.createdAt)).at(-1) || null;
+}
+
+function previousStrategicAdvisorTopics({ referenceAt = "" } = {}) {
+  const snapshots = Array.isArray(state.strategicAdvisorSnapshots) ? state.strategicAdvisorSnapshots : [];
+  const previous = previousStrategicAdvisorSnapshot(referenceAt);
   const sourceTopics = Array.isArray(previous?.topics) ? previous.topics : [];
   if (!sourceTopics.length) return [];
   const normalizedTopics = sourceTopics.map((topic) => {
@@ -5369,6 +5388,17 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
   const config = scheduleConfig();
   const planningTopics = strategicPlanningTopics();
   const currentRanks = aiStrategicRankMap(planningTopics);
+  const previousRecord = state.cycleHistory?.at?.(-1) || null;
+  const previousCycleSource = previousRecord?.weeklyStudyCycle || {};
+  const previousCycleReferenceAt = previousCycleSource.closedAt
+    || previousCycleSource.finalizedAt
+    || previousCycleSource.endsAt
+    || previousRecord?.closedAt
+    || previousRecord?.finalizedAt
+    || previousRecord?.savedAt
+    || "";
+  const previousCycleStartedAt = previousCycleSource.startedAt || previousRecord?.startedAt || "";
+  const previousTopicSnapshot = previousStrategicAdvisorSnapshot(previousCycleReferenceAt);
   const topicEntries = (materia, assunto) => adaptivePerformanceForTopic(materia, assunto).map((entry) => ({
     questions: Number(entry.questoes) || 0,
     correctAnswers: Number(entry.acertos) || 0,
@@ -5430,7 +5460,6 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
   const cycleQuestions = cycleBlocks.reduce((sum, block) => sum + (Number(block.questoes) || 0), 0);
   const cycleCorrect = cycleBlocks.reduce((sum, block) => sum + Math.min(Number(block.questoes) || 0, Math.max(0, Number(block.acertos) || 0)), 0);
   const cycleConfidence = topics.length ? topics.reduce((sum, topic) => sum + Number(topic.diagnosis?.confidence || 0), 0) / topics.length : 0;
-  const previousRecord = state.cycleHistory?.at?.(-1) || null;
   const previousCycle = previousRecord?.weeklyStudyCycle ? {
     ...previousRecord.weeklyStudyCycle,
     questions: (previousRecord.generatedBlocks || []).reduce((sum, block) => sum + (Number(block.questoes) || 0), 0),
@@ -5452,7 +5481,10 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     plannedBlocks,
     executedBlocks,
     previousCycle,
-    previousTopics: previousStrategicAdvisorTopics(),
+    previousCycleReferenceAt,
+    previousCycleStartedAt,
+    previousTopicSnapshotAt: previousTopicSnapshot?.createdAt || "",
+    previousTopics: previousStrategicAdvisorTopics({ referenceAt: previousCycleReferenceAt }),
     rollingWindow,
   });
 }
