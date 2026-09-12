@@ -226,10 +226,41 @@
         conceptKeys: [...new Set((item.conceptKeys || [item.canonicalKey || item.conceptId?.replace(/^concept:/, "")]).filter(Boolean))],
         status: item.status || (item.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed"),
       })) : [],
-      aliases: Array.isArray(base.aliases) ? base.aliases.map((item) => ({ ...item })) : [],
-      mappingRules: Array.isArray(base.mappingRules) ? base.mappingRules.map((item) => ({ ...item, conceptKeys: [...new Set((item.conceptKeys || []).filter(Boolean))] })) : [],
-      mappingRejections: Array.isArray(base.mappingRejections) ? base.mappingRejections.map((item) => ({ ...item, conceptKeys: [...new Set((item.conceptKeys || []).filter(Boolean))] })) : [],
+      aliases: dedupeAliases(base.aliases),
+      mappingRules: dedupeMappingRules(base.mappingRules),
+      mappingRejections: dedupeMappingRejections(base.mappingRejections),
     };
+  }
+
+  function sortedConceptKeys(item = {}) {
+    return [...new Set((item.conceptKeys || [item.canonicalKey || item.conceptId?.replace(/^concept:/, "")]).filter(Boolean).map((key) => text(key).toLowerCase()))].sort((a, b) => a.localeCompare(b));
+  }
+
+  function dedupeAliases(items = []) {
+    const seen = new Set();
+    return (Array.isArray(items) ? items : []).map((item) => ({ ...item, aliasNormalized: text(item.aliasNormalized || item.aliasDisplay).toLowerCase(), conceptKey: text(item.conceptKey).toLowerCase(), subjectContext: text(item.subjectContext).toLowerCase() })).filter((item) => {
+      const key = [item.aliasNormalized, item.conceptKey, item.subjectContext].join("|");
+      if (!item.aliasNormalized || !item.conceptKey || seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a, b) => [a.aliasNormalized, a.conceptKey, a.subjectContext].join("|").localeCompare([b.aliasNormalized, b.conceptKey, b.subjectContext].join("|")));
+  }
+
+  function dedupeMappingRules(items = []) {
+    const seen = new Set();
+    return (Array.isArray(items) ? items : []).map((item) => ({ ...item, conceptKeys: sortedConceptKeys(item), normalizedTargetTitle: text(item.normalizedTargetTitle).toLowerCase(), targetSubjectContext: text(item.targetSubjectContext).toLowerCase() })).filter((item) => {
+      const key = [item.normalizedTargetTitle, item.targetSubjectContext].join("|");
+      if (!item.normalizedTargetTitle || !item.conceptKeys.length || seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a, b) => [a.normalizedTargetTitle, a.targetSubjectContext].join("|").localeCompare([b.normalizedTargetTitle, b.targetSubjectContext].join("|")));
+  }
+
+  function dedupeMappingRejections(items = []) {
+    const seen = new Set();
+    return (Array.isArray(items) ? items : []).map((item) => ({ ...item, conceptKeys: sortedConceptKeys(item) })).filter((item) => {
+      const key = [text(item.topicIdentity), item.conceptKeys.join(",")].join("|");
+      if (!text(item.topicIdentity) || seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a, b) => [a.topicIdentity, a.conceptKeys.join(",")].join("|").localeCompare([b.topicIdentity, b.conceptKeys.join(",")].join("|")));
   }
 
   function conceptMap(concepts = [], evidence = []) {
@@ -335,9 +366,9 @@
       concepts,
       evidence,
       topicMappings: mappings,
-      aliases: normalizedBase.aliases,
-      mappingRules: normalizedBase.mappingRules,
-      mappingRejections: normalizedBase.mappingRejections,
+      aliases: dedupeAliases(normalizedBase.aliases),
+      mappingRules: dedupeMappingRules(normalizedBase.mappingRules),
+      mappingRejections: dedupeMappingRejections(normalizedBase.mappingRejections),
       warnings: [...warnings, ...evidence.filter((item) => item.legacyTimeOutlier).map((item) => ({ type: "legacy-time-outlier-needs-reconciliation", evidenceId: item.id, sourcePlanId: item.sourcePlanId }))],
     };
   }
@@ -384,8 +415,8 @@
     };
   }
 
-  function mapTopic(base = {}, topic = {}) {
-    return MAPPING?.matchTopicToConcepts ? MAPPING.matchTopicToConcepts(topic, normalizeExistingBase(base)) : null;
+  function mapTopic(base = {}, topic = {}, options = {}) {
+    return MAPPING?.matchTopicToConcepts ? MAPPING.matchTopicToConcepts(topic, normalizeExistingBase(base), options) : null;
   }
 
   function decideTopicMapping(base = {}, mapping = {}, decision = "confirm") {
@@ -407,6 +438,9 @@
     legacyTimeDetails,
     mergeEvidence,
     emptyKnowledgeBase,
+    dedupeAliases,
+    dedupeMappingRules,
+    dedupeMappingRejections,
     mapTopic,
     decideTopicMapping,
     migrateKnowledgeMappings: (base) => MAPPING?.migrateKnowledgeMappings ? MAPPING.migrateKnowledgeMappings(normalizeExistingBase(base)) : normalizeExistingBase(base),

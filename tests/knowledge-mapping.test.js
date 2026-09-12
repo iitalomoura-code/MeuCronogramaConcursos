@@ -30,7 +30,7 @@ base = evidence(base, "Proposições e Conectivos", "RLM", "proposições conect
 base = evidence(base, "Equivalências e Implicações Lógicas", "RLM", "equivalências implicações equivalência");
 result = mapping.matchTopicToConcepts({ materia: "Raciocínio Lógico-Matemático", assunto: "Lógica Proposicional", descricao: "proposições conectivos equivalências quantificadores predicados" }, base);
 assert.equal(result.status, "suggested");
-assert.deepEqual(result.conceptKeys, ["proposicoes e conectivos", "equivalencias e implicacoes logicas"]);
+assert.deepEqual(result.conceptKeys, ["equivalencias e implicacoes logicas", "proposicoes e conectivos"]);
 assert.ok(result.coverage > 0 && result.coverage < 1);
 
 base = baseWithConcepts(["Crase", "Pontuação"]);
@@ -61,5 +61,39 @@ const migrated = knowledge.migrateKnowledgeMappings({ schemaVersion: 1, concepts
 assert.equal(migrated.schemaVersion, 2);
 assert.deepEqual(migrated.topicMappings[0].conceptKeys, ["atos administrativos"]);
 assert.equal(migrated.evidence.length, 1);
+
+const duplicateCollections = knowledge.migrateKnowledgeMappings({ schemaVersion: 2, concepts: [], evidence: [], topicMappings: [],
+  aliases: [{ aliasDisplay: "Atos da Administração Pública", aliasNormalized: "atos da administracao publica", conceptKey: "atos administrativos", subjectContext: "direito administrativo" }, { aliasDisplay: "Atos da Administração Pública", aliasNormalized: "atos da administracao publica", conceptKey: "atos administrativos", subjectContext: "direito administrativo" }],
+  mappingRules: [{ normalizedTargetTitle: "logica proposicional", targetSubjectContext: "rlm", conceptKeys: ["b", "a"] }, { normalizedTargetTitle: "logica proposicional", targetSubjectContext: "rlm", conceptKeys: ["a", "b"] }],
+  mappingRejections: [{ topicIdentity: "topic-1", conceptKeys: ["b", "a"] }, { topicIdentity: "topic-1", conceptKeys: ["a", "b"] }],
+});
+assert.equal(duplicateCollections.aliases.length, 1);
+assert.equal(duplicateCollections.mappingRules.length, 1);
+assert.equal(duplicateCollections.mappingRejections.length, 1);
+assert.deepEqual(duplicateCollections.mappingRules[0].conceptKeys, ["a", "b"]);
+
+let compositeBase = baseWithConcepts(["Crase", "Pontuação"]);
+compositeBase = evidence(compositeBase, "Crase", "Língua Portuguesa");
+compositeBase = evidence(compositeBase, "Pontuação", "Língua Portuguesa");
+const compositeTopic = { planId: "p", topicId: "t", materia: "Língua Portuguesa", assunto: "Crase e Pontuação" };
+const compositeSuggestion = mapping.matchTopicToConcepts(compositeTopic, compositeBase);
+const compositeRejected = mapping.applyMappingDecision(compositeBase, compositeSuggestion, "reject");
+for (let attempt = 0; attempt < 10; attempt += 1) assert.equal(mapping.matchTopicToConcepts(compositeTopic, compositeRejected).conceptKeys.length, 0);
+
+const compositeConfirmed = mapping.applyMappingDecision(compositeBase, compositeSuggestion, "confirm");
+assert.equal(compositeConfirmed.mappingRules.length, 1);
+assert.deepEqual(compositeConfirmed.mappingRules[0].conceptKeys, ["crase", "pontuacao"]);
+assert.equal(compositeConfirmed.aliases.length, 0);
+
+const partialSuggestion = mapping.matchTopicToConcepts({ materia: "Administração", assunto: "Gestão de Processos e BPM" }, (() => { let value = baseWithConcepts(["Gestão de Processos"]); return evidence(value, "Gestão de Processos", "Administração", "processos organizacionais"); })());
+const partialConfirmed = mapping.applyMappingDecision(base, partialSuggestion, "confirm");
+assert.equal(partialConfirmed.aliases.length, 0);
+
+let constitutional = baseWithConcepts(["Direitos e Garantias Fundamentais", "Organização do Estado", "Controle de Constitucionalidade"]);
+constitutional = evidence(constitutional, "Direitos e Garantias Fundamentais", "Direito Constitucional", "direitos fundamentais individuais coletivos");
+constitutional = evidence(constitutional, "Organização do Estado", "Direito Constitucional", "União Estados Municípios Distrito Federal");
+constitutional = evidence(constitutional, "Controle de Constitucionalidade", "Direito Constitucional", "controle constitucionalidade normas");
+assert.ok(["suggested", "auto-confirmed"].includes(mapping.matchTopicToConcepts({ materia: "Direito Constitucional", assunto: "Direitos Fundamentais", descricao: "direitos fundamentais individuais coletivos" }, constitutional).status));
+assert.equal(mapping.matchTopicToConcepts({ materia: "Direito Constitucional", assunto: "Controle da Administração Pública", descricao: "controle administração pública" }, constitutional).conceptKeys.length, 0);
 
 console.log("OK - matching conceitual determinístico, composição, decisões persistentes e migração v1/v2.");

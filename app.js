@@ -232,6 +232,8 @@ let knowledgeBaseState = null;
 let knowledgeBaseCloudVersion = 0;
 let knowledgeBaseBootstrapPromise = null;
 let knowledgeMappingReviewCache = [];
+let knowledgeMappingReviewCacheKey = "";
+let knowledgeMappingReviewCacheValue = null;
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -12776,19 +12778,26 @@ function saveLocalKnowledgeBase(base = knowledgeBaseState) {
 
 function currentKnowledgeMappingReviews() {
   if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [] };
+  const baseSignature = knowledgeBaseStructureSignature(knowledgeBaseState);
+  const contentSignature = state.rows.map((row) => [row.id, row.programUnitId, row.materia, row.titulo, row.assunto, row.descricao, row.estudar].join("|")).join("||");
+  const cacheKey = `${baseSignature}|${contentSignature}`;
+  if (cacheKey === knowledgeMappingReviewCacheKey && knowledgeMappingReviewCacheValue) return knowledgeMappingReviewCacheValue;
+  const index = window.KnowledgeMapping?.buildKnowledgeMappingIndex ? window.KnowledgeMapping.buildKnowledgeMappingIndex(knowledgeBaseState) : undefined;
   const seen = new Set();
   const items = [];
   let automatic = 0;
   state.rows.filter((row) => row?.materia && (row.assunto || row.titulo) && row.estudar !== "Nao").forEach((row) => {
     const topic = { planId: state.currentPlanId, topicId: row.programUnitId || row.id, materia: row.materia, assunto: row.assunto || row.titulo, titulo: row.titulo, descricao: row.descricao, conteudosOriginais: row.conteudosOriginais };
-    const result = window.KnowledgeBaseStore.suggestForTopic(topic);
+    const result = window.KnowledgeBaseStore.suggestForTopic(topic, { index });
     const key = result?.topic?.topicId || topic.assunto;
     if (!result || seen.has(key)) return;
     seen.add(key);
     if (result.status === "auto-confirmed" || result.status === "user-confirmed") automatic += 1;
     if (result.status === "suggested") items.push(result);
   });
-  return { automatic, suggested: items };
+  knowledgeMappingReviewCacheKey = cacheKey;
+  knowledgeMappingReviewCacheValue = { automatic, suggested: items };
+  return knowledgeMappingReviewCacheValue;
 }
 
 function knowledgeMappingReviewMarkup() {
@@ -12796,7 +12805,7 @@ function knowledgeMappingReviewMarkup() {
   knowledgeMappingReviewCache = review.suggested;
   if (!review.automatic && !review.suggested.length) return "";
   const suggested = review.suggested.length ? ` <button class="text-action" type="button" data-open-knowledge-mappings>Revisar correspondências</button>` : "";
-  return `<details class="knowledge-mapping-review"><summary>Correspondências da sua base</summary><p>${review.automatic} confirmada${review.automatic === 1 ? "" : "s"} automaticamente${review.suggested.length ? ` · ${review.suggested.length} para revisar` : ""}.${suggested}</p><div class="knowledge-mapping-review-list">${review.suggested.slice(0, 4).map((item, index) => `<article><strong>${escapeHtml(item.topic.title)}</strong><small>${escapeHtml(item.topic.subject)} · ${escapeHtml(item.conceptKeys.map((key) => item.candidates.find((candidate) => candidate.conceptKey === key)?.title || key).join(" + "))}</small><span><button class="text-action" type="button" data-knowledge-mapping-decision="confirm" data-knowledge-mapping-index="${index}">Confirmar</button><button class="text-action danger" type="button" data-knowledge-mapping-decision="reject" data-knowledge-mapping-index="${index}">Não corresponde</button></span></article>`).join("")}</div></details>`;
+  return `<details class="knowledge-mapping-review"><summary>Correspondências da sua base</summary><p>${review.automatic} confirmada${review.automatic === 1 ? "" : "s"} automaticamente${review.suggested.length ? ` · ${review.suggested.length} para revisar` : ""}.${suggested}</p><div class="knowledge-mapping-review-list">${review.suggested.map((item, index) => { const summary = window.KnowledgeMapping?.evidenceSummaryForConceptKeys?.(knowledgeBaseState, item.conceptKeys) || {}; const history = summary.questions ? `Histórico: ${summary.questions} questões · ${summary.correctAnswers} acertos${summary.sourcePlans?.length ? ` · ${summary.sourcePlans.join(", ")}` : ""}` : "Histórico ainda sem evidência agregada"; return `<article><strong>${escapeHtml(item.topic.title)}</strong><small>${escapeHtml(item.topic.subject)} · ${escapeHtml(item.matchBasis === "detail-coverage" || item.matchBasis === "composite-coverage" ? "Correspondência por conteúdo" : "Correspondência parcial")}</small><small>Conhecimento encontrado: ${escapeHtml(item.conceptKeys.map((key) => item.candidates.find((candidate) => candidate.conceptKey === key)?.title || key).join(" + "))} · ${escapeHtml(history)}</small><span><button class="text-action" type="button" data-knowledge-mapping-decision="confirm" data-knowledge-mapping-index="${index}">Confirmar</button><button class="text-action danger" type="button" data-knowledge-mapping-decision="reject" data-knowledge-mapping-index="${index}">Não corresponde</button></span></article>`; }).join("")}</div></details>`;
 }
 
 function knowledgeBaseCloudIsAvailable() {
@@ -12931,10 +12940,12 @@ window.KnowledgeBaseStore = {
   refresh: bootstrapKnowledgeBase,
   inspect: () => window.KnowledgeBase?.inspectKnowledgeBase(knowledgeBaseState || readLocalKnowledgeBase() || {}),
   inspectConcept: (concept) => window.KnowledgeBase?.inspectConcept(knowledgeBaseState || readLocalKnowledgeBase() || {}, concept),
-  suggestForTopic: (topic) => window.KnowledgeBase?.mapTopic(knowledgeBaseState || readLocalKnowledgeBase() || {}, topic),
+  suggestForTopic: (topic, options) => window.KnowledgeBase?.mapTopic(knowledgeBaseState || readLocalKnowledgeBase() || {}, topic, options),
   decideMapping: (mapping, decision) => {
     const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
-    knowledgeBaseState = window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current;
+    knowledgeBaseState = window.KnowledgeBase?.migrateKnowledgeMappings?.(window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current) || current;
+    knowledgeMappingReviewCacheKey = "";
+    knowledgeMappingReviewCacheValue = null;
     saveLocalKnowledgeBase(knowledgeBaseState);
     if (knowledgeBaseCloudIsAvailable()) {
       void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion }).then((saved) => {
