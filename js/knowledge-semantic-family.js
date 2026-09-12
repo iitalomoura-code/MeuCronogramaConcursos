@@ -20,7 +20,8 @@
     ["licitacoes-contratos", /\b(licitacoes?|contratos administrativos)\b/],
     ["legislacao-especifica", /\b(legislacao|lei|estatuto)\b/],
   ]);
-  const BRIDGES = new Set(["administracao-gestao|direito-administrativo", "afo-financas-publicas|economia"]);
+  // Bridges only widen the candidate search. They never replace the thematic anchor gate.
+  const BRIDGES = new Set(["afo-financas-publicas|economia"]);
 
   function semanticFamilyForSubject(subject = "") {
     const value = normalize(subject);

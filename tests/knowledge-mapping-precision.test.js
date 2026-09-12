@@ -57,4 +57,52 @@ assert.equal(semantic.semanticCompatibility({ subject: "Português" }, { subject
 assert.equal(semantic.semanticCompatibility({ subject: "RLM" }, { subjects: ["Raciocínio Lógico-Matemático"] }).allowed, true);
 assert.equal(match(fixture([{ title: "Gestão Estratégica", subject: "Administração Geral" }]), "Direito Administrativo", "Responsabilidade Civil do Estado").status, "unmatched");
 
+const administrationFalsePositives = [
+  ["Teorias e Processo Administrativo", "OKR"],
+  ["Comportamento Organizacional", "Atos Administrativos"],
+  ["Recrutamento, Seleção e Cargos", "Análise do Ambiente Organizacional"],
+  ["Treinamento e Desenvolvimento", "OKR"],
+  ["Desempenho e Competências", "Administração e Processo Administrativo"],
+  ["Gestão da Qualidade", "Gestão Estratégica na Administração Pública"],
+  ["Administração Financeira", "Indicadores e Metas"],
+  ["Reforma do Serviço Civil", "Responsabilidade Civil do Estado"],
+  ["Participação Social", "Fundamentos do Processo Administrativo"],
+  ["Transparência e Acesso à Informação", "Fundamentos do Processo Administrativo"],
+  ["Consórcios e Órgãos Públicos", "Agentes Públicos"],
+  ["Serviços Públicos", "Agentes Públicos"],
+  ["Delegação de Serviços Públicos", "Agentes Públicos"],
+  ["Bens Públicos", "Atos Administrativos"],
+  ["Uso dos Bens Públicos", "Agentes Públicos"],
+];
+administrationFalsePositives.forEach(([targetTitle, sourceTitle]) => {
+  const result = match(fixture([{ title: sourceTitle, subject: "Administração Geral e Pública", details: sourceTitle }]), "Administração Geral e Pública", targetTitle, targetTitle);
+  assert.equal(result.status, "unmatched", `${targetTitle} não deve sugerir ${sourceTitle}`);
+  assert.equal(result.conceptKeys.length, 0);
+});
+
+const preservedGoodMatches = [
+  ["Poderes Administrativos", "Poderes da Administração Pública"],
+  ["Responsabilidade do Estado", "Responsabilidade Civil do Estado"],
+  ["Governança Pública", "Governança e Gestão Pública"],
+  ["Gestão de Processos e BPM", "Gestão de Processos"],
+];
+preservedGoodMatches.forEach(([targetTitle, sourceTitle]) => {
+  const result = match(fixture([{ title: sourceTitle, subject: "Administração Geral e Pública", details: sourceTitle }]), "Administração Geral e Pública", targetTitle, targetTitle);
+  assert.notEqual(result.status, "unmatched", `${targetTitle} deve preservar a correspondência plausível`);
+});
+
+const indexed = mapping.buildKnowledgeMappingIndex(fixture([
+  { title: "Gestão de Processos", subject: "Administração Geral", details: "processos" },
+  { title: "Gestão Estratégica", subject: "Administração Geral", details: "estratégia" },
+]));
+assert.ok(indexed.tokenDocumentFrequencyByFamily.get("administracao-gestao").get("gestao") >= 2);
+assert.ok(mapping.topicAnchorCompatibility(
+  mapping.topicDescriptor({ materia: "Administração Geral", assunto: "Treinamento e Desenvolvimento", descricao: "desenvolvimento objetivos avaliação" }),
+  mapping.conceptDescriptor({ canonicalTitle: "OKR" }, {}, indexed),
+  indexed,
+).allowed === false);
+const audit = mapping.inspectTopicMapping(fixture([{ title: "Gestão de Processos", subject: "Administração Geral", details: "processos" }]), { materia: "Administração Geral", assunto: "Gestão de Processos e BPM" });
+assert.ok(audit.candidates[0].semanticGate && audit.candidates[0].topicAnchorGate);
+assert.equal(typeof audit.candidates[0].topicAnchorGate.titleAffinity, "number");
+
 console.log("OK - precision-first semantic gate bloqueia cross-domain e preserva matches plausíveis.");
