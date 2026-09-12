@@ -31,11 +31,23 @@
 
   function capacityFor({ dailyHours = {}, weeklyHours = 0, safetyMargin = SAFETY_MARGIN, overrideHours = 0 } = {}) {
     const availability = normalizeDailyAvailability(dailyHours, weeklyHours);
-    const availableHours = round(Object.values(availability).reduce((total, hours) => total + hours, 0));
-    const requestedHours = Math.max(0, Number(overrideHours) || availableHours || Number(weeklyHours) || 0);
-    const scale = availableHours > 0 && requestedHours !== availableHours ? requestedHours / availableHours : 1;
+    const distributedHours = round(Object.values(availability).reduce((total, hours) => total + hours, 0));
+    const configuredWeeklyHours = Math.max(0, Number(weeklyHours) || 0);
+    const explicitOverride = Math.max(0, Number(overrideHours) || 0);
+    // A carga semanal e o contrato da capacidade. Os dias so distribuem essa
+    // carga pela semana; quando ela nao existe, mantemos a compatibilidade com
+    // os planejamentos antigos que informavam apenas os dias.
+    const requestedHours = explicitOverride || configuredWeeklyHours || distributedHours;
+    const scale = distributedHours > 0 && requestedHours !== distributedHours ? requestedHours / distributedHours : 1;
     const effectiveDailyHours = Object.fromEntries(DAY_KEYS.map((key) => [key, round(availability[key] * scale)]));
-    const effectiveAvailableHours = round(Object.values(effectiveDailyHours).reduce((total, hours) => total + hours, 0));
+    const scaledHours = round(Object.values(effectiveDailyHours).reduce((total, hours) => total + hours, 0));
+    // O arredondamento por dia não pode alterar o contrato semanal. O pequeno
+    // resíduo fica no último dia da distribuição, sem mudar a proporção útil.
+    if (distributedHours > 0 && scaledHours !== requestedHours) {
+      const lastDay = DAY_KEYS.at(-1);
+      effectiveDailyHours[lastDay] = round(effectiveDailyHours[lastDay] + requestedHours - scaledHours);
+    }
+    const effectiveAvailableHours = requestedHours;
     const margin = clamp(safetyMargin, .9, .95);
     const plannedHours = round(effectiveAvailableHours * margin);
     return {

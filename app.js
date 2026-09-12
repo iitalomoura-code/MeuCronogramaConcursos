@@ -5881,10 +5881,8 @@ function weeklyStudyCycleSignature(config = scheduleConfig()) {
 function weeklyStudyCycleSummary() {
   const api = weeklyStudyCycleApi();
   if (!api || !state.weeklyStudyCycle) return null;
-  const blocks = state.generatedBlocks
-    .filter((block) => !isStrategicPlanSessionBlock(block))
-    .filter((block) => !state.weeklyStudyCycle.legacyExecutionBlockKeys?.includes(weeklyBlockKey(block)));
-  return api.summarize(state.weeklyStudyCycle, blocks);
+  const blocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  return api.summarize(state.weeklyStudyCycle, blocks, { blockKey: weeklyBlockKey });
 }
 
 function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
@@ -5893,19 +5891,26 @@ function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
   const config = scheduleConfig();
   const signature = weeklyStudyCycleSignature(config);
   const blocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
-  const executionBlocks = blocks.filter((block) => !state.weeklyStudyCycle?.legacyExecutionBlockKeys?.includes(weeklyBlockKey(block)));
   if (!state.weeklyStudyCycle || state.weeklyStudyCycle.status === "closed") {
-    state.weeklyStudyCycle = api.create({ weeklyHours: config.horasSemana, capacity: config.capacidade, now, sourceConfigurationSignature: signature });
+    state.weeklyStudyCycle = api.create({ weeklyHours: config.horasSemana, capacity: config.capacidade, now, sourceConfigurationSignature: signature, blocks, blockKey: weeklyBlockKey });
     return state.weeklyStudyCycle;
+  }
+  if (!state.weeklyStudyCycle.executionBaselineByBlock) {
+    // Migração única dos ciclos persistidos antes do baseline: o que já estava
+    // registrado passa a ser histórico, e apenas novas execuções contam daqui.
+    state.weeklyStudyCycle = {
+      ...state.weeklyStudyCycle,
+      executionBaselineByBlock: api.executionBaseline(blocks, weeklyBlockKey),
+    };
   }
   if (reconcile && state.weeklyStudyCycle.sourceConfigurationSignature !== signature) {
     state.weeklyStudyCycle = api.reconcileCapacity(state.weeklyStudyCycle, {
       weeklyHours: config.horasSemana,
       capacity: config.capacidade,
       sourceConfigurationSignature: signature,
-    }, executionBlocks);
+    }, blocks, { blockKey: weeklyBlockKey });
   } else {
-    state.weeklyStudyCycle = api.summarize(state.weeklyStudyCycle, executionBlocks);
+    state.weeklyStudyCycle = api.summarize(state.weeklyStudyCycle, blocks, { blockKey: weeklyBlockKey });
   }
   return state.weeklyStudyCycle;
 }
@@ -5913,7 +5918,7 @@ function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
 function closeWeeklyStudyCycle(now = new Date()) {
   const api = weeklyStudyCycleApi();
   if (!api || !state.weeklyStudyCycle) return null;
-  state.weeklyStudyCycle = api.close(state.weeklyStudyCycle, state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)), now);
+  state.weeklyStudyCycle = api.close(state.weeklyStudyCycle, state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)), now, { blockKey: weeklyBlockKey });
   return state.weeklyStudyCycle;
 }
 
@@ -6238,7 +6243,9 @@ function weeklyAllocationRanks() {
 }
 
 function createAdaptiveCycleBlocks(materias, config, analysis) {
-  const capacityMinutes = Math.max(0, Math.round((Number(config.horasSemanaCronograma) || 0) * 60));
+  // Metas-base ocupam somente a capacidade planejada. A reserva semanal fica
+  // deliberadamente livre para revisoes, reforcos e recuperacoes adaptativas.
+  const capacityMinutes = Math.max(0, Math.round(Number(config.capacidade?.plannedMinutes) || (Number(config.horasSemanaCronograma) || 0) * 60));
   if (!capacityMinutes) return { blocks: [], distribution: [] };
   const activeSubjects = materias
     .map(subjectPlanningCapacity)
@@ -13609,10 +13616,9 @@ function applyAppSnapshot(saved = {}) {
       weeklyHours: config.horasSemana,
       capacity: config.capacidade,
       sourceConfigurationSignature: weeklyStudyCycleSignature(config),
+      blocks: state.generatedBlocks,
+      blockKey: weeklyBlockKey,
     });
-    state.weeklyStudyCycle.legacyExecutionBlockKeys = state.generatedBlocks
-      .filter((block) => Number(block.tempoEstudado) > 0)
-      .map((block) => weeklyBlockKey(block));
   }
   state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
   state.studyAlerts = Array.isArray(saved.studyAlerts) ? saved.studyAlerts : [];

@@ -14,6 +14,27 @@ const irregular = CapacityPlanning.capacityFor({
 assert.strictEqual(irregular.availableHours, 21, "Disponibilidade irregular deve manter o total real informado.");
 assert.strictEqual(irregular.dailyHours.sabado, 8, "A distribuição diária não pode ser nivelada ao aplicar a margem.");
 
+const canonicalWeekly = CapacityPlanning.capacityFor({
+  weeklyHours: 21,
+  dailyHours: { segunda: 4, terca: 4, quarta: 4, quinta: 4, sexta: 4, sabado: 2, domingo: 2 },
+});
+assert.strictEqual(canonicalWeekly.availableHours, 21, "A carga semanal deve prevalecer sobre a soma diária quando ambas existirem.");
+assert.strictEqual(canonicalWeekly.plannedMinutes, 1159, "A capacidade-base deve descontar a reserva antes de gerar metas.");
+assert.strictEqual(canonicalWeekly.reserveHours, 1.68, "A reserva adaptativa deve permanecer fora da carga-base.");
+
+const reducedWeekly = CapacityPlanning.capacityFor({
+  weeklyHours: 15,
+  dailyHours: { segunda: 3, terca: 3, quarta: 3, quinta: 3, sexta: 3, sabado: 3, domingo: 3 },
+});
+assert.strictEqual(reducedWeekly.availableHours, 15, "Uma distribuição de 21h não pode ampliar uma meta semanal de 15h.");
+
+const overriddenWeekly = CapacityPlanning.capacityFor({
+  weeklyHours: 21,
+  overrideHours: 18,
+  dailyHours: { segunda: 4, terca: 4, quarta: 4, quinta: 4, sexta: 4, sabado: 2, domingo: 2 },
+});
+assert.strictEqual(overriddenWeekly.availableHours, 18, "A alteração explícita de carga deve continuar tendo precedência.");
+
 const legacy = CapacityPlanning.capacityFor({ weeklyHours: 14 });
 assert.strictEqual(legacy.availableHours, 14, "Planos legados sem horas diárias devem continuar utilizáveis.");
 assert.ok(legacy.plannedHours < legacy.availableHours, "Planos legados também recebem margem de segurança.");
