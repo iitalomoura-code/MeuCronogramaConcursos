@@ -58,6 +58,31 @@ const before = structuredClone(inputs);
 const allocation = WeeklyStudyCycle.allocate({ cycle: cycle21, topics: inputs, allocator });
 assert.ok(allocation.sessions.length > 0);
 assert.deepEqual(inputs, before, "Gerar o ciclo não pode criar evidência nem mutar prioridades.");
+
+let allocatorInput = null;
+WeeklyStudyCycle.allocate({
+  cycle: { ...cycle21, completedMinutes: 300, remainingPlannedMinutes: 859 },
+  topics: inputs,
+  allocator: { allocate(input) { allocatorInput = input; return { sessions: [] }; } },
+});
+assert.equal(allocatorInput.availableMinutes, 859, "O allocator deve respeitar o saldo já resumido do ciclo.");
+
+const rolloverStart = new Date("2026-09-01T12:00:00.000Z");
+const rolloverSource = WeeklyStudyCycle.create({ weeklyHours: 21, capacity: capacity21, now: rolloverStart });
+const carriedBlock = { weeklyCycleBlockId: "weekly-block:stable", tempoEstudado: 1, tipoAtividade: "Teoria", status: "Em andamento" };
+assert.equal(WeeklyStudyCycle.rollover({ cycle: rolloverSource, blocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(new Date(rolloverSource.endsAt).getTime() - 1) }).rolledOver, false, "Antes do fim, o ciclo deve ser preservado.");
+const rolloverAtEnd = WeeklyStudyCycle.rollover({ cycle: rolloverSource, blocks: [carriedBlock], nextBlocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(rolloverSource.endsAt) });
+assert.equal(rolloverAtEnd.rolledOver, true, "No instante final, o ciclo deve encerrar.");
+assert.equal(rolloverAtEnd.closedCycle.completedMinutes, 60, "A execução real do ciclo encerrado deve ser preservada.");
+assert.equal(rolloverAtEnd.nextCycle.completedMinutes, 0, "O próximo ciclo deve iniciar sem progresso transportado.");
+assert.equal(WeeklyStudyCycle.summarize(rolloverAtEnd.nextCycle, [carriedBlock]).completedMinutes, 0, "Bloco carregado não pode virar dívida no ciclo seguinte.");
+assert.equal(WeeklyStudyCycle.rollover({ cycle: rolloverSource, blocks: [carriedBlock], nextBlocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(new Date(rolloverSource.endsAt).getTime() + 1) }).rolledOver, true, "Após o encerramento, o acesso deve criar o próximo ciclo.");
+assert.equal(WeeklyStudyCycle.rollover({ cycle: rolloverAtEnd.nextCycle, blocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(rolloverSource.endsAt) }).rolledOver, false, "O rollover precisa ser idempotente após criar o novo ciclo.");
+
+const stableIdentityCycle = WeeklyStudyCycle.create({ weeklyHours: 21, capacity: capacity21, now, blocks: [carriedBlock] });
+const editedActivityBlock = { ...carriedBlock, tipoAtividade: "Questões", tempoEstudado: 1.5 };
+assert.equal(WeeklyStudyCycle.blockKey(editedActivityBlock), "weekly-block:stable", "A identidade do bloco deve ignorar campos editáveis.");
+assert.equal(WeeklyStudyCycle.summarize(stableIdentityCycle, [editedActivityBlock]).completedMinutes, 30, "Após trocar a atividade, apenas o novo tempo deve contar.");
 assert.equal(WeeklyStudyCycle.shouldClose(cycle21, new Date(new Date(cycle21.endsAt).getTime() - 1)), false);
 assert.equal(WeeklyStudyCycle.shouldClose(cycle21, new Date(cycle21.endsAt)), true);
 assert.equal(WeeklyStudyCycle.close(cycle21, blocks, now).status, "closed");

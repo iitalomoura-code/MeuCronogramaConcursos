@@ -74,5 +74,7 @@ assert.ok(app.includes("Importância relativa na prova") && app.includes("Partic
 assert.ok(app.includes("function strategicPriorityForTarget"), "A fila e a geração do ciclo devem consumir a mesma prioridade estratégica derivada.");
 assert.ok(index.includes("js/weekly-study-cycle.js?v=20260912-weekly-adaptive-cycle"), "O ciclo semanal deve carregar antes do app.");
 assert.ok(app.includes("function ensureWeeklyStudyCycle"), "A capacidade semanal deve criar e reconciliar o ciclo persistido.");
+assert.ok(app.includes("function rolloverExpiredWeeklyStudyCycle"), "O ciclo semanal expirado deve fazer rollover durante a garantia do estado.");
+assert.ok(app.includes("function ensureWeeklyCycleBlockIds"), "Blocos do ciclo devem receber identidade estável antes de capturar execução.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");

@@ -5885,14 +5885,42 @@ function weeklyStudyCycleSummary() {
   return api.summarize(state.weeklyStudyCycle, blocks, { blockKey: weeklyBlockKey });
 }
 
+function rolloverExpiredWeeklyStudyCycle({ api, config, signature, blocks, now }) {
+  const carriedBlocks = blocks.filter((block) => normalizeStatus(block.status) !== "Concluído");
+  const transition = api.rollover({
+    cycle: state.weeklyStudyCycle,
+    blocks,
+    nextBlocks: carriedBlocks,
+    weeklyHours: config.horasSemana,
+    capacity: config.capacidade,
+    now,
+    sourceConfigurationSignature: signature,
+    blockKey: weeklyBlockKey,
+  });
+  if (!transition.rolledOver) return false;
+
+  state.weeklyStudyCycle = transition.closedCycle;
+  state.cycleHistory.push(snapshotCurrentCycle());
+  state.cycleHistory = state.cycleHistory.slice(-12);
+  archiveCompletedFromCurrentWeek();
+  state.generatedBlocks = carriedBlocks.map((block) => ({ ...block, weeklyCycleId: transition.nextCycle.id }));
+  state.weeklyStudyCycle = transition.nextCycle;
+  if (!isRestoring) scheduleAutoSave();
+  return true;
+}
+
 function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
   const api = weeklyStudyCycleApi();
   if (!api) return null;
   const config = scheduleConfig();
   const signature = weeklyStudyCycleSignature(config);
-  const blocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, state.weeklyStudyCycle?.id || "");
+  let blocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
   if (!state.weeklyStudyCycle || state.weeklyStudyCycle.status === "closed") {
     state.weeklyStudyCycle = api.create({ weeklyHours: config.horasSemana, capacity: config.capacidade, now, sourceConfigurationSignature: signature, blocks, blockKey: weeklyBlockKey });
+    return state.weeklyStudyCycle;
+  }
+  if (rolloverExpiredWeeklyStudyCycle({ api, config, signature, blocks, now })) {
     return state.weeklyStudyCycle;
   }
   if (!state.weeklyStudyCycle.executionBaselineByBlock) {
@@ -6752,6 +6780,7 @@ async function generateSchedule({ completeSetup = false, openContinue = false } 
   const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis);
   state.distribution = cycle.distribution;
   state.generatedBlocks = cycle.blocks.map((block) => ({ ...block, weeklyCycleId: weeklyCycle?.id || "" }));
+  state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, weeklyCycle?.id || "");
   ensureWeeklyStudyCycle();
   if ((completeSetup || setupIsIncomplete()) && state.generatedBlocks.length) finishSetup();
   setTabEnabled("cronograma", true);
@@ -7026,7 +7055,18 @@ function blockMatchesContinueFilters(block = {}) {
 }
 
 function weeklyBlockKey(block = {}) {
-  return String(block.id || generatedBlockDeduplicationKey(block));
+  return String(block.weeklyCycleBlockId || block.id || generatedBlockDeduplicationKey(block));
+}
+
+function ensureWeeklyCycleBlockIds(blocks = [], weeklyCycleId = "") {
+  return (Array.isArray(blocks) ? blocks : []).map((block, index) => {
+    if (block.weeklyCycleBlockId) return block;
+    const immutableSeed = block.id || block.programUnitKey || [block.metaId, block.metaPartKey, block.bloco, index].join(":");
+    return {
+      ...block,
+      weeklyCycleBlockId: `weekly-block:${weeklyCycleId || "legacy"}:${String(immutableSeed)}`,
+    };
+  });
 }
 
 function weeklyTopicKey(materia = "", assunto = "") {
@@ -13610,6 +13650,7 @@ function applyAppSnapshot(saved = {}) {
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
   state.weeklyStudyCycle = saved.weeklyStudyCycle && typeof saved.weeklyStudyCycle === "object" ? saved.weeklyStudyCycle : null;
+  state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, state.weeklyStudyCycle?.id || "");
   if (!state.weeklyStudyCycle && state.generatedBlocks.length && weeklyStudyCycleApi()) {
     const config = scheduleConfig();
     state.weeklyStudyCycle = weeklyStudyCycleApi().create({

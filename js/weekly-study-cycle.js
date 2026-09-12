@@ -125,19 +125,32 @@
     return { ...summarize(cycle, blocks, options), status: "closed", closedAt: iso(now) };
   }
 
+  function rollover({ cycle = {}, blocks = [], nextBlocks = blocks, weeklyHours = 0, capacity = {}, now = new Date(), sourceConfigurationSignature = "", blockKey: keyFor = blockKey } = {}) {
+    if (!shouldClose(cycle, now)) return { rolledOver: false, closedCycle: null, nextCycle: cycle };
+    const closedCycle = close(cycle, blocks, now, { blockKey: keyFor });
+    return {
+      rolledOver: true,
+      closedCycle,
+      nextCycle: create({ weeklyHours, capacity, now, sourceConfigurationSignature, blocks: nextBlocks, blockKey: keyFor }),
+    };
+  }
+
   // Allocation remains an adapter over the existing strategic allocator: it does
   // not introduce a second priority score or persist any execution evidence.
-  function allocate({ cycle = {}, topics = [], recentAllocations = [], allocator = global.StrategicTimeAllocation } = {}) {
+  function allocate({ cycle = {}, blocks = [], options = {}, topics = [], recentAllocations = [], allocator = global.StrategicTimeAllocation } = {}) {
     if (!allocator?.allocate) return null;
-    const summary = summarize(cycle);
+    const summarizedRemaining = Number(cycle.remainingPlannedMinutes);
+    const availableMinutes = Number.isFinite(summarizedRemaining) && summarizedRemaining >= 0
+      ? summarizedRemaining
+      : summarize(cycle, blocks, options).remainingPlannedMinutes;
     return allocator.allocate({
-      availableMinutes: summary.remainingPlannedMinutes,
+      availableMinutes,
       topics,
       recentAllocations,
     });
   }
 
-  const api = { DAY_MS, cycleWindow, configurationSignature, blockKey, recordedMinutes, executionBaseline, create, executionMinutes, summarize, reconcileCapacity, shouldClose, close, allocate };
+  const api = { DAY_MS, cycleWindow, configurationSignature, blockKey, recordedMinutes, executionBaseline, create, executionMinutes, summarize, reconcileCapacity, shouldClose, close, rollover, allocate };
   global.WeeklyStudyCycle = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
