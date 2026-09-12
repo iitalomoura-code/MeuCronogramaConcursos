@@ -75,6 +75,7 @@ const rolloverAtEnd = WeeklyStudyCycle.rollover({ cycle: rolloverSource, blocks:
 assert.equal(rolloverAtEnd.rolledOver, true, "No instante final, o ciclo deve encerrar.");
 assert.equal(rolloverAtEnd.closedCycle.completedMinutes, 60, "A execução real do ciclo encerrado deve ser preservada.");
 assert.equal(rolloverAtEnd.nextCycle.completedMinutes, 0, "O próximo ciclo deve iniciar sem progresso transportado.");
+assert.equal(rolloverAtEnd.nextCycle.plannedMinutes, 1159, "O novo ciclo deve preservar a capacidade-base completa.");
 assert.equal(WeeklyStudyCycle.summarize(rolloverAtEnd.nextCycle, [carriedBlock]).completedMinutes, 0, "Bloco carregado não pode virar dívida no ciclo seguinte.");
 assert.equal(WeeklyStudyCycle.rollover({ cycle: rolloverSource, blocks: [carriedBlock], nextBlocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(new Date(rolloverSource.endsAt).getTime() + 1) }).rolledOver, true, "Após o encerramento, o acesso deve criar o próximo ciclo.");
 assert.equal(WeeklyStudyCycle.rollover({ cycle: rolloverAtEnd.nextCycle, blocks: [carriedBlock], weeklyHours: 21, capacity: capacity21, now: new Date(rolloverSource.endsAt) }).rolledOver, false, "O rollover precisa ser idempotente após criar o novo ciclo.");

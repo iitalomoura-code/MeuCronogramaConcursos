@@ -152,6 +152,7 @@ let continueRecommendationFilters = { minutes: 0, activity: "" };
 let continueManualOverride = null;
 let strategicTimePlanUI = { availableMinutes: 0, result: null, generatedAt: "" };
 let strategicTimePlanCustomOpen = false;
+let weeklyRolloverReplanPromise = null;
 let pendingProgramComparison = null;
 let pendingProgramVersionChange = null;
 let animatedMetricPanels = new Set();
@@ -5885,26 +5886,32 @@ function weeklyStudyCycleSummary() {
   return api.summarize(state.weeklyStudyCycle, blocks, { blockKey: weeklyBlockKey });
 }
 
-function rolloverExpiredWeeklyStudyCycle({ api, config, signature, blocks, now }) {
-  const carriedBlocks = blocks.filter((block) => normalizeStatus(block.status) !== "Concluído");
-  const transition = api.rollover({
-    cycle: state.weeklyStudyCycle,
-    blocks,
-    nextBlocks: carriedBlocks,
-    weeklyHours: config.horasSemana,
-    capacity: config.capacidade,
-    now,
-    sourceConfigurationSignature: signature,
-    blockKey: weeklyBlockKey,
-  });
-  if (!transition.rolledOver) return false;
+function queueWeeklyRolloverReplan() {
+  if (weeklyRolloverReplanPromise || !state.planningBase) return weeklyRolloverReplanPromise;
+  const keepContinueOpen = getActiveTabName() === "continuar";
+  weeklyRolloverReplanPromise = Promise.resolve()
+    .then(() => generateSchedule({ openContinue: keepContinueOpen }))
+    .catch((error) => {
+      console.error("Não foi possível gerar o novo ciclo semanal.", error);
+      showToast("O ciclo anterior foi fechado. Gere o próximo ciclo quando estiver pronto.");
+    })
+    .finally(() => { weeklyRolloverReplanPromise = null; });
+  return weeklyRolloverReplanPromise;
+}
 
-  state.weeklyStudyCycle = transition.closedCycle;
+function rolloverExpiredWeeklyStudyCycle({ api, blocks, now }) {
+  if (!api.shouldClose(state.weeklyStudyCycle, now)) return false;
+  state.weeklyStudyCycle = api.close(state.weeklyStudyCycle, blocks, now, { blockKey: weeklyBlockKey });
   state.cycleHistory.push(snapshotCurrentCycle());
   state.cycleHistory = state.cycleHistory.slice(-12);
   archiveCompletedFromCurrentWeek();
-  state.generatedBlocks = carriedBlocks.map((block) => ({ ...block, weeklyCycleId: transition.nextCycle.id }));
-  state.weeklyStudyCycle = transition.nextCycle;
+  // Pendências não são dívida: ficam auditáveis no snapshot do ciclo fechado
+  // e só retornam se a nova priorização estratégica as selecionar novamente.
+  state.generatedBlocks = [];
+  state.distribution = [];
+  state.weeklyStudyCycle = null;
+  advanceReferenceWeek();
+  queueWeeklyRolloverReplan();
   if (!isRestoring) scheduleAutoSave();
   return true;
 }
@@ -5920,7 +5927,7 @@ function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
     state.weeklyStudyCycle = api.create({ weeklyHours: config.horasSemana, capacity: config.capacidade, now, sourceConfigurationSignature: signature, blocks, blockKey: weeklyBlockKey });
     return state.weeklyStudyCycle;
   }
-  if (rolloverExpiredWeeklyStudyCycle({ api, config, signature, blocks, now })) {
+  if (rolloverExpiredWeeklyStudyCycle({ api, blocks, now })) {
     return state.weeklyStudyCycle;
   }
   if (!state.weeklyStudyCycle.executionBaselineByBlock) {

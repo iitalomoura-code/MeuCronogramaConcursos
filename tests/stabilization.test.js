@@ -76,5 +76,12 @@ assert.ok(index.includes("js/weekly-study-cycle.js?v=20260912-weekly-adaptive-cy
 assert.ok(app.includes("function ensureWeeklyStudyCycle"), "A capacidade semanal deve criar e reconciliar o ciclo persistido.");
 assert.ok(app.includes("function rolloverExpiredWeeklyStudyCycle"), "O ciclo semanal expirado deve fazer rollover durante a garantia do estado.");
 assert.ok(app.includes("function ensureWeeklyCycleBlockIds"), "Blocos do ciclo devem receber identidade estável antes de capturar execução.");
+const rolloverStart = app.indexOf("function rolloverExpiredWeeklyStudyCycle");
+const rolloverEnd = app.indexOf("function ensureWeeklyStudyCycle", rolloverStart);
+const rolloverSource = app.slice(rolloverStart, rolloverEnd);
+assert.ok(rolloverSource.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  state.weeklyStudyCycle = null;\n  advanceReferenceWeek();"), "Rollover automático deve limpar o plano anterior e avançar a referência uma única vez.");
+assert.ok(rolloverSource.includes("queueWeeklyRolloverReplan();"), "A nova composição deve ser gerada fora da renderização direta.");
+assert.ok(!rolloverSource.includes("carriedBlocks"), "Pendências não podem ser copiadas diretamente para o novo ciclo.");
+assert.ok(app.includes("let weeklyRolloverReplanPromise = null;") && app.includes("if (weeklyRolloverReplanPromise || !state.planningBase)"), "O replanejamento automático deve ter uma guarda idempotente.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");
