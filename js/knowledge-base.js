@@ -194,9 +194,14 @@
     return [...byIdentity.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  function ingestionTimestamp(value = "") {
-    const date = value instanceof Date ? value : new Date(value || 0);
-    return Number.isFinite(date.getTime()) ? date.toISOString() : nowIso();
+  function validIngestionTimestamp(value) {
+    if (value === undefined || value === null || value === "") return "";
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : "";
+  }
+
+  function ingestionTimestamp(value, fallback = "") {
+    return validIngestionTimestamp(value) || validIngestionTimestamp(fallback) || nowIso();
   }
 
   function sessionTopicDetails(studySession = {}, context = {}) {
@@ -225,7 +230,7 @@
     const normalizedBase = normalizeExistingBase(base);
     const topic = sessionTopicDetails(studySession, context);
     if (!topic.title) return normalizedBase;
-    const observedAt = ingestionTimestamp(context.observedAt || studySession.observedAt || studySession.atualizadoEm || context.now);
+    const observedAt = ingestionTimestamp(context.observedAt || studySession.observedAt || studySession.atualizadoEm, context.now);
     const session = { ...studySession };
     if (session.questions === undefined && session.questoes === undefined && context.questions !== undefined) session.questions = context.questions;
     if (session.correctAnswers === undefined && session.acertos === undefined && context.correctAnswers !== undefined) session.correctAnswers = context.correctAnswers;
@@ -297,7 +302,7 @@
     const changed = !previous || JSON.stringify(previous) !== JSON.stringify(nextEvidence.find((item) => item.id === incoming.id));
     return {
       ...normalizedBase,
-      updatedAt: changed ? ingestionTimestamp(context.now || observedAt) : normalizedBase.updatedAt,
+      updatedAt: changed ? ingestionTimestamp(context.now, observedAt) : normalizedBase.updatedAt,
       concepts,
       evidence: nextEvidence,
     };
@@ -545,6 +550,7 @@
     evidenceFromStudyEntry,
     evidenceIdentity,
     dedupeEvidence,
+    ingestionTimestamp,
     ingestStudySession,
     summarizeConceptEvidence,
     buildKnowledgeBase,

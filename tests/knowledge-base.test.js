@@ -236,4 +236,11 @@ const currentDiagnosis = currentPlanDiagnosis.derive({ base: currentOnly, topic:
 assert.equal(currentDiagnosis.evidence.questions, 0, "Evidência do plano atual não pode virar herança no diagnóstico inicial.");
 assert.equal(currentDiagnosis.mastery.level, "none");
 
+assert.equal(knowledge.ingestionTimestamp("2026-09-12T18:30:00.000Z"), "2026-09-12T18:30:00.000Z");
+assert.notEqual(knowledge.ingestionTimestamp(""), "1970-01-01T00:00:00.000Z");
+assert.notEqual(knowledge.ingestionTimestamp(undefined), "1970-01-01T00:00:00.000Z");
+assert.notEqual(knowledge.ingestionTimestamp("data inválida"), "1970-01-01T00:00:00.000Z");
+assert.equal(knowledge.ingestionTimestamp("", "2026-09-12T19:00:00.000Z"), "2026-09-12T19:00:00.000Z");
+assert.equal(knowledge.ingestionTimestamp("não é data", "2026-09-12T19:00:00.000Z"), "2026-09-12T19:00:00.000Z");
+
 console.log("OK - base permanente consolida evidências executadas, preserva origem e suporta bootstrap incremental.");
