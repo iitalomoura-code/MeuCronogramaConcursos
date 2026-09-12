@@ -4,7 +4,7 @@
   const VERSION = 1;
   const text = (value = "") => String(value ?? "").trim();
   const numberOrNull = (value) => {
-    if (value === null || value === undefined || value === "") return null;
+    if (value === null || value === undefined || value === "" || (typeof value === "string" && !value.trim())) return null;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
@@ -260,6 +260,7 @@
       else if (subject.state === "not-ready") subjectDistribution.notReady += 1;
       else subjectDistribution.unknown += 1;
     });
+    const unknownSubjectShare = evaluatedSubjects.length ? subjectDistribution.unknown / evaluatedSubjects.length : 1;
     const blockingTopics = evaluatedSubjects.flatMap((subject) => subject.blockingTopics);
     const confidenceValue = evaluatedSubjects.length
       ? Math.min(evaluatedSubjects.reduce((sum, subject) => sum + subject.confidenceValue, 0) / evaluatedSubjects.length, highConfidenceCoverage >= .7 ? 1 : highConfidenceCoverage >= .35 ? .67 : .34) * (.5 + .5 * diagnosticCoverage)
@@ -270,8 +271,8 @@
       if (highConfidenceCoverage < .25 && diagnosticCoverage < .5) state = "early";
       else if (blockingTopics.some((topic) => topic.severity === "major") || subjectDistribution.notReady > 1) state = "fragile";
       else if (subjectDistribution.notReady || subjectDistribution.fragile) state = "developing";
-      else if (diagnosticCoverage >= .75 && highConfidenceCoverage >= .6 && !subjectDistribution.developing) state = "well-prepared";
-      else if (diagnosticCoverage >= .5) state = "competitive";
+      else if (diagnosticCoverage >= .75 && highConfidenceCoverage >= .6 && unknownSubjectShare === 0 && !subjectDistribution.developing) state = "well-prepared";
+      else if (diagnosticCoverage >= .65 && highConfidenceCoverage >= .35 && unknownSubjectShare < .35) state = "competitive";
       else state = "developing";
     }
     const strongestAreas = evaluatedSubjects.filter((subject) => subject.state === "ready").map((subject) => subject.subject);
@@ -300,7 +301,7 @@
     };
   }
 
-  const api = { VERSION, evaluateTopic, evaluateSubject, evaluateExam };
+  const api = { VERSION, numberOrNull, evaluateTopic, evaluateSubject, evaluateExam };
   global.Readiness = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

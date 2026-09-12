@@ -5,6 +5,13 @@ const Readiness = require("../js/readiness.js");
 
 const now = "2026-09-12T12:00:00.000Z";
 
+assert.equal(Readiness.numberOrNull(null), null);
+assert.equal(Readiness.numberOrNull(undefined), null);
+assert.equal(Readiness.numberOrNull(""), null);
+assert.equal(Readiness.numberOrNull("   "), null);
+assert.equal(Readiness.numberOrNull(0), 0);
+assert.equal(Readiness.numberOrNull("0"), 0);
+
 function topic({ subject = "Direito", topic = "Tema", level = "strong", confidence = "high", confidenceValue = .82, evidenceStage = "confirmed", questions = 60, sessions = 4, learningState = "practice", maintenanceDue = false, importance = null, rank = null, recurrence = "low", inheritedKnowledge = null, recoveryEvidence = false } = {}) {
   return {
     subject,
@@ -53,6 +60,47 @@ const allReadySubject = Readiness.evaluateSubject({ name: "Direito", topicCount:
 assert.equal(allReadySubject.state, "ready");
 assert.equal(allReadySubject.topicDistribution.ready, 2);
 
+const halfDiagnosedExam = Readiness.evaluateExam({
+  now,
+  subjects: [{ name: "Direito", topicCount: 2, examWeight: 5 }],
+  topics: [topic({ subject: "Direito", topic: "A" })],
+});
+assert.equal(halfDiagnosedExam.diagnosticCoverage, .5);
+assert.equal(halfDiagnosedExam.state, "developing");
+assert.notEqual(halfDiagnosedExam.state, "competitive", "Metade do edital sem diagnóstico não pode ser competitive.");
+
+const competitiveExam = Readiness.evaluateExam({
+  now,
+  subjects: [
+    { name: "Direito", topicCount: 2, examWeight: 5 },
+    { name: "Português", topicCount: 2, examWeight: 5 },
+  ],
+  topics: [
+    topic({ subject: "Direito", topic: "A" }),
+    topic({ subject: "Direito", topic: "B" }),
+    topic({ subject: "Português", topic: "A", confidence: "medium", confidenceValue: .55, evidenceStage: "developing", level: "adequate" }),
+    topic({ subject: "Português", topic: "B", confidence: "medium", confidenceValue: .55, evidenceStage: "developing", level: "adequate" }),
+  ],
+});
+assert.equal(competitiveExam.diagnosticCoverage, 1);
+assert.ok(competitiveExam.highConfidenceCoverage >= .35);
+assert.equal(competitiveExam.state, "competitive");
+
+const wellPreparedExam = Readiness.evaluateExam({
+  now,
+  subjects: [
+    { name: "Direito", topicCount: 2, examWeight: 5 },
+    { name: "Português", topicCount: 2, examWeight: 5 },
+  ],
+  topics: [
+    topic({ subject: "Direito", topic: "A" }),
+    topic({ subject: "Direito", topic: "B" }),
+    topic({ subject: "Português", topic: "A" }),
+    topic({ subject: "Português", topic: "B" }),
+  ],
+});
+assert.equal(wellPreparedExam.state, "well-prepared");
+
 const exam = Readiness.evaluateExam({
   now,
   subjects: [
@@ -73,7 +121,9 @@ assert.ok(exam.highConfidenceCoverage > 0);
 
 const input = topic({ inheritedKnowledge: { available: true, level: "strong", confidence: .9, accuracy: .9 } });
 const before = JSON.stringify(input);
-Readiness.evaluateExam({ subjects: [{ name: "Direito", topicCount: 1 }], topics: [input], now });
+const deterministicInput = { subjects: [{ name: "Direito", topicCount: 1 }], topics: [input], now };
+assert.deepEqual(Readiness.evaluateExam(deterministicInput), Readiness.evaluateExam(deterministicInput), "A mesma entrada e o mesmo now devem produzir resultado idêntico.");
+Readiness.evaluateExam(deterministicInput);
 assert.equal(JSON.stringify(input), before, "Readiness deve ser read-only.");
 
 console.log("OK - readiness determinístico distingue incerteza, preparação, manutenção e blockers sem prever aprovação.");
