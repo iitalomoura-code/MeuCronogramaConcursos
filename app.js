@@ -197,6 +197,7 @@ let focusedStudyPersistenceTimer = null;
 let focusedStudyPeriodicSaveTimer = null;
 let focusedLongSessionNoticeId = "";
 let focusedStudySaving = false;
+let pendingContinuePanelRefresh = 0;
 let pendingTabRenderFrame = 0;
 let pendingTabRenderTimer = 0;
 let pendingSecondaryTabRender = 0;
@@ -248,6 +249,36 @@ let knowledgeMappingReviewCacheKey = "";
 let knowledgeMappingReviewCacheValue = null;
 let knowledgeMappingView = "review";
 let knowledgeMappingManagerOpen = false;
+
+function focusPerformanceEnabled() {
+  const host = String(window.location?.hostname || "");
+  return window.__MEU_CRONOGRAMA_FOCUS_PERF__ === true || host === "localhost" || host === "127.0.0.1";
+}
+
+function focusPerformanceNow() {
+  return typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
+}
+
+function createFocusPerformanceTrace(name) {
+  return { name, enabled: focusPerformanceEnabled(), startedAt: focusPerformanceNow(), steps: [] };
+}
+
+function measureFocusPerformance(trace, label, work) {
+  const startedAt = focusPerformanceNow();
+  const result = work();
+  const record = () => {
+    if (trace?.enabled) trace.steps.push({ label, ms: Math.round((focusPerformanceNow() - startedAt) * 10) / 10 });
+  };
+  if (result?.then) return result.finally(record);
+  record();
+  return result;
+}
+
+function reportFocusPerformance(trace) {
+  if (!trace?.enabled) return;
+  const total = Math.round((focusPerformanceNow() - trace.startedAt) * 10) / 10;
+  console.info(`[perf:${trace.name}]`, [...trace.steps, { label: "total", ms: total }].map((step) => `${step.label}: ${step.ms}ms`).join(" | "));
+}
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -8648,12 +8679,12 @@ function ensureFocusedSessionPeriodicSave() {
   }, FOCUS_SESSION_PERSIST_INTERVAL);
 }
 
-function persistFocusedSession({ immediate = false, label = "Sessão atualizada" } = {}) {
+function persistFocusedSession({ immediate = false, label = "Sessão atualizada", alreadySynced = false, performanceTrace = null } = {}) {
   if (focusedStudySession?.standaloneReview && !focusedStudySession?.persistStandalone) return Promise.resolve(true);
-  if (!syncFocusedSessionToState() || isRestoring || !state.currentPlanId) return Promise.resolve(false);
+  if ((!alreadySynced && !syncFocusedSessionToState()) || isRestoring || !state.currentPlanId) return Promise.resolve(false);
   clearTimeout(focusedStudyPersistenceTimer);
-  if (immediate) return saveAppStateNow(label);
-  focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave(), FOCUS_SESSION_SAVE_DELAY);
+  if (immediate) return saveAppStateNow(label, { changes: false, force: true, performanceTrace });
+  focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave({ invalidate: false }), FOCUS_SESSION_SAVE_DELAY);
   return Promise.resolve(true);
 }
 
@@ -8774,6 +8805,7 @@ function focusedDraftHasChanges(index) {
 function suspendFocusedStudy({ silent = false } = {}) {
   const session = focusedStudySession || state.activeFocusSession;
   if (!session) return;
+  const performanceTrace = createFocusPerformanceTrace("focus-close");
 
   // Sessões de revisão temporárias existem somente enquanto o modo focado está aberto.
   // As sessões de estudo normais permanecem no estado e podem ser retomadas pela tela Continuar.
@@ -8782,12 +8814,12 @@ function suspendFocusedStudy({ silent = false } = {}) {
     return;
   }
 
-  syncFocusedSessionToState();
-  stopFocusedTimerInterval();
-  removeFocusedStudyOverlay();
+  measureFocusPerformance(performanceTrace, "sync state", () => syncFocusedSessionToState());
+  measureFocusPerformance(performanceTrace, "stop timer", () => stopFocusedTimerInterval());
+  measureFocusPerformance(performanceTrace, "remove overlay", () => removeFocusedStudyOverlay());
   focusedStudySession = null;
   focusedStudyIndex = -1;
-  scheduleFocusedStudyCloseWork({ silent, persistLabel: "Sessão em andamento" });
+  scheduleFocusedStudyCloseWork({ silent, persistLabel: "Sessão em andamento", performanceTrace });
 }
 
 function clearOrphanedFocusedSession() {
@@ -8817,30 +8849,30 @@ async function closeFocusedStudy(options = {}) {
   const index = focusedStudyIndex >= 0 ? focusedStudyIndex : resolveFocusedBlockIndex(session);
   const standaloneReview = Boolean(session?.standaloneReview || state.generatedBlocks[index]?.reviewSessionOnly);
   const persistentStandalone = Boolean(session?.persistStandalone);
+  const performanceTrace = createFocusPerformanceTrace("focus-close");
   if (!options.discard && persistentStandalone) {
-    syncFocusedSessionToState();
-    void persistFocusedSession({ immediate: true, label: "Sessão salva" });
-    stopFocusedTimerInterval();
-    removeFocusedStudyOverlay();
+    measureFocusPerformance(performanceTrace, "sync state", () => syncFocusedSessionToState());
+    measureFocusPerformance(performanceTrace, "stop timer", () => stopFocusedTimerInterval());
+    measureFocusPerformance(performanceTrace, "remove overlay", () => removeFocusedStudyOverlay());
     focusedStudyIndex = -1;
     focusedStudySession = null;
-    if (!options.silent) renderContinuePanel();
+    void persistFocusedSession({ immediate: true, label: "Sessão salva", alreadySynced: true, performanceTrace }).finally(() => reportFocusPerformance(performanceTrace));
+    if (!options.silent) scheduleFocusedStudyCloseWork({ silent: false, performanceTrace });
     return;
   }
-  if (!options.discard && (!standaloneReview || persistentStandalone)) {
-    // The overlay must disappear before any local serialization or cloud request.
-    void persistFocusedSession({ immediate: true, label: "Sessão salva" });
-  }
-  stopFocusedTimerInterval();
+  measureFocusPerformance(performanceTrace, "stop timer", () => stopFocusedTimerInterval());
   if (standaloneReview && !persistentStandalone && index >= 0) {
     state.generatedBlocks.splice(index, 1);
     focusedStudyDrafts.delete(index);
   }
   state.activeFocusSession = null;
-  removeFocusedStudyOverlay();
+  measureFocusPerformance(performanceTrace, "remove overlay", () => removeFocusedStudyOverlay());
   focusedStudyIndex = -1;
   focusedStudySession = null;
-  scheduleFocusedStudyCloseWork({ silent: options.silent });
+  if (!options.discard && (!standaloneReview || persistentStandalone)) {
+    void saveAppStateNow("Sessão salva", { changes: false, force: true, performanceTrace }).finally(() => reportFocusPerformance(performanceTrace));
+  }
+  scheduleFocusedStudyCloseWork({ silent: options.silent, performanceTrace });
 }
 
 function settleFocusedSessionForCycleClosure() {
@@ -9219,19 +9251,45 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
   return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome, standaloneReview: true };
 }
 
-function scheduleFocusedStudyResultRender() {
+function scheduleFocusedStudyResultRender({ performanceTrace = null } = {}) {
   window.setTimeout(() => {
-    if (getActiveTabName() === "continuar") renderContinuePanel();
+    if (getActiveTabName() === "continuar") scheduleContinuePanelRefresh({ performanceTrace });
     else scheduleActiveTabRender(getActiveTabName());
   }, 0);
 }
 
-function scheduleFocusedStudyCloseWork({ silent = false, persistLabel = "" } = {}) {
-  // O modal já foi removido. Aguarde a primeira pintura antes do autosave e do
-  // painel completo, para o toque de fechar ter resposta imediata.
-  void yieldForInteraction().then(() => {
-    if (persistLabel) void persistFocusedSession({ label: persistLabel });
-    if (!silent && getActiveTabName() === "continuar") renderContinuePanel();
+function renderActiveFocusSessionCard() {
+  if (!els.continuePanel || getActiveTabName() !== "continuar") return;
+  const markup = activeFocusSessionMarkup();
+  const current = els.continuePanel.querySelector(".continue-active-session");
+  if (current) current.outerHTML = markup;
+  else if (markup) els.continuePanel.insertAdjacentHTML("afterbegin", markup);
+  const card = els.continuePanel.querySelector(".continue-active-session");
+  if (card) renderLucideIcons(card);
+}
+
+function scheduleContinuePanelRefresh({ performanceTrace = null } = {}) {
+  if (getActiveTabName() !== "continuar" || pendingContinuePanelRefresh) return;
+  const render = () => {
+    pendingContinuePanelRefresh = 0;
+    measureFocusPerformance(performanceTrace, "render Continue", () => renderContinuePanel());
+    reportFocusPerformance(performanceTrace);
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    pendingContinuePanelRefresh = window.requestIdleCallback(render, { timeout: 900 });
+  } else {
+    pendingContinuePanelRefresh = window.setTimeout(render, 180);
+  }
+}
+
+function scheduleFocusedStudyCloseWork({ silent = false, persistLabel = "", performanceTrace = null } = {}) {
+  // O modal já foi removido. O card mínimo aparece no mesmo ciclo do toque;
+  // persistência e o painel completo ficam fora do caminho crítico.
+  measureFocusPerformance(performanceTrace, "render active session card", () => renderActiveFocusSessionCard());
+  void measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction()).then(() => {
+    if (persistLabel) measureFocusPerformance(performanceTrace, "schedule persistence", () => persistFocusedSession({ label: persistLabel, alreadySynced: true, performanceTrace }));
+    if (!silent) scheduleContinuePanelRefresh({ performanceTrace });
+    else reportFocusPerformance(performanceTrace);
   });
 }
 
@@ -9252,13 +9310,14 @@ async function saveFocusedStudy() {
     return;
   }
   focusedStudySaving = true;
+  const performanceTrace = createFocusPerformanceTrace("focus-save");
   // Fecha visualmente antes de recalcular diagnóstico, revisões e recomendações.
   // A renderização do painel de fundo fica para o próximo ciclo de pintura.
-  stopFocusedTimerInterval();
-  removeFocusedStudyOverlay();
-  await yieldForInteraction();
+  measureFocusPerformance(performanceTrace, "stop timer", () => stopFocusedTimerInterval());
+  measureFocusPerformance(performanceTrace, "remove overlay", () => removeFocusedStudyOverlay());
+  await measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction());
   const standaloneReview = Boolean(block.reviewSessionOnly);
-  const outcome = standaloneReview
+  const outcome = measureFocusPerformance(performanceTrace, "save study result", () => standaloneReview
     ? saveStandaloneReviewResult(block, draft, effectiveHours)
     : saveStudyResult({
       blockIndex: index,
@@ -9274,7 +9333,7 @@ async function saveFocusedStudy() {
       reviewPoints: draft.pontosRevisar,
       reviewCycles: draft.reviewCycles || [],
       persist: false,
-    });
+    }));
   if (!outcome.ok) {
     focusedStudySaving = false;
     renderFocusedStudyOverlay();
@@ -9296,13 +9355,13 @@ async function saveFocusedStudy() {
   focusedStudyIndex = -1;
   continueSuggestionOffset = 0;
   focusedStudySaving = false;
-  scheduleFocusedStudyResultRender();
+  scheduleFocusedStudyResultRender({ performanceTrace });
   if (adaptiveOutcome?.record) showToast("Desempenho atualizado. Revisão adaptativa avaliada.");
   else if (nextStatus === "Em andamento") showToast("Bloco mantido em andamento.");
   else if (nextStatus === "Reprogramar") showToast("Bloco reprogramado.");
   else if (previousStatus !== "Concluído" && nextStatus === "Concluído") showToast("Resultado salvo. Próximo passo disponível.");
   else showToast("Resultado salvo.");
-  void saveAppStateNow("Resultado do estudo salvo").then((persisted) => {
+  void saveAppStateNow("Resultado do estudo salvo", { performanceTrace }).then((persisted) => {
     if (!persisted) {
       saveLocalSafetyCopy(captureAppState());
       showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
@@ -9311,7 +9370,7 @@ async function saveFocusedStudy() {
     console.error("Falha ao salvar o resultado do estudo:", error);
     saveLocalSafetyCopy(captureAppState());
     showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
-  });
+  }).finally(() => reportFocusPerformance(performanceTrace));
 }
 
 function activeFocusSessionMarkup() {
@@ -14351,7 +14410,7 @@ async function handleCloudConflict(snapshot) {
   }
 }
 
-async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
+async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTrace = null) {
   if (!cloudIsPrimary()) return false;
   if (cloudSavePromise) {
     cloudSaveQueued = true;
@@ -14364,12 +14423,12 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null) {
   updateSaveStatus({ state: "saving", destination: "cloud" });
   cloudSavePromise = (async () => {
     try {
-      const record = await window.saveCloudPlan({
+      const record = await measureFocusPerformance(performanceTrace, "cloud sync", () => window.saveCloudPlan({
         id: plan.id,
         name: planVisibleName(plan),
         data,
         version: state.cloudPlanVersion,
-      });
+      }));
       updateCloudPlanMeta(record);
       scheduleCloudCacheWrite(record, data);
       clearUnsavedChanges();
@@ -14431,34 +14490,34 @@ function yieldForInteraction() {
   });
 }
 
-async function saveAppStateNow(label = "Salvo", { changes = true } = {}) {
+async function saveAppStateNow(label = "Salvo", { changes = true, force = false, performanceTrace = null } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) {
     invalidateDerivedStudyCaches();
     markUnsavedChanges();
   }
-  if (cloudIsPrimary() && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
+  if (cloudIsPrimary() && !force && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
     updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
     return true;
   }
   await yieldForInteraction();
-  const snapshot = captureAppState();
+  const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => captureAppState());
   if (state.dataSource === "cloud-unavailable") {
     saveLocalSafetyCopy(snapshot);
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;
   }
-  if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot);
-  saveLocalSafetyCopy(snapshot);
+  if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot, performanceTrace);
+  measureFocusPerformance(performanceTrace, "local persist", () => saveLocalSafetyCopy(snapshot));
   updateSaveStatus({ state: "saving", destination: "cache" });
   refreshCurrentPlanName(snapshot);
   updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
   return true;
 }
 
-function scheduleAutoSave() {
+function scheduleAutoSave({ invalidate = true } = {}) {
   if (isRestoring) return;
-  invalidateDerivedStudyCaches();
+  if (invalidate) invalidateDerivedStudyCaches();
   if (state.dataSource === "cloud-unavailable") {
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return;
