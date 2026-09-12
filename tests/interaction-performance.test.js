@@ -28,6 +28,9 @@ assert.ok(app.includes("removeFocusedStudyOverlay();\n  await yieldForInteractio
 assert.ok(app.includes("function scheduleFocusedStudyResultRender"), "A tela Continuar deve ser atualizada depois da primeira resposta visual ao salvar.");
 assert.ok(app.includes('if (activeTab === "conteudo") syncRowsFromTable();'), "A leitura da árvore do edital deve ocorrer somente em sua tela.");
 assert.ok(app.includes("focusedStudyPersistenceTimer = window.setTimeout(() => scheduleAutoSave()"), "A sessão focada deve compartilhar o autosave debounced.");
+assert.ok(app.includes("function scheduleFocusedStudyCloseWork"), "Fechar o modo foco deve separar a resposta visual do trabalho pesado.");
+assert.ok(app.includes('scheduleFocusedStudyCloseWork({ silent, persistLabel: "Sessão em andamento" });'), "O botão de fechar deve remover o modo foco antes do autosave e do rerender de Continuar.");
+assert.ok(app.includes("syncFocusedSessionToState();\n  stopFocusedTimerInterval();\n  removeFocusedStudyOverlay();"), "Fechar o modo foco deve parar o timer e retirar o overlay no mesmo ciclo do toque.");
 assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");
 assert.ok(app.includes("function invalidateDerivedStudyCaches"), "Cálculos derivados devem ter invalidação explícita.");
 assert.ok(app.includes("function continueDerivedSnapshot"), "A tela Continuar deve concentrar leituras reutilizáveis em um snapshot derivado.");

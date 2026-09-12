@@ -8770,11 +8770,11 @@ function suspendFocusedStudy({ silent = false } = {}) {
   }
 
   syncFocusedSessionToState();
-  void persistFocusedSession({ label: "Sessão em andamento" });
+  stopFocusedTimerInterval();
   removeFocusedStudyOverlay();
   focusedStudySession = null;
   focusedStudyIndex = -1;
-  if (!silent) renderContinuePanel();
+  scheduleFocusedStudyCloseWork({ silent, persistLabel: "Sessão em andamento" });
 }
 
 function clearOrphanedFocusedSession() {
@@ -8827,7 +8827,7 @@ async function closeFocusedStudy(options = {}) {
   removeFocusedStudyOverlay();
   focusedStudyIndex = -1;
   focusedStudySession = null;
-  if (!options.silent) renderContinuePanel();
+  scheduleFocusedStudyCloseWork({ silent: options.silent });
 }
 
 function settleFocusedSessionForCycleClosure() {
@@ -9211,6 +9211,15 @@ function scheduleFocusedStudyResultRender() {
     if (getActiveTabName() === "continuar") renderContinuePanel();
     else scheduleActiveTabRender(getActiveTabName());
   }, 0);
+}
+
+function scheduleFocusedStudyCloseWork({ silent = false, persistLabel = "" } = {}) {
+  // O modal já foi removido. Aguarde a primeira pintura antes do autosave e do
+  // painel completo, para o toque de fechar ter resposta imediata.
+  void yieldForInteraction().then(() => {
+    if (persistLabel) void persistFocusedSession({ label: persistLabel });
+    if (!silent && getActiveTabName() === "continuar") renderContinuePanel();
+  });
 }
 
 async function saveFocusedStudy() {
