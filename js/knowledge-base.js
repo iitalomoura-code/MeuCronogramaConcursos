@@ -1,9 +1,10 @@
 "use strict";
 
 (function initKnowledgeBase(global) {
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const MAX_RELIABLE_SESSION_MINUTES = 240;
   const HISTORY = global.HistoryInheritance || (typeof require === "function" ? require("./history-inheritance.js") : null);
+  const MAPPING = global.KnowledgeMapping || (typeof require === "function" ? require("./knowledge-mapping.js") : null);
 
   function nowIso() {
     return new Date().toISOString();
@@ -115,6 +116,8 @@
       sourcePlanName: text(context.sourcePlanName || context.name || entry.sourceName),
       originalSubject: text(entry.materia || entry.subject),
       originalTopic: text(entry.assunto || entry.topic || entry.metaTitulo),
+      originalTitle: text(concept.canonicalTitle),
+      originalDetails: text(entry.conteudoBloco || entry.descricao || entry.descricaoTema || entry.metaConteudos || entry.conteudosOriginais),
       canonicalKey: concept.canonicalKey,
       canonicalTitle: concept.canonicalTitle,
       domain: concept.domain,
@@ -199,6 +202,9 @@
       concepts: [],
       evidence: [],
       topicMappings: [],
+      aliases: [],
+      mappingRules: [],
+      mappingRejections: [],
     };
   }
 
@@ -215,7 +221,14 @@
         domain: "",
         legacyTimeOutlier: Number(item.studiedMinutes) > MAX_RELIABLE_SESSION_MINUTES && !text(item.observedAt || item.updatedAt),
       })) : [],
-      topicMappings: Array.isArray(base.topicMappings) ? base.topicMappings.map((item) => ({ ...item })) : [],
+      topicMappings: Array.isArray(base.topicMappings) ? base.topicMappings.map((item) => ({
+        ...item,
+        conceptKeys: [...new Set((item.conceptKeys || [item.canonicalKey || item.conceptId?.replace(/^concept:/, "")]).filter(Boolean))],
+        status: item.status || (item.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed"),
+      })) : [],
+      aliases: Array.isArray(base.aliases) ? base.aliases.map((item) => ({ ...item })) : [],
+      mappingRules: Array.isArray(base.mappingRules) ? base.mappingRules.map((item) => ({ ...item, conceptKeys: [...new Set((item.conceptKeys || []).filter(Boolean))] })) : [],
+      mappingRejections: Array.isArray(base.mappingRejections) ? base.mappingRejections.map((item) => ({ ...item, conceptKeys: [...new Set((item.conceptKeys || []).filter(Boolean))] })) : [],
     };
   }
 
@@ -254,9 +267,14 @@
       planId: item.sourcePlanId,
       originalSubject: item.originalSubject,
       originalTopic: item.originalTopic,
+      originalTitle: item.originalTitle || item.originalTopic,
+      originalDetails: item.originalDetails || "",
       conceptId: `concept:${item.canonicalKey.replace(/\s+/g, "-")}`,
       canonicalKey: item.canonicalKey,
+      conceptKeys: [item.canonicalKey],
       confidence: "exact-canonical-title",
+      basis: "canonical-title-exact",
+      status: "auto-confirmed",
       sourceType: item.sourceType,
     };
   }
@@ -264,12 +282,16 @@
   function dedupeMappings(mappings = []) {
     const seen = new Set();
     return mappings.filter((mapping) => {
-      const key = [mapping.planId, mapping.originalSubject, mapping.originalTopic, mapping.canonicalKey].map(text).join("|");
+      const key = [mapping.planId, mapping.topicId, mapping.originalSubject, mapping.originalTopic, (mapping.conceptKeys || [mapping.canonicalKey]).join(",")].map(text).join("|");
       if (!key.replace(/\|/g, "")) return false;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).map((mapping) => ({ ...mapping }));
+    }).map((mapping) => ({
+      ...mapping,
+      conceptKeys: [...new Set((mapping.conceptKeys || [mapping.canonicalKey || mapping.conceptId?.replace(/^concept:/, "")]).filter(Boolean))],
+      status: mapping.status || (mapping.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed"),
+    }));
   }
 
   // The caller decides which accessible plan snapshots are relevant to a bootstrap.
@@ -313,6 +335,9 @@
       concepts,
       evidence,
       topicMappings: mappings,
+      aliases: normalizedBase.aliases,
+      mappingRules: normalizedBase.mappingRules,
+      mappingRejections: normalizedBase.mappingRejections,
       warnings: [...warnings, ...evidence.filter((item) => item.legacyTimeOutlier).map((item) => ({ type: "legacy-time-outlier-needs-reconciliation", evidenceId: item.id, sourcePlanId: item.sourcePlanId }))],
     };
   }
@@ -355,8 +380,16 @@
     return {
       ...summary,
       evidence: (base.evidence || []).filter((item) => item.canonicalKey === summary.canonicalKey).map((item) => ({ ...item })),
-      mappings: (base.topicMappings || []).filter((item) => item.canonicalKey === summary.canonicalKey).map((item) => ({ ...item })),
+      mappings: (base.topicMappings || []).filter((item) => (item.conceptKeys || [item.canonicalKey]).includes(summary.canonicalKey)).map((item) => ({ ...item })),
     };
+  }
+
+  function mapTopic(base = {}, topic = {}) {
+    return MAPPING?.matchTopicToConcepts ? MAPPING.matchTopicToConcepts(topic, normalizeExistingBase(base)) : null;
+  }
+
+  function decideTopicMapping(base = {}, mapping = {}, decision = "confirm") {
+    return MAPPING?.applyMappingDecision ? MAPPING.applyMappingDecision(normalizeExistingBase(base), mapping, decision) : normalizeExistingBase(base);
   }
 
   const api = {
@@ -374,6 +407,9 @@
     legacyTimeDetails,
     mergeEvidence,
     emptyKnowledgeBase,
+    mapTopic,
+    decideTopicMapping,
+    migrateKnowledgeMappings: (base) => MAPPING?.migrateKnowledgeMappings ? MAPPING.migrateKnowledgeMappings(normalizeExistingBase(base)) : normalizeExistingBase(base),
   };
   global.KnowledgeBase = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -231,6 +231,7 @@ let historyInheritanceCache = new Map();
 let knowledgeBaseState = null;
 let knowledgeBaseCloudVersion = 0;
 let knowledgeBaseBootstrapPromise = null;
+let knowledgeMappingReviewCache = [];
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -4750,7 +4751,7 @@ function renderInitialDiagnosis() {
     ? `<p class="history-inheritance-loading">Verificando seus planejamentos anteriores...</p>`
     : matchedTopics ? `<p class="history-inheritance-global">Encontramos histórico aproveitável em ${matchedTopics} dos ${histories.reduce((total, summary) => total + summary.totalTopics, 0)} temas deste planejamento.${sourceNames.length ? ` Dados vindos de ${sourceNames.length} planejamento${sourceNames.length === 1 ? "" : "s"} anterior${sourceNames.length === 1 ? "" : "es"}.` : ""}</p>`
       : "";
-  els.initialDiagnosisList.innerHTML = `${globalNotice}${subjects.map((subject, index) => {
+  els.initialDiagnosisList.innerHTML = `${globalNotice}${knowledgeMappingReviewMarkup()}${subjects.map((subject, index) => {
     const influence = initialDiagnosisInfluence(subject.materia);
     const subjectDiagnosis = masteryDiagnosisForTarget({ materia: subject.materia, prioridade: priorityScore(subject) });
     const estimated = window.InitialDiagnosisEngine.estimatedLevel({
@@ -12773,6 +12774,31 @@ function saveLocalKnowledgeBase(base = knowledgeBaseState) {
   } catch {}
 }
 
+function currentKnowledgeMappingReviews() {
+  if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [] };
+  const seen = new Set();
+  const items = [];
+  let automatic = 0;
+  state.rows.filter((row) => row?.materia && (row.assunto || row.titulo) && row.estudar !== "Nao").forEach((row) => {
+    const topic = { planId: state.currentPlanId, topicId: row.programUnitId || row.id, materia: row.materia, assunto: row.assunto || row.titulo, titulo: row.titulo, descricao: row.descricao, conteudosOriginais: row.conteudosOriginais };
+    const result = window.KnowledgeBaseStore.suggestForTopic(topic);
+    const key = result?.topic?.topicId || topic.assunto;
+    if (!result || seen.has(key)) return;
+    seen.add(key);
+    if (result.status === "auto-confirmed" || result.status === "user-confirmed") automatic += 1;
+    if (result.status === "suggested") items.push(result);
+  });
+  return { automatic, suggested: items };
+}
+
+function knowledgeMappingReviewMarkup() {
+  const review = currentKnowledgeMappingReviews();
+  knowledgeMappingReviewCache = review.suggested;
+  if (!review.automatic && !review.suggested.length) return "";
+  const suggested = review.suggested.length ? ` <button class="text-action" type="button" data-open-knowledge-mappings>Revisar correspondências</button>` : "";
+  return `<details class="knowledge-mapping-review"><summary>Correspondências da sua base</summary><p>${review.automatic} confirmada${review.automatic === 1 ? "" : "s"} automaticamente${review.suggested.length ? ` · ${review.suggested.length} para revisar` : ""}.${suggested}</p><div class="knowledge-mapping-review-list">${review.suggested.slice(0, 4).map((item, index) => `<article><strong>${escapeHtml(item.topic.title)}</strong><small>${escapeHtml(item.topic.subject)} · ${escapeHtml(item.conceptKeys.map((key) => item.candidates.find((candidate) => candidate.conceptKey === key)?.title || key).join(" + "))}</small><span><button class="text-action" type="button" data-knowledge-mapping-decision="confirm" data-knowledge-mapping-index="${index}">Confirmar</button><button class="text-action danger" type="button" data-knowledge-mapping-decision="reject" data-knowledge-mapping-index="${index}">Não corresponde</button></span></article>`).join("")}</div></details>`;
+}
+
 function knowledgeBaseCloudIsAvailable() {
   return Boolean(window.authGate?.isAuthenticated?.() && window.loadCloudKnowledgeBase && window.saveCloudKnowledgeBase);
 }
@@ -12782,7 +12808,10 @@ function knowledgeBaseStructureSignature(base = {}) {
     schemaVersion: base.schemaVersion,
     concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
     evidence: (base.evidence || []).map((item) => [item.id, item.canonicalKey, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
-    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.originalSubject, item.originalTopic, item.canonicalKey]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.topicId, item.originalSubject, item.originalTopic, ...(item.conceptKeys || [item.canonicalKey || ""]), item.status, item.basis]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    aliases: (base.aliases || []).map((item) => [item.aliasNormalized, item.conceptKey, item.subjectContext]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    mappingRules: (base.mappingRules || []).map((item) => [item.normalizedTargetTitle, item.targetSubjectContext, ...(item.conceptKeys || [])]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    mappingRejections: (base.mappingRejections || []).map((item) => [item.topicIdentity, ...(item.conceptKeys || [])]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
   });
 }
 
@@ -12800,6 +12829,9 @@ function mergeKnowledgeBases(...bases) {
     concepts: usable.flatMap((base) => base.concepts || []),
     evidence: usable.flatMap((base) => base.evidence || []),
     topicMappings: usable.flatMap((base) => base.topicMappings || []),
+    aliases: usable.flatMap((base) => base.aliases || []),
+    mappingRules: usable.flatMap((base) => base.mappingRules || []),
+    mappingRejections: usable.flatMap((base) => base.mappingRejections || []),
   };
   return window.KnowledgeBase?.buildKnowledgeBase ? window.KnowledgeBase.buildKnowledgeBase(merged, []) : merged;
 }
@@ -12873,6 +12905,7 @@ async function bootstrapKnowledgeBase() {
     const next = window.KnowledgeBase.buildKnowledgeBase(base, sources);
     knowledgeBaseState = { ...next, bootstrap: { sourceKey, failures, completedAt: new Date().toISOString() } };
     saveLocalKnowledgeBase(knowledgeBaseState);
+    if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();
     if (knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState) && knowledgeBaseCloudIsAvailable()) {
       try {
         const saved = await window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion });
@@ -12898,6 +12931,18 @@ window.KnowledgeBaseStore = {
   refresh: bootstrapKnowledgeBase,
   inspect: () => window.KnowledgeBase?.inspectKnowledgeBase(knowledgeBaseState || readLocalKnowledgeBase() || {}),
   inspectConcept: (concept) => window.KnowledgeBase?.inspectConcept(knowledgeBaseState || readLocalKnowledgeBase() || {}, concept),
+  suggestForTopic: (topic) => window.KnowledgeBase?.mapTopic(knowledgeBaseState || readLocalKnowledgeBase() || {}, topic),
+  decideMapping: (mapping, decision) => {
+    const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
+    knowledgeBaseState = window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current;
+    saveLocalKnowledgeBase(knowledgeBaseState);
+    if (knowledgeBaseCloudIsAvailable()) {
+      void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion }).then((saved) => {
+        knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
+      }).catch(() => {});
+    }
+    return knowledgeBaseState;
+  },
 };
 
 function cancelScheduledCloudCacheWrite() {
@@ -16107,6 +16152,21 @@ els.initialDiagnosisList?.addEventListener("change", (event) => {
   scheduleAutoSave();
 });
 els.initialDiagnosisList?.addEventListener("click", (event) => {
+  const openMappings = event.target.closest("[data-open-knowledge-mappings]");
+  if (openMappings) {
+    openMappings.closest("details")?.setAttribute("open", "");
+    return;
+  }
+  const mappingDecision = event.target.closest("[data-knowledge-mapping-decision]");
+  if (mappingDecision) {
+    const index = Number(mappingDecision.dataset.knowledgeMappingIndex);
+    const item = knowledgeMappingReviewCache[index];
+    if (item) {
+      window.KnowledgeBaseStore?.decideMapping(item, mappingDecision.dataset.knowledgeMappingDecision);
+      renderInitialDiagnosis();
+    }
+    return;
+  }
   const button = event.target.closest("[data-toggle-history-subject]");
   if (!button) return;
   const details = els.initialDiagnosisList.querySelector(`#history-inheritance-${CSS.escape(button.dataset.toggleHistorySubject)}`);

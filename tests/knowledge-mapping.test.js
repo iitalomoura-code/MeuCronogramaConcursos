@@ -1,0 +1,65 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const mapping = require("../js/knowledge-mapping.js");
+const knowledge = require("../js/knowledge-base.js");
+
+function baseWithConcepts(items) {
+  return knowledge.migrateKnowledgeMappings({ schemaVersion: 1, concepts: items.map((title) => ({ canonicalKey: mapping.normalize(title), canonicalTitle: title })), evidence: [], topicMappings: [] });
+}
+function evidence(base, title, subject, details = "") {
+  base.evidence.push({ id: `e-${base.evidence.length}`, canonicalKey: mapping.normalize(title), canonicalTitle: title, originalTopic: title, originalDetails: details, originalSubject: subject, questions: 10, correctAnswers: 8, studiedMinutes: 30 });
+  return knowledge.migrateKnowledgeMappings(base);
+}
+
+let base = baseWithConcepts(["Atos Administrativos"]);
+base = evidence(base, "Atos Administrativos", "ADMINISTRAÇÃO GERAL E PÚBLICA");
+let result = mapping.matchTopicToConcepts({ planId: "new", materia: "DIREITO ADMINISTRATIVO", assunto: "Atos Administrativos" }, base);
+assert.deepEqual(result.conceptKeys, ["atos administrativos"]);
+assert.equal(result.status, "auto-confirmed");
+assert.equal(result.matchBasis, "canonical-title-exact");
+
+base = baseWithConcepts(["Contratos Administrativos", "Administração Pública"]);
+base = evidence(base, "Contratos Administrativos", "Direito Administrativo");
+base = evidence(base, "Administração Pública", "Direito Administrativo");
+assert.equal(mapping.matchTopicToConcepts({ materia: "Direito Administrativo", assunto: "Atos Administrativos" }, base).conceptKeys.length, 0);
+assert.equal(mapping.matchTopicToConcepts({ materia: "Direito Tributário", assunto: "Administração Tributária" }, base).conceptKeys.length, 0);
+
+base = baseWithConcepts(["Proposições e Conectivos", "Equivalências e Implicações Lógicas"]);
+base = evidence(base, "Proposições e Conectivos", "RLM", "proposições conectivos negação conjunção disjunção");
+base = evidence(base, "Equivalências e Implicações Lógicas", "RLM", "equivalências implicações equivalência");
+result = mapping.matchTopicToConcepts({ materia: "Raciocínio Lógico-Matemático", assunto: "Lógica Proposicional", descricao: "proposições conectivos equivalências quantificadores predicados" }, base);
+assert.equal(result.status, "suggested");
+assert.deepEqual(result.conceptKeys, ["proposicoes e conectivos", "equivalencias e implicacoes logicas"]);
+assert.ok(result.coverage > 0 && result.coverage < 1);
+
+base = baseWithConcepts(["Crase", "Pontuação"]);
+base = evidence(base, "Crase", "Língua Portuguesa");
+base = evidence(base, "Pontuação", "Língua Portuguesa");
+result = mapping.matchTopicToConcepts({ materia: "Língua Portuguesa", assunto: "Crase e Pontuação" }, base);
+assert.equal(result.status, "suggested");
+assert.deepEqual(result.conceptKeys, ["crase", "pontuacao"]);
+
+base = baseWithConcepts(["Gestão de Processos"]);
+base = evidence(base, "Gestão de Processos", "Administração", "processos organizacionais");
+result = mapping.matchTopicToConcepts({ materia: "Administração", assunto: "Gestão de Processos e BPM" }, base);
+assert.equal(result.status, "suggested");
+assert.equal(result.conceptKeys.length, 1);
+
+const originalEvidenceCount = base.evidence.length;
+const confirmed = mapping.applyMappingDecision(base, result, "confirm", "2026-09-11T00:00:00.000Z");
+assert.equal(confirmed.topicMappings.at(-1).status, "user-confirmed");
+assert.equal(confirmed.mappingRules.length, 1);
+assert.equal(confirmed.evidence.length, originalEvidenceCount);
+assert.equal(mapping.matchTopicToConcepts({ materia: "Administração", assunto: "Gestão de Processos e BPM" }, confirmed).status, "user-confirmed");
+
+const rejected = mapping.applyMappingDecision(base, result, "reject", "2026-09-11T00:00:00.000Z");
+assert.equal(rejected.mappingRejections.length, 1);
+assert.equal(mapping.matchTopicToConcepts({ materia: "Administração", assunto: "Gestão de Processos e BPM" }, rejected).conceptKeys.length, 0);
+
+const migrated = knowledge.migrateKnowledgeMappings({ schemaVersion: 1, concepts: [{ canonicalKey: "atos administrativos", canonicalTitle: "Atos Administrativos" }], evidence: [{ id: "e1", canonicalKey: "atos administrativos" }], topicMappings: [{ planId: "p", originalTopic: "Atos Administrativos", canonicalKey: "atos administrativos" }] });
+assert.equal(migrated.schemaVersion, 2);
+assert.deepEqual(migrated.topicMappings[0].conceptKeys, ["atos administrativos"]);
+assert.equal(migrated.evidence.length, 1);
+
+console.log("OK - matching conceitual determinístico, composição, decisões persistentes e migração v1/v2.");

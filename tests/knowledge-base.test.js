@@ -37,7 +37,7 @@ const planTwo = source("plan-b", "TCE-PB", [
 const original = JSON.stringify([planOne, planTwo]);
 const base = knowledge.buildKnowledgeBase({}, [planOne, planTwo]);
 
-assert.equal(base.schemaVersion, 1);
+assert.equal(base.schemaVersion, 2);
 assert.equal(base.concepts.length, 1, "Mesmo título canônico em matérias diferentes deve formar um conceito único.");
 assert.equal(base.concepts[0].domain, "", "A matéria do edital não pode virar domínio conceitual permanente.");
 assert.equal(base.evidence.length, 2, "Sessões de planos diferentes são evidências distintas.");
@@ -103,7 +103,7 @@ const incremental = knowledge.buildKnowledgeBase(once, [source("plan-a", "TCE-PE
 assert.equal(incremental.evidence.length, 3, "Uma nova sessão deve entrar sem reimportar as anteriores.");
 
 const inspection = knowledge.inspectKnowledgeBase(base);
-assert.deepEqual(inspection, { schemaVersion: 1, concepts: 1, evidence: 2, mappings: 2, sourcePlans: 2, warnings: 0 });
+assert.deepEqual(inspection, { schemaVersion: 2, concepts: 1, evidence: 2, mappings: 2, sourcePlans: 2, warnings: 0 });
 const conceptInspection = knowledge.inspectConcept(base, "Atos Administrativos");
 assert.equal(conceptInspection.evidence.length, 2);
 assert.equal(conceptInspection.mappings.length, 2);
