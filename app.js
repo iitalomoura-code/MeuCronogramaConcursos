@@ -4696,6 +4696,7 @@ function historyInheritanceSummaryForSubject(subject = {}) {
     contact: topics.filter((item) => item.inheritance.level === "contact").length,
     sourceNames,
     profileMismatch: topics.some((item) => item.inheritance.profileMismatch),
+    knowledgeBaseTopics: topics.filter((item) => item.inheritance.knowledgeBase).length,
     topics,
   };
 }
@@ -4707,7 +4708,9 @@ function historyInheritanceTopicDetailMarkup(item = {}) {
   const accuracy = Number.isFinite(metrics.accuracy) ? `${Math.round(metrics.accuracy * 100)}% de acerto anterior` : "sem percentual anterior consolidado";
   const contact = Number.isFinite(metrics.daysSinceContact) ? `último contato há ${metrics.daysSinceContact} dias` : "data anterior não informada";
   const match = inheritance.matchConfidence === "high" ? "Correspondência alta" : inheritance.matchConfidence === "medium" ? "Correspondência média" : "Correspondência compatível";
-  const origin = inheritance.origin === "mixed" ? "Histórico anterior + desempenho atual." : "Ainda não confirmado neste planejamento.";
+  const origin = inheritance.knowledgeBase
+    ? "A Base Permanente é uma referência anterior; o desempenho atual será confirmado neste planejamento."
+    : inheritance.origin === "mixed" ? "Histórico anterior + desempenho atual." : "Ainda não confirmado neste planejamento.";
   const additionalSources = [...new Set(otherSources.map((source) => source?.sourceName).filter(Boolean))];
   const sourceMarkup = primarySource.sourceName
     ? `<span>Principal: ${escapeHtml(primarySource.sourceName)}</span>${additionalSources.length ? `<small>Também encontrado em: ${additionalSources.map(escapeHtml).join(", ")}</small>` : ""}`
@@ -4721,23 +4724,42 @@ function historyInheritanceSubjectMarkup(summary = {}, index = 0) {
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}`).join(" · ");
   const detailId = `history-inheritance-${index}`;
   const sourceLabel = summary.sourceNames.length === 1 ? `Principal fonte: ${summary.sourceNames[0]}` : `Histórico encontrado em ${summary.sourceNames.length} planejamentos`;
-  return `<div class="history-inheritance-summary"><strong>Histórico anterior encontrado</strong><span>${summary.matchedTopics} de ${summary.totalTopics} temas com evidência anterior${breakdown ? ` · ${breakdown}` : ""}</span><small>${escapeHtml(sourceLabel)}</small><button class="text-action" type="button" data-toggle-history-subject="${index}" aria-expanded="false" aria-controls="${detailId}">Ver temas reconhecidos</button><div id="${detailId}" class="history-inheritance-details" hidden><p>Este histórico é uma referência inicial. O nível atual será confirmado conforme você registrar novas questões neste planejamento.</p><ul>${summary.topics.map(historyInheritanceTopicDetailMarkup).join("")}</ul></div>${summary.profileMismatch ? `<small class="history-inheritance-mismatch">Seu histórico anterior indica contato com alguns temas desta matéria. Vamos manter sua avaliação e confirmar essa diferença com questões.</small>` : ""}</div>`;
+  const heading = summary.knowledgeBaseTopics ? "Base anterior reconhecida" : "Histórico anterior encontrado";
+  return `<div class="history-inheritance-summary"><strong>${heading}</strong><span>${summary.matchedTopics} de ${summary.totalTopics} temas com evidência anterior${breakdown ? ` · ${breakdown}` : ""}</span><small>${escapeHtml(sourceLabel)}</small><button class="text-action" type="button" data-toggle-history-subject="${index}" aria-expanded="false" aria-controls="${detailId}">Ver temas reconhecidos</button><div id="${detailId}" class="history-inheritance-details" hidden><p>Este histórico é uma referência inicial. O nível atual será confirmado conforme você registrar novas questões neste planejamento.</p><ul>${summary.topics.map(historyInheritanceTopicDetailMarkup).join("")}</ul></div>${summary.profileMismatch ? `<small class="history-inheritance-mismatch">Seu histórico anterior indica contato com alguns temas desta matéria. Vamos manter sua avaliação e confirmar essa diferença com questões.</small>` : ""}</div>`;
 }
 
-function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
+function legacyHistoryInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
   const engine = window.HistoryInheritance;
   if (!engine?.derive || !materia || !(titulo || assunto)) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
   const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
   const profile = initialDiagnosisInfluence(materia, assunto, subarea);
-  const signature = [materia, titulo, assunto, descricao, JSON.stringify(conteudosOriginais || []), subarea, historyInheritanceSourcesKey, historyInheritanceSources.length, evidence.questions, evidence.sessions, evidence.hours, profile.level]
-    .map((value) => normalizeForMatch(String(value ?? ""))).join("|");
-  if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
-  const inherited = engine.derive({
+  return engine.derive({
     target: { materia, titulo, assunto, descricao, conteudosOriginais, subarea },
     sources: historyInheritanceSources,
     currentEvidence: evidence,
     initialProfile: profile,
   });
+}
+
+function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
+  const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
+  const profile = initialDiagnosisInfluence(materia, assunto, subarea);
+  const knowledgeSignature = knowledgeBaseState && typeof knowledgeBaseStructureSignature === "function"
+    ? knowledgeBaseStructureSignature(knowledgeBaseState)
+    : "";
+  const signature = [materia, titulo, assunto, descricao, JSON.stringify(conteudosOriginais || []), subarea, state.currentPlanId, historyInheritanceSourcesKey, historyInheritanceSources.length, knowledgeSignature, evidence.questions, evidence.sessions, evidence.hours, profile.level]
+    .map((value) => normalizeForMatch(String(value ?? ""))).join("|");
+  if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
+  const legacy = legacyHistoryInheritanceForTarget({ materia, titulo, assunto, descricao, conteudosOriginais, subarea });
+  const inherited = window.KnowledgeDiagnosis?.derive?.({
+    base: knowledgeBaseState,
+    topic: { planId: state.currentPlanId, materia, titulo, assunto, descricao, conteudosOriginais, subarea },
+    currentPlanId: state.currentPlanId,
+    currentEvidence: evidence,
+    initialProfile: profile,
+    legacyInheritance: legacy,
+    now: Date.now(),
+  }) || legacy;
   historyInheritanceCache.set(signature, inherited);
   return inherited;
 }
@@ -12984,11 +13006,13 @@ function knowledgeBaseCloudIsAvailable() {
 function knowledgeBaseStructureSignature(base = {}) {
   return JSON.stringify({
     schemaVersion: base.schemaVersion,
+    updatedAt: base.updatedAt,
+    version: base.version,
     concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
-    evidence: (base.evidence || []).map((item) => [item.id, item.canonicalKey, item.originalDetails, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
-    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.topicId, item.originalSubject, item.originalTopic, ...(item.conceptKeys || [item.canonicalKey || ""]), item.status, item.basis]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
-    aliases: (base.aliases || []).map((item) => [item.aliasNormalized, item.conceptKey, item.subjectContext]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
-    mappingRules: (base.mappingRules || []).map((item) => [item.normalizedTargetTitle, item.targetSubjectContext, ...(item.conceptKeys || [])]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    evidence: (base.evidence || []).map((item) => [item.id, item.sourcePlanId, item.sessionId, item.canonicalKey, item.originalDetails, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.observedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.topicId, item.topicIdentity, item.originalSubject, item.originalTopic, ...(item.conceptKeys || [item.canonicalKey || ""]), item.status, item.basis, item.relationship, item.matchBasis, item.coverage, item.confidence]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    aliases: (base.aliases || []).map((item) => [item.aliasNormalized, item.conceptKey, item.subjectContext, item.basis]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
+    mappingRules: (base.mappingRules || []).map((item) => [item.normalizedTargetTitle, item.targetSubjectContext, ...(item.conceptKeys || []), item.basis, item.relationship, item.matchBasis, item.coverage, item.confidence]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
     mappingRejections: (base.mappingRejections || []).map((item) => [item.topicIdentity, ...(item.conceptKeys || [])]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
   });
 }
@@ -13083,6 +13107,7 @@ async function bootstrapKnowledgeBase() {
     const next = window.KnowledgeBase.buildKnowledgeBase(base, sources);
     knowledgeBaseState = { ...next, bootstrap: { sourceKey, failures, completedAt: new Date().toISOString() } };
     saveLocalKnowledgeBase(knowledgeBaseState);
+    invalidateDerivedStudyCaches();
     if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();
     if (knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState) && knowledgeBaseCloudIsAvailable()) {
       try {
@@ -13107,6 +13132,7 @@ function scheduleKnowledgeBaseBootstrap() {
 
 function commitKnowledgeBaseDecision(next) {
   knowledgeBaseState = window.KnowledgeBase?.migrateKnowledgeMappings?.(next) || next;
+  invalidateDerivedStudyCaches();
   knowledgeMappingReviewCacheKey = "";
   knowledgeMappingReviewCacheValue = null;
   saveLocalKnowledgeBase(knowledgeBaseState);
@@ -14110,6 +14136,7 @@ async function restoreKnowledgeBaseFromBackup(imported = {}) {
     } catch {}
   }
   knowledgeBaseState = window.KnowledgeBase.buildKnowledgeBase(mergeKnowledgeBases(cloud, local, imported), []);
+  invalidateDerivedStudyCaches();
   saveLocalKnowledgeBase(knowledgeBaseState);
   if (knowledgeBaseCloudIsAvailable() && knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState)) {
     try {
