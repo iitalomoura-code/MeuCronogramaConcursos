@@ -2,6 +2,7 @@
 
 (function initAIStrategicSnapshot(global) {
   const Confidence = global.DiagnosticConfidence || (typeof require === "function" ? require("./diagnostic-confidence.js") : null);
+  const Readiness = global.Readiness || (typeof require === "function" ? require("./readiness.js") : null);
   const DAY = 24 * 60 * 60 * 1000;
   const VERSION = 1;
   const text = (value = "") => String(value ?? "").trim();
@@ -461,6 +462,11 @@
       "Treat trend as a trend only when the local engine has already classified it as such.",
       "If an AI recommendation diverges from strategic.rank, use relationToEngine=override-suggestion and explain the reason.",
       "Temporal comparisons must respect comparison.basis; do not describe a previous strategic snapshot as the previous weekly cycle unless temporallyAligned is true.",
+      "Readiness is a local deterministic interpretation of preparation, not a probability of passing.",
+      "Do not recalculate readiness.",
+      "Unknown readiness means insufficient current evidence.",
+      "Ready-maintenance means prepared but due for preservation, not deficient.",
+      "Blocking topic is a strategic risk, not proof of failure.",
       "Separate fact, interpretation, and recommendation in any future response.",
     ],
   });
@@ -497,6 +503,11 @@
     const subjects = rawSubjects.length
       ? rawSubjects.map((subject) => normalizeSubject(subject, topics, now)).filter((subject) => subject.name)
       : [...new Set(topics.map((topic) => topic.subject))].sort().map((name) => normalizeSubject({ name }, topics, now));
+    const readinessModel = Readiness?.evaluateExam?.({ subjects, topics, now: input.now }) || null;
+    const readinessTopicsByKey = new Map((readinessModel?.topics || []).map((item) => [topicIdentity(item), item]));
+    const readinessSubjectsByName = new Map((readinessModel?.subjects || []).map((item) => [item.subject, item]));
+    const topicsWithReadiness = topics.map((topic) => ({ ...topic, readiness: readinessTopicsByKey.get(topicIdentity(topic)) || null }));
+    const subjectsWithReadiness = subjects.map((subject) => ({ ...subject, readiness: readinessSubjectsByName.get(subject.name) || null }));
     const weeklySource = input.weeklyCycle || input.cycle || {};
     const weeklyCycle = normalizeCycle(weeklySource, input);
     const plannedDistribution = distribution(input.plannedDistribution || input.plannedBlocks || weeklySource.plannedBlocks || [], "planned");
@@ -530,8 +541,8 @@
         role: text(input.exam?.role || input.role || input.cargo) || null,
         board: text(input.exam?.board || input.banca) || null,
       },
-      subjects,
-      topics,
+      subjects: subjectsWithReadiness,
+      topics: topicsWithReadiness,
       weeklyCycle: {
         ...weeklyCycle,
         plannedDistribution,
@@ -552,7 +563,16 @@
         meaningfulChanges: hasPreviousStrategicState ? meaningfulChanges(topics, previousTopics) : [],
       },
       uncertainties,
-      readiness: {},
+      readiness: readinessModel ? {
+        version: Readiness.VERSION || 1,
+        exam: {
+          ...readinessModel,
+          subjects: undefined,
+          topics: undefined,
+        },
+        subjects: readinessModel.subjects || [],
+        topics: readinessModel.topics || [],
+      } : { version: 1, exam: null, subjects: [], topics: [] },
       outputSchema: AI_OUTPUT_SCHEMA,
     };
     const signaturePayload = { ...snapshot, generatedAt: undefined, signature: undefined };

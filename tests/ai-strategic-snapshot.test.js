@@ -74,7 +74,11 @@ const snapshot = snapshotEngine.buildStrategicSnapshot(input);
 
 assert.deepEqual(input, before, "Construir o snapshot não pode mutar a entrada.");
 assert.equal(snapshot.aiReadContractVersion, 1);
-assert.deepEqual(snapshot.readiness, {}, "Readiness deve permanecer extensível e sem score inventado.");
+assert.ok(snapshot.readiness.exam, "Readiness deve ser exposto no contrato estratégico.");
+assert.ok(["developing", "fragile"].includes(snapshot.readiness.exam.state), "Risco ou incerteza relevante deve impedir uma leitura global de alta prontidão.");
+assert.equal(snapshot.readiness.topics.length, snapshot.topics.length);
+assert.equal(snapshot.readiness.subjects.length, snapshot.subjects.length);
+assert.equal(snapshot.topics[0].readiness.state !== undefined, true);
 assert.equal(snapshot.outputSchema.priorities[0].engineRank, null);
 assert.equal(snapshot.outputSchema.priorities[0].aiSuggestedImportance, null);
 assert.deepEqual(snapshot.evidenceAuthority.order, ["current factual evidence", "permanent knowledge base", "legacy history fallback", "initial self-assessment"]);
