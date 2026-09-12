@@ -51,6 +51,9 @@ assert.ok(!index.slice(advisorModalPosition, index.indexOf("<script", advisorMod
 assert.ok(app.includes('document.body.classList.add("strategic-advisor-open")') && app.includes('document.body.classList.remove("strategic-advisor-open")'), "A visão completa deve controlar o scroll global enquanto estiver aberta.");
 assert.ok(index.includes("js/strategic-advisor-history.js") && app.includes("strategicAdvisorSnapshots") && app.includes("data-register-strategic-advisor"), "Marcos estratégicos devem usar a persistência do planejamento e uma ação explícita.");
 assert.ok(app.includes("modalPriorities") && app.includes("independentPriorityChanges"), "O modal deve deduplicar matérias mistas e exibir mudanças independentes de prioridade.");
+assert.ok(app.includes("strategicAdvisorExecutiveMarkup") && app.includes("Ver análise detalhada"), "O modal deve priorizar uma leitura executiva e manter os detalhes recolhidos.");
+assert.ok(app.includes("Maior oportunidade") && app.includes("Monitorar") && app.includes("Manutenção"), "A visão rápida deve apresentar cartões apenas para categorias disponíveis.");
+assert.ok(app.indexOf('data-ai-coach-mode="progress-check"') < app.indexOf('data-ai-coach-mode="cycle-review"'), "A evolução deve ser a ação principal do AI Coach.");
 
 const mixedSubject = advisor.build({ topics: [
   topic("AFO", "Receita Pública", { level: "deficiency", accuracy: .55 }, { score: .8 }),

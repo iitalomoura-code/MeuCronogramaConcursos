@@ -5562,15 +5562,18 @@ function aiCoachReviewModeLabel(mode) {
   return mode === "cycle-review" ? "Ciclo" : mode === "question" ? "Pergunta" : "Progresso";
 }
 
-function aiCoachRecordReview(record = {}) {
+function aiCoachRecordReview(record) {
+  if (!record) return {};
   return window.AICoachMemory?.reviewBody?.(record) || record.review_json || {};
 }
 
-function aiCoachRecordCheckpoint(record = {}) {
+function aiCoachRecordCheckpoint(record) {
+  if (!record) return null;
   return window.AICoachMemory?.checkpointBody?.(record) || record.checkpoint_json || null;
 }
 
-function aiCoachRecordDate(record = {}) {
+function aiCoachRecordDate(record) {
+  if (!record) return "";
   return window.AICoachMemory?.createdAt?.(record) || record.created_at || "";
 }
 
@@ -5597,7 +5600,7 @@ function aiCoachListMarkup(items = [], { limit = 6 } = {}) {
 }
 
 function aiCoachDeltaMarkup(delta = null) {
-  if (!delta) return `<p class="ai-coach-first-note">Esta será sua primeira análise estratégica com o Coach.</p>`;
+  if (!delta) return `<p class="ai-coach-first-note">Você ainda não fez uma análise com o Coach. Faça uma leitura inicial para criar seu primeiro ponto de comparação.</p>`;
   const metric = (label, value, suffix = "") => value === null || value === undefined ? "" : `<div><strong>${value > 0 ? "+" : ""}${escapeHtml(value)}${suffix}</strong><span>${label}</span></div>`;
   return `<div class="ai-coach-delta-facts"><span>Desde a última análise</span><div class="ai-coach-delta-grid">${metric("sessões", delta.newSessions)}${metric("questões", delta.newQuestions)}${metric("acertos", delta.newCorrect)}${metric("minutos de estudo", delta.studyMinutes)}${delta.readinessChanges?.length ? metric("mudanças de prontidão", delta.readinessChanges.length) : ""}${delta.confidenceChanges?.length ? metric("mudanças de confiança", delta.confidenceChanges.length) : ""}</div></div>`;
 }
@@ -5634,7 +5637,7 @@ function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
     : last && deltaLoading
       ? `<p class="ai-coach-context-loading" role="status">Atualizando o contexto desde a última análise...</p>`
       : aiCoachDeltaMarkup(delta);
-  return `<section class="ai-coach-section" data-ai-coach-content aria-labelledby="aiCoachTitle"><div class="ai-coach-heading"><div><span class="section-kicker">AI Coach</span><h4 id="aiCoachTitle">Orientação estratégica sob demanda</h4><p ${aiCoachUIState.busy ? 'role="status" aria-live="polite"' : aiCoachUIState.lastError ? 'role="alert"' : ""}>${escapeHtml(status)}</p></div><i data-lucide="sparkles" aria-hidden="true"></i></div>${content}<div class="ai-coach-actions"><button class="primary-button compact-button" type="button" data-ai-coach-mode="cycle-review" ${cycleDisabled ? "disabled" : ""}>Analisar ciclo</button><button class="ghost-button compact-button" type="button" data-ai-coach-mode="progress-check" ${aiCoachUIState.busy ? "disabled" : ""}>Ver minha evolução</button><button class="ghost-button compact-button" type="button" data-ai-coach-focus-question ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar ao Coach</button></div><div class="ai-coach-question-box" hidden><label for="aiCoachQuestion">Pergunte ao Coach sobre sua estratégia</label><textarea id="aiCoachQuestion" maxlength="2000" rows="3" placeholder="Ex.: estou gastando tempo demais em Português?"></textarea><button class="primary-button compact-button" type="button" data-ai-coach-mode="question" ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar</button></div>${historyMarkup}</section>`;
+  return `<section class="ai-coach-section" data-ai-coach-content aria-labelledby="aiCoachTitle"><div class="ai-coach-heading"><div><span class="section-kicker">AI Coach</span><h4 id="aiCoachTitle">Converse sobre sua estratégia de estudo.</h4><p ${aiCoachUIState.busy ? 'role="status" aria-live="polite"' : aiCoachUIState.lastError ? 'role="alert"' : ""}>${escapeHtml(status)}</p></div><i data-lucide="sparkles" aria-hidden="true"></i></div>${content}<div class="ai-coach-actions"><button class="primary-button compact-button" type="button" data-ai-coach-mode="progress-check" ${aiCoachUIState.busy ? "disabled" : ""}>Ver minha evolução</button><button class="ghost-button compact-button" type="button" data-ai-coach-mode="cycle-review" ${cycleDisabled ? "disabled" : ""}>Analisar ciclo</button><button class="ghost-button compact-button" type="button" data-ai-coach-focus-question ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar ao Coach</button></div><div class="ai-coach-question-box" hidden><label for="aiCoachQuestion">Pergunte ao Coach sobre sua estratégia</label><textarea id="aiCoachQuestion" maxlength="2000" rows="3" placeholder="Ex.: estou gastando tempo demais em Português?"></textarea><button class="primary-button compact-button" type="button" data-ai-coach-mode="question" ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar</button></div>${historyMarkup}</section>`;
 }
 
 function renderAICoachSection(options = {}) {
@@ -5651,6 +5654,12 @@ function scrollAICoachResultIntoView() {
   if (!dialog || !result) return;
   const targetTop = dialog.scrollTop + result.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 16;
   dialog.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+}
+
+function aiCoachErrorMessage(error) {
+  console.warn("Falha ao consultar o AI Coach.", error);
+  const message = error?.code ? window.AIStrategicCoachClient?.translatedMessage?.(error.code) : "";
+  return message || "Não foi possível concluir a análise agora.";
 }
 
 async function loadAICoachHistory() {
@@ -5728,7 +5737,7 @@ async function requestAICoachAnalysis(mode, question = "") {
       console.warn("Falha ao salvar análise do Coach.", saveError);
     }
   } catch (error) {
-    aiCoachUIState.lastError = error?.message || "Não foi possível concluir a análise estratégica.";
+    aiCoachUIState.lastError = aiCoachErrorMessage(error);
   } finally {
     aiCoachUIState.busy = false;
     aiCoachUIState.busyLabel = "";
@@ -5830,12 +5839,27 @@ function strategicAdvisorShellMarkup() {
   return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle" aria-busy="true"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>Carregando sua análise estratégica...</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body"><div class="strategic-advisor-loading" role="status"><i data-lucide="loader-circle" aria-hidden="true"></i><strong>Carregando sua análise estratégica...</strong><span>Organizando prioridades, avanços e pontos de atenção.</span></div></div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button></footer></section>`;
 }
 
+function strategicAdvisorExecutiveMarkup(advisor = {}) {
+  const summary = (advisor.summary || []).slice(0, 2).join(" ");
+  const items = (values = []) => values.slice(0, 3).map((item) => `<li>${escapeHtml(item.title)}</li>`).join("");
+  const maintenance = [...(advisor.maintain || []), ...(advisor.positiveSignals || [])]
+    .filter((item, index, values) => values.findIndex((candidate) => candidate.title === item.title) === index)
+    .slice(0, 3);
+  const cards = [
+    advisor.priorities?.[0] ? `<article class="strategic-advisor-quick-card"><span>Maior oportunidade</span><strong>${escapeHtml(advisor.priorities[0].title)}</strong><p>${escapeHtml(advisor.priorities[0].explanation)}</p></article>` : "",
+    advisor.watch?.length ? `<article class="strategic-advisor-quick-card"><span>Monitorar</span><ul>${items(advisor.watch)}</ul></article>` : "",
+    maintenance.length ? `<article class="strategic-advisor-quick-card"><span>Manutenção</span><ul>${items(maintenance)}</ul></article>` : "",
+  ].filter(Boolean).join("");
+  return `<section class="strategic-advisor-executive"><div><span class="section-kicker">Orientador determinístico</span><h4>Leitura executiva</h4><p>${escapeHtml(summary || "A leitura estratégica será enriquecida conforme você registra estudo e questões.")}</p></div>${cards ? `<div class="strategic-advisor-quick-grid">${cards}</div>` : ""}</section>`;
+}
+
 function strategicAdvisorDialogMarkup({ advisor, history, evolutionMarkup, coachMarkup }) {
   const section = (title, items) => items.length ? `<section><h4>${title}</h4><ul>${strategicAdvisorItems(items)}</ul></section>` : "";
   const mixedSubjectNames = new Set((advisor.mixedSubjects || []).map((item) => item.materia));
   const modalPriorities = (advisor.priorities || []).filter((item) => !mixedSubjectNames.has(item.materia));
   const comparison = history.comparison || {};
-  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>${escapeHtml(advisor.summary.join(" "))}</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${evolutionMarkup}${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", modalPriorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Mudanças de prioridade", comparison.independentPriorityChanges || [])}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}${coachMarkup}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
+  const details = `${evolutionMarkup}${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", modalPriorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Mudanças de prioridade", comparison.independentPriorityChanges || [])}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}`;
+  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${strategicAdvisorExecutiveMarkup(advisor)}${coachMarkup}<details class="strategic-advisor-details"><summary>Ver análise detalhada</summary><div class="strategic-advisor-details-content">${details}</div></details></div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
 }
 
 function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {

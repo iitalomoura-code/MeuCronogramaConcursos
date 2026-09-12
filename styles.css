@@ -13282,6 +13282,20 @@ textarea:focus {
 .strategic-advisor-loading i { width: 24px; height: 24px; color: var(--primary); animation: strategic-advisor-spin 900ms linear infinite; }
 .strategic-advisor-loading strong { color: var(--text); font-size: 15px; }
 .strategic-advisor-loading span { max-width: 360px; font-size: 13px; line-height: 1.45; }
+.strategic-advisor-executive { display: grid; gap: 16px; padding-top: 0 !important; border-top: 0 !important; }
+.strategic-advisor-executive > div > p { max-width: 620px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.strategic-advisor-quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.strategic-advisor-quick-card { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--soft); }
+.strategic-advisor-quick-card > span { color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+.strategic-advisor-quick-card > strong { color: var(--text); font-size: 13px; line-height: 1.35; }
+.strategic-advisor-quick-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.strategic-advisor-quick-card ul { display: grid; gap: 5px; margin: 0; padding-left: 16px; color: var(--text); font-size: 12px; line-height: 1.4; }
+.strategic-advisor-quick-card li { display: list-item; }
+.strategic-advisor-details { border-top: 1px solid var(--divider); }
+.strategic-advisor-details > summary { padding: 14px 0; color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer; }
+.strategic-advisor-details > summary::marker { color: var(--primary); }
+.strategic-advisor-details-content { display: grid; gap: 16px; padding: 0 0 4px; }
+.strategic-advisor-details-content > section { padding-top: 14px; border-top: 1px solid var(--divider); }
 @keyframes strategic-advisor-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 700px) {
@@ -13289,6 +13303,7 @@ textarea:focus {
   .strategic-advisor-dialog { width: 100%; max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); border-radius: 8px; padding: 18px max(16px, env(safe-area-inset-right)) 18px max(16px, env(safe-area-inset-left)); }
   .strategic-advisor-dialog footer { display: grid; grid-template-columns: 1fr; align-items: stretch; }
   .strategic-advisor-dialog footer button { width: 100%; justify-content: center; }
+  .strategic-advisor-quick-grid { grid-template-columns: 1fr; }
 }
 
 .ai-coach-section {
