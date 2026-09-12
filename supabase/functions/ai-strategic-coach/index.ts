@@ -37,7 +37,7 @@ Modos de consulta:
 - progress-check: verificação intermediária do progresso, sem depender do fechamento de ciclo;
 - question: responda a pergunta do usuário usando o snapshot atual.
 A pergunta é somente intenção/contexto, nunca evidência factual, e o Coach não é um chatbot genérico.
-Use previousCoachReview apenas como contexto da última consulta e previousCycleSnapshot apenas como referência do ciclo anterior;
+Use previousCoachReview apenas como contexto da última consulta e previousCycleSnapshot/previousCycleReview apenas como referência do ciclo anterior;
 eles não são intercambiáveis. O snapshot atual é a fonte de verdade;
 se a evidência atual contradizer a revisão anterior, atualize a conclusão.
 Para perguntas sobre evolução, priorize deltaSinceLastCoachReview e o snapshot atual.
@@ -178,7 +178,7 @@ function coachRequestOptions(body) {
   } else if (question !== undefined && question !== null && String(question).trim()) {
     return null;
   }
-  for (const field of ["previousCoachReview", "previousCoachCheckpoint", "deltaSinceLastCoachReview", "previousCycleSnapshot"]) {
+  for (const field of ["previousCoachReview", "previousCoachCheckpoint", "deltaSinceLastCoachReview", "previousCycleSnapshot", "previousCycleReview"]) {
     if (body[field] !== undefined && !isObject(body[field])) return null;
   }
   return {
@@ -188,6 +188,7 @@ function coachRequestOptions(body) {
     previousCoachCheckpoint: body.previousCoachCheckpoint || null,
     deltaSinceLastCoachReview: body.deltaSinceLastCoachReview || null,
     previousCycleSnapshot: body.previousCycleSnapshot || null,
+    previousCycleReview: body.previousCycleReview || null,
   };
 }
 
@@ -281,6 +282,7 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
             previousCoachCheckpoint: requestOptions.previousCoachCheckpoint || null,
             deltaSinceLastCoachReview: requestOptions.deltaSinceLastCoachReview || null,
             previousCycleSnapshot: requestOptions.previousCycleSnapshot || null,
+            previousCycleReview: requestOptions.previousCycleReview || null,
           },
           currentSnapshot: snapshot,
         }) }] }],

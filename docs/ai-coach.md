@@ -93,3 +93,26 @@ supabase functions deploy ai-strategic-coach --use-api
 
 Os testes automatizados usam mocks e não consomem créditos da OpenAI. O deploy
 real depende do projeto Supabase estar vinculado e dos secrets configurados.
+
+## Fase 4.3B: memória e continuidade
+
+As análises são persistidas em `ai_coach_reviews` no Supabase, com RLS para
+leitura e inserção somente pelo usuário autenticado. Cada linha é imutável e
+guarda o modo, a pergunta original quando existir, a assinatura do snapshot,
+os metadados, o review e um checkpoint factual derivado do snapshot usado na
+chamada. O checkpoint não é um novo diagnóstico.
+
+`AICoachCheckpoint.fromSnapshot(snapshot)` reduz o contrato canônico a totais,
+matérias, tópicos e referência do ciclo. `AICoachDelta.compare(...)` somente
+compara esses valores registrados; não recalcula domínio, confiança,
+readiness ou prioridade. Sem checkpoint anterior, o delta é `null`.
+
+O Orientador oferece `Analisar ciclo`, `Ver minha evolução` e `Perguntar ao
+Coach`. A consulta de ciclo usa o review oficial de ciclo anterior quando
+disponível; as outras consultas usam o último review independentemente do
+ciclo. O histórico inicial carrega apenas os dez registros mais recentes.
+
+O snapshot atual permanece a fonte de verdade. Reviews anteriores são apenas
+contexto estratégico compacto. Se a resposta chegar mas o salvamento falhar,
+a resposta continua visível com aviso e nenhuma nova chamada é disparada
+automaticamente. O fechamento do ciclo não chama a IA sem ação explícita.

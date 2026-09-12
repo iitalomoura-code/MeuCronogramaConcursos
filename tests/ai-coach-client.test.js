@@ -102,6 +102,7 @@ test("expõe ciclo, progress-check e ask, encaminha contexto e deduplica por mod
     previousCoachCheckpoint: { snapshotSignature: "old-signature", generatedAt: "2026-09-01T00:00:00.000Z" },
     deltaSinceLastCoachReview: { newSessions: 2, newQuestions: 20 },
     previousCycleSnapshot: { signature: "previous-cycle-signature" },
+    previousCycleReview: { summary: "Revisão oficial anterior" },
   };
   try {
     await client.analyzeCycle(reanalysisSnapshot, context);
@@ -116,6 +117,7 @@ test("expõe ciclo, progress-check e ask, encaminha contexto e deduplica por mod
     assert.equal(calls[2].question, "Como estou evoluindo?");
     assert.deepEqual(calls[2].previousCoachCheckpoint, context.previousCoachCheckpoint);
     assert.deepEqual(calls[2].previousCycleSnapshot, context.previousCycleSnapshot);
+    assert.deepEqual(calls[2].previousCycleReview, context.previousCycleReview);
     assert.deepEqual(calls[2].deltaSinceLastCoachReview, context.deltaSinceLastCoachReview);
     assert.equal(calls[3].question, "O que mudou desde a última análise?");
     assert.deepEqual(reanalysisSnapshot, { aiReadContractVersion: 1, signature: { value: "progress-signature" } });

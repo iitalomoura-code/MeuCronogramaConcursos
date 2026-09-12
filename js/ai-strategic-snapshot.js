@@ -313,6 +313,10 @@
       ? Number(cycle.reserveMinutes)
       : totalCapacityMinutes - plannedMinutes;
     return {
+      cycleId: text(cycle.cycleId || cycle.id) || null,
+      startedAt: isoDate(cycle.startedAt),
+      endsAt: isoDate(cycle.endsAt),
+      closedAt: isoDate(cycle.closedAt || cycle.finalizedAt),
       weeklyHours,
       totalCapacityMinutes,
       plannedMinutes,

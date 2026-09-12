@@ -72,6 +72,7 @@
       previousCoachCheckpoint: options.previousCoachCheckpoint || null,
       deltaSinceLastCoachReview: options.deltaSinceLastCoachReview || null,
       previousCycleSnapshot: options.previousCycleSnapshot || null,
+      previousCycleReview: options.previousCycleReview || null,
     };
   }
 
@@ -103,6 +104,7 @@
           ...(options.previousCoachCheckpoint ? { previousCoachCheckpoint: options.previousCoachCheckpoint } : {}),
           ...(options.deltaSinceLastCoachReview ? { deltaSinceLastCoachReview: options.deltaSinceLastCoachReview } : {}),
           ...(options.previousCycleSnapshot ? { previousCycleSnapshot: options.previousCycleSnapshot } : {}),
+          ...(options.previousCycleReview ? { previousCycleReview: options.previousCycleReview } : {}),
           snapshot,
         }),
       });
