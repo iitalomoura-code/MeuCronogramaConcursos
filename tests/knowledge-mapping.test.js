@@ -28,7 +28,7 @@ assert.equal(mapping.matchTopicToConcepts({ materia: "Direito Tributário", assu
 base = baseWithConcepts(["Proposições e Conectivos", "Equivalências e Implicações Lógicas"]);
 base = evidence(base, "Proposições e Conectivos", "RLM", "proposições conectivos negação conjunção disjunção");
 base = evidence(base, "Equivalências e Implicações Lógicas", "RLM", "equivalências implicações equivalência");
-result = mapping.matchTopicToConcepts({ materia: "Raciocínio Lógico-Matemático", assunto: "Lógica Proposicional", descricao: "proposições conectivos equivalências quantificadores predicados" }, base);
+result = mapping.matchTopicToConcepts({ materia: "Raciocínio Lógico-Matemático", assunto: "Lógica Proposicional", descricao: "proposições conectivos equivalências implicações quantificadores predicados" }, base);
 assert.equal(result.status, "suggested");
 assert.deepEqual(result.conceptKeys, ["equivalencias e implicacoes logicas", "proposicoes e conectivos"]);
 assert.ok(result.coverage > 0 && result.coverage < 1);

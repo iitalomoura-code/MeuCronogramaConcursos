@@ -23,7 +23,7 @@ base = fixture([{ title: "Crase", subject: "Língua Portuguesa" }, { title: "Pon
 assert.equal(match(base, "Português", "Crase e Pontuação").relationship, "composite");
 
 base = fixture([{ title: "Proposições e Conectivos", subject: "RLM", details: "proposições conectivos negação conjunção" }, { title: "Equivalências e Implicações Lógicas", subject: "RLM", details: "equivalências implicações" }]);
-const rlm = match(base, "Raciocínio Lógico-Matemático", "Lógica Proposicional", "proposições conectivos equivalências quantificadores predicados");
+const rlm = match(base, "Raciocínio Lógico-Matemático", "Lógica Proposicional", "proposições conectivos equivalências implicações quantificadores predicados");
 assert.equal(rlm.status, "suggested");
 assert.equal(rlm.relationship, "composite");
 assert.ok(rlm.coverage < 1);
@@ -73,6 +73,10 @@ const administrationFalsePositives = [
   ["Delegação de Serviços Públicos", "Agentes Públicos"],
   ["Bens Públicos", "Atos Administrativos"],
   ["Uso dos Bens Públicos", "Agentes Públicos"],
+  ["Gestão de Riscos", "Planejamento Estratégico"],
+  ["Ciclo de Políticas Públicas", "OKR"],
+  ["Ciclo de Políticas Públicas", "Indicadores e Metas"],
+  ["Planejamento e Avaliação de Políticas", "Planejamento Estratégico"],
 ];
 administrationFalsePositives.forEach(([targetTitle, sourceTitle]) => {
   const result = match(fixture([{ title: sourceTitle, subject: "Administração Geral e Pública", details: sourceTitle }]), "Administração Geral e Pública", targetTitle, targetTitle);
@@ -104,5 +108,34 @@ assert.ok(mapping.topicAnchorCompatibility(
 const audit = mapping.inspectTopicMapping(fixture([{ title: "Gestão de Processos", subject: "Administração Geral", details: "processos" }]), { materia: "Administração Geral", assunto: "Gestão de Processos e BPM" });
 assert.ok(audit.candidates[0].semanticGate && audit.candidates[0].topicAnchorGate);
 assert.equal(typeof audit.candidates[0].topicAnchorGate.titleAffinity, "number");
+
+const broadDetails = fixture([
+  { title: "Bancos de Dados e SQL", subject: "TI e Dados", details: "dados analytics governança segurança big data" },
+  { title: "Segurança da Informação", subject: "TI e Dados", details: "dados analytics governança segurança big data" },
+]);
+const broadIndex = mapping.buildKnowledgeMappingIndex(broadDetails);
+const broadDescriptor = mapping.conceptDescriptor(broadDetails.concepts[0], broadDetails, broadIndex);
+assert.equal(broadIndex.detailFingerprintUsage.size, 1);
+assert.equal(broadDescriptor.trustedDetails.length, 0);
+assert.equal(broadDescriptor.ignoredBroadDetails.length, 1);
+assert.equal(match(broadDetails, "TI e Dados", "Governança de Dados", "dados analytics governança").status, "unmatched");
+assert.equal(match(broadDetails, "TI e Dados", "Programação para Dados", "dados programação").status, "unmatched");
+assert.equal(match(broadDetails, "TI e Dados", "Bancos NoSQL", "bancos nosql").status, "unmatched");
+assert.equal(match(broadDetails, "TI e Dados", "Ciclo de Vida em Ciência de Dados", "dados analytics").status, "unmatched");
+const dataMatches = [
+  ["Análise de Dados", "Noções de Análise de Dados"],
+  ["Analytics e Inteligência Artificial", "Inteligência Artificial e Aprendizado de Máquina"],
+  ["Computação em Nuvem e Big Data", "Computação em Nuvem"],
+];
+dataMatches.forEach(([targetTitle, sourceTitle]) => {
+  const result = match(fixture([{ title: sourceTitle, subject: "TI e Dados", details: sourceTitle }]), "TI e Dados", targetTitle, targetTitle);
+  assert.notEqual(result.status, "unmatched", `${targetTitle} deve preservar a correspondência de dados plausível`);
+});
+
+const localDetails = fixture([{ title: "Teoria Especial", subject: "RLM", details: "quantificadores predicados" }]);
+const localResult = match(localDetails, "RLM", "Lógica Aplicada", "quantificadores predicados equivalências");
+assert.equal(localResult.status, "suggested");
+assert.equal(localResult.candidates[0].topicAnchorGate.strongDetailEvidence, true);
+assert.equal(mapping.tokenDistinctiveness("nao-observado", "rlm-matematica", mapping.buildKnowledgeMappingIndex(localDetails), "detail"), 0);
 
 console.log("OK - precision-first semantic gate bloqueia cross-domain e preserva matches plausíveis.");

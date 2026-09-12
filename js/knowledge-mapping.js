@@ -4,7 +4,7 @@
   const HISTORY = global.HistoryInheritance || (typeof require === "function" ? require("./history-inheritance.js") : null);
   const SEMANTIC = global.KnowledgeSemanticFamily || (typeof require === "function" ? require("./knowledge-semantic-family.js") : null);
   const GENERIC_TITLES = new Set(["introducao", "aspectos gerais", "conceitos gerais", "disposicoes gerais", "generalidades", "controle"]);
-  const GENERIC_CORE_TERMS = new Set(["controle", "processo", "politica", "gestao", "sistema", "estrutura", "modelo", "estado", "medidas", "externo", "civil"]);
+  const GENERIC_CORE_TERMS = new Set(["controle", "processo", "politica", "gestao", "sistema", "estrutura", "modelo", "estado", "medidas", "externo", "civil", "dados", "bancos", "planejamento", "avaliacao"]);
   const STOP_WORDS = new Set(["a", "as", "ao", "aos", "de", "do", "dos", "da", "das", "e", "em", "na", "no", "nas", "nos", "por", "para", "com", "um", "uma", "que", "se", "sobre", "geral", "gerais", "conceito", "conceitos", "aspectos", "principios", "direito", "administracao", "administrativo", "administrativos", "administrativa", "administrativas", "publica", "publico", "publicas", "publicos"]);
 
   const text = (value = "") => String(value ?? "").trim();
@@ -37,10 +37,21 @@
     const mappings = index?.mappingsByConcept?.get(key) || (base.topicMappings || []).filter((mapping) => (mapping.conceptKeys || [mapping.canonicalKey]).map(normalize).includes(key));
     const evidence = index?.evidenceByConcept?.get(key) || (base.evidence || []).filter((item) => normalize(item.canonicalKey) === key);
     const aliases = index?.aliasesByConcept?.get(key) || (base.aliases || []).filter((alias) => normalize(alias.conceptKey) === key);
-    const historicalTitles = unique([...mappings.flatMap((mapping) => [mapping.originalTitle, mapping.originalTopic, mapping.originalDetails]), ...evidence.flatMap((item) => [item.originalTopic, item.originalDetails]), ...aliases.map((alias) => alias.aliasDisplay)].map(text));
-    const details = historicalTitles.filter((value) => normalize(value) !== key).join("; ");
+    const scoped = index?.trustedDetailsByConcept?.get(key) || [];
+    const ignoredBroadDetails = index?.broadDetailsByConcept?.get(key) || [];
+    const historicalTitles = unique([...mappings.flatMap((mapping) => [mapping.originalTitle, mapping.originalTopic]), ...evidence.map((item) => item.originalTopic), ...aliases.map((alias) => alias.aliasDisplay)].map(text));
+    const details = [...new Set(scoped.map((item) => item.value).filter((value) => normalize(value) !== key))].join("; ");
     const subjects = unique([...mappings.map((item) => item.originalSubject), ...evidence.map((item) => item.originalSubject)].map(text));
-    return { key, canonicalTitle: text(concept.canonicalTitle) || text(concept.title) || key, details, normalizedTitle: key, normalizedDetails: normalize(details), aliases, mappings, evidence, subjects: subjects.map(normalize), sourceFamilies: [...new Set(subjects.map(SEMANTIC.semanticFamilyForSubject).filter((family) => family !== "unknown"))].sort(), coreTitleTokens: tokens(text(concept.canonicalTitle) || text(concept.title)).filter((token) => !STOP_WORDS.has(token)) };
+    return { key, canonicalTitle: text(concept.canonicalTitle) || text(concept.title) || key, details, trustedDetails: scoped.map((item) => item.value), ignoredBroadDetails: ignoredBroadDetails.map((item) => item.value), detailEvidenceBasis: scoped.map((item) => item.basis), normalizedTitle: key, normalizedDetails: normalize(details), aliases, mappings, evidence, subjects: subjects.map(normalize), sourceFamilies: [...new Set(subjects.map(SEMANTIC.semanticFamilyForSubject).filter((family) => family !== "unknown"))].sort(), coreTitleTokens: tokens(text(concept.canonicalTitle) || text(concept.title)).filter((token) => !STOP_WORDS.has(token)) };
+  }
+
+  function detailRecordsForConcept(base = {}, key = "") {
+    const mappings = (base.topicMappings || []).filter((item) => normalizedKeys(item.conceptKeys || [item.canonicalKey]).includes(key));
+    const evidence = (base.evidence || []).filter((item) => normalize(item.canonicalKey) === key);
+    return [
+      ...mappings.map((item) => ({ value: text(item.originalDetails), sourcePlanId: text(item.planId || item.sourcePlanId), sourceSubject: text(item.originalSubject), explicit: item.status === "user-confirmed" || item.basis === "user-confirmed" || item.detailScope === "topic-local" || item.detailScope === "trusted" || item.provenance?.topicScope === "local" })),
+      ...evidence.map((item) => ({ value: text(item.originalDetails), sourcePlanId: text(item.sourcePlanId || item.planId), sourceSubject: text(item.originalSubject), explicit: item.detailScope === "topic-local" || item.detailScope === "trusted" || item.provenance?.topicScope === "local" })),
+    ].filter((item) => item.value);
   }
 
   function mappingIdentity(topic = {}) {
@@ -49,22 +60,43 @@
   }
 
   function buildKnowledgeMappingIndex(base = {}) {
-    const index = { conceptByKey: new Map(), evidenceByConcept: new Map(), mappingsByConcept: new Map(), aliasesByConcept: new Map(), rulesByTitle: new Map(), rejectionsByTopicIdentity: new Map(), tokenDocumentFrequencyByFamily: new Map(), conceptCountByFamily: new Map() };
+    const index = { conceptByKey: new Map(), evidenceByConcept: new Map(), mappingsByConcept: new Map(), aliasesByConcept: new Map(), rulesByTitle: new Map(), rejectionsByTopicIdentity: new Map(), tokenDocumentFrequencyByFamily: new Map(), titleTokenDocumentFrequencyByFamily: new Map(), trustedDetailTokenDocumentFrequencyByFamily: new Map(), conceptCountByFamily: new Map(), detailFingerprintUsage: new Map(), trustedDetailsByConcept: new Map(), broadDetailsByConcept: new Map() };
     (base.concepts || []).forEach((concept) => { const key = normalize(concept.canonicalKey || concept.canonicalTitle); if (key) index.conceptByKey.set(key, concept); });
     (base.evidence || []).forEach((item) => { const key = normalize(item.canonicalKey); if (!key) return; if (!index.evidenceByConcept.has(key)) index.evidenceByConcept.set(key, []); index.evidenceByConcept.get(key).push(item); });
     (base.topicMappings || []).forEach((item) => normalizedKeys(item.conceptKeys || [item.canonicalKey]).forEach((key) => { if (!index.mappingsByConcept.has(key)) index.mappingsByConcept.set(key, []); index.mappingsByConcept.get(key).push(item); }));
     (base.aliases || []).forEach((item) => { const key = normalize(item.conceptKey); if (!key) return; if (!index.aliasesByConcept.has(key)) index.aliasesByConcept.set(key, []); index.aliasesByConcept.get(key).push(item); });
     (base.mappingRules || []).forEach((item) => index.rulesByTitle.set(`${normalize(item.normalizedTargetTitle)}|${normalize(item.targetSubjectContext)}`, item));
     (base.mappingRejections || []).forEach((item) => index.rejectionsByTopicIdentity.set(`${item.topicIdentity}|${normalizedKeys(item.conceptKeys).join(",")}`, item));
+    [...index.conceptByKey.keys()].forEach((key) => detailRecordsForConcept(base, key).forEach((record) => {
+      const fingerprint = [record.sourcePlanId || record.sourceSubject || "unknown-source", normalize(record.value)].join("|");
+      if (!index.detailFingerprintUsage.has(fingerprint)) index.detailFingerprintUsage.set(fingerprint, new Set());
+      index.detailFingerprintUsage.get(fingerprint).add(key);
+    }));
+    [...index.conceptByKey.keys()].forEach((key) => detailRecordsForConcept(base, key).forEach((record) => {
+      const fingerprint = [record.sourcePlanId || record.sourceSubject || "unknown-source", normalize(record.value)].join("|");
+      const broad = (index.detailFingerprintUsage.get(fingerprint)?.size || 0) > 1;
+      const collection = broad && !record.explicit ? index.broadDetailsByConcept : index.trustedDetailsByConcept;
+      if (!collection.has(key)) collection.set(key, []);
+      collection.get(key).push({ value: record.value, fingerprint, basis: record.explicit ? "explicit-provenance" : broad ? "exclusive-or-repeated" : "concept-local" });
+    }));
     // This is derived once per mapping pass. It intentionally counts concepts,
     // not evidence rows, so common family words cannot dominate candidates.
     [...index.conceptByKey.values()].forEach((concept) => {
       const descriptor = conceptDescriptor(concept, base, index);
       descriptor.sourceFamilies.forEach((family) => {
         index.conceptCountByFamily.set(family, (index.conceptCountByFamily.get(family) || 0) + 1);
-        if (!index.tokenDocumentFrequencyByFamily.has(family)) index.tokenDocumentFrequencyByFamily.set(family, new Map());
-        const frequencies = index.tokenDocumentFrequencyByFamily.get(family);
+        if (!index.titleTokenDocumentFrequencyByFamily.has(family)) index.titleTokenDocumentFrequencyByFamily.set(family, new Map());
+        const frequencies = index.titleTokenDocumentFrequencyByFamily.get(family);
         unique(descriptor.coreTitleTokens).forEach((token) => frequencies.set(token, (frequencies.get(token) || 0) + 1));
+      });
+    });
+    index.tokenDocumentFrequencyByFamily = index.titleTokenDocumentFrequencyByFamily;
+    [...index.conceptByKey.values()].forEach((concept) => {
+      const descriptor = conceptDescriptor(concept, base, index);
+      descriptor.sourceFamilies.forEach((family) => {
+        if (!index.trustedDetailTokenDocumentFrequencyByFamily.has(family)) index.trustedDetailTokenDocumentFrequencyByFamily.set(family, new Map());
+        const frequencies = index.trustedDetailTokenDocumentFrequencyByFamily.get(family);
+        unique(tokens(descriptor.details, { content: true })).forEach((token) => frequencies.set(token, (frequencies.get(token) || 0) + 1));
       });
     });
     return index;
@@ -87,10 +119,10 @@
     return { coverage: sharedTerms.length / targetTerms.size, sharedTerms };
   }
 
-  function tokenDistinctiveness(token, family, index) {
-    const frequencies = index?.tokenDocumentFrequencyByFamily?.get(family);
+  function tokenDistinctiveness(token, family, index, source = "title") {
+    const frequencies = (source === "detail" ? index?.trustedDetailTokenDocumentFrequencyByFamily : index?.titleTokenDocumentFrequencyByFamily)?.get(family);
     const count = index?.conceptCountByFamily?.get(family) || 0;
-    if (!frequencies || !count) return 1;
+    if (!frequencies || !count || !frequencies.has(token)) return 0;
     const frequency = frequencies.get(token) || 0;
     return Math.max(0, 1 - (Math.max(0, frequency - 1) / count));
   }
@@ -100,10 +132,11 @@
     const sourceTokens = unique(concept.coreTitleTokens || tokens(concept.canonicalTitle));
     const sharedCoreTerms = targetTokens.filter((token) => sourceTokens.includes(token));
     const family = SEMANTIC.semanticFamilyForSubject(target.subject);
-    const distinctiveTerms = sharedCoreTerms.filter((token) => tokenDistinctiveness(token, family, index) >= .5 && !GENERIC_CORE_TERMS.has(token));
+    const distinctiveTerms = sharedCoreTerms.filter((token) => tokenDistinctiveness(token, family, index, "title") >= .6 && !GENERIC_CORE_TERMS.has(token));
     const canonicalExact = target.normalizedTitle === concept.normalizedTitle && !GENERIC_TITLES.has(target.normalizedTitle);
     const rawContainment = targetTokens.length > 0 && (targetTokens.every((token) => sourceTokens.includes(token)) || sourceTokens.every((token) => targetTokens.includes(token)));
-    const containment = rawContainment && (canonicalExact || distinctiveTerms.length > 0);
+    const planningAnchor = targetTokens.length === 1 && sharedCoreTerms.length === 1 && sharedCoreTerms[0] === "planejamento";
+    const containment = rawContainment && (canonicalExact || distinctiveTerms.length > 0 || sharedCoreTerms.some((token) => !GENERIC_CORE_TERMS.has(token)) || planningAnchor);
     const proportion = sharedCoreTerms.length / Math.max(targetTokens.length, sourceTokens.length, 1);
     const affinity = canonicalExact ? 1 : containment ? .82 : Math.min(1, proportion * .7 + (distinctiveTerms.length ? .3 : 0));
     return { canonicalExact, containment, sharedCoreTerms: sorted(sharedCoreTerms), distinctiveTerms: sorted(distinctiveTerms), titleAffinity: affinity, titleTokenCoverage: sharedCoreTerms.length / Math.max(targetTokens.length, 1) };
@@ -115,7 +148,7 @@
     const family = SEMANTIC.semanticFamilyForSubject(target.subject);
     const targetTerms = tokenSet(`${target.title} ${target.details}`, { content: true });
     const detailSharedTerms = details.sharedTerms.filter((term) => !GENERIC_CORE_TERMS.has(term));
-    const distinctiveDetailTerms = detailSharedTerms.filter((term) => tokenDistinctiveness(term, family, index) >= .5);
+    const distinctiveDetailTerms = detailSharedTerms.filter((term) => tokenDistinctiveness(term, family, index, "detail") >= .6);
     const strongDetailEvidence = distinctiveDetailTerms.length >= 2 && details.coverage >= .2 && targetTerms.size > 0;
     const allowed = title.canonicalExact || title.containment || title.distinctiveTerms.length > 0 || strongDetailEvidence;
     const basis = title.canonicalExact ? "canonical-title-exact" : title.containment ? "title-containment" : title.distinctiveTerms.length ? "distinctive-title-overlap" : strongDetailEvidence ? "strong-detail-evidence" : "no-topic-anchor";
@@ -137,10 +170,7 @@
     const details = detailCoverage(target, concept);
     const titleOverlap = [...targetTokens].filter((token) => sourceTokens.has(token)).length / Math.max(targetTokens.size, sourceTokens.size, 1);
     const topicAnchorGate = exact || alias ? { allowed: true, basis: exact ? "canonical-title-exact" : "confirmed-alias", sharedCoreTerms: [], titleDistinctiveTerms: [], distinctiveTerms: [], detailSharedTerms: details.sharedTerms, titleAffinity: exact ? 1 : .98, coverage: details.coverage } : topicAnchorCompatibility(target, concept, index);
-    if (!exact && !alias && !topicAnchorGate.allowed) {
-      const compositeEligible = topicAnchorGate.detailSharedTerms?.some((term) => !GENERIC_CORE_TERMS.has(term)) && details.coverage >= .1;
-      return { accepted: false, compositeEligible: Boolean(compositeEligible), score: 0, confidence: "low", basis: "topic-anchor-gate", direction: "none", coverage: details.coverage, sharedTerms: details.sharedTerms, semanticGate, topicAnchorGate, subject };
-    }
+    if (!exact && !alias && !topicAnchorGate.allowed) return { accepted: false, score: 0, confidence: "low", basis: "topic-anchor-gate", direction: "none", coverage: details.coverage, sharedTerms: details.sharedTerms, semanticGate, topicAnchorGate, subject };
     const basis = exact ? "canonical-title-exact" : alias ? "confirmed-alias" : topicAnchorGate.basis === "strong-detail-evidence" ? "detail-coverage" : containment ? "title-containment" : "title-affinity";
     const confidence = exact || alias ? "high" : details.coverage >= .7 && subject.score >= .45 ? "high" : "medium";
     return { accepted: true, score: exact ? 1 : alias ? .98 : Math.min(1, topicAnchorGate.titleAffinity * .45 + details.coverage * .43 + subject.score * .12), confidence, basis, direction: exact || alias ? "equivalent" : "partial", coverage: details.coverage, sharedTerms: details.sharedTerms, semanticGate, topicAnchorGate, subject, coreSharedTerms: topicAnchorGate.sharedCoreTerms };
@@ -151,7 +181,7 @@
     return [...index.conceptByKey.values()].map((concept) => {
       const descriptor = conceptDescriptor(concept, base, index);
       return { concept, descriptor, match: candidateScore(targetDescriptor, descriptor, index) };
-    }).filter((item) => item.match.accepted || item.match.compositeEligible).sort((a, b) => b.match.score - a.match.score || a.descriptor.key.localeCompare(b.descriptor.key));
+    }).filter((item) => item.match.accepted).sort((a, b) => b.match.score - a.match.score || a.descriptor.key.localeCompare(b.descriptor.key));
   }
 
   function compositeCandidates(base, target, candidates) {
@@ -161,14 +191,14 @@
     const covered = new Set();
     const accepted = candidates.filter((item) => item.match.accepted);
     const ordered = accepted.length ? [accepted[0], ...candidates.filter((item) => item !== accepted[0])] : candidates;
-    ordered.filter((item) => item.match.accepted || item.match.compositeEligible).forEach((item) => {
+    ordered.filter((item) => item.match.accepted).forEach((item) => {
       if (selected.length >= 4) return;
       const gate = item.match.topicAnchorGate || {};
       const anchorTerms = (gate.titleDistinctiveTerms || []).filter((term) => !covered.has(term));
       const detailTerms = (gate.detailSharedTerms || item.match.sharedTerms || []).filter((term) => !covered.has(term) && !GENERIC_CORE_TERMS.has(term));
       const isFirstAccepted = selected.length === 0 && item.match.accepted;
-      const terms = unique(anchorTerms.length ? anchorTerms : gate.strongDetailEvidence || item.match.compositeEligible ? detailTerms : isFirstAccepted ? detailTerms : []);
-      if (!isFirstAccepted && (!terms.length || (!anchorTerms.length && !gate.strongDetailEvidence && !item.match.compositeEligible) || terms.length / Math.max(targetTerms.size, 1) < .05)) return;
+      const terms = unique(anchorTerms.length ? anchorTerms : gate.strongDetailEvidence ? detailTerms : isFirstAccepted ? detailTerms : []);
+      if (!isFirstAccepted && (!terms.length || (!anchorTerms.length && !gate.strongDetailEvidence) || terms.length / Math.max(targetTerms.size, 1) < .05)) return;
       selected.push(item); terms.forEach((term) => covered.add(term));
     });
     return selected;
