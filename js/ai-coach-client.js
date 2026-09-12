@@ -25,6 +25,7 @@
       AI_INVALID_SNAPSHOT: "Não foi possível validar os dados estratégicos desta análise.",
       AI_RATE_LIMITED: "O limite de análises foi atingido. Tente novamente mais tarde.",
       AI_PROVIDER_TIMEOUT: "A análise demorou mais que o esperado. Tente novamente.",
+      AI_FUNCTION_UNAVAILABLE: "A função do AI Coach não está disponível no momento. Tente novamente mais tarde.",
       AI_PROVIDER_ERROR: "O orientador estratégico está indisponível no momento.",
       AI_CONFIG_MISSING: "O orientador estratégico ainda não foi configurado.",
       AI_INVALID_REQUEST: "Não foi possível validar o pedido ao orientador estratégico.",
@@ -113,7 +114,7 @@
     }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const code = payload?.error?.code || "AI_PROVIDER_ERROR";
+      const code = payload?.error?.code || (response.status === 404 ? "AI_FUNCTION_UNAVAILABLE" : "AI_PROVIDER_ERROR");
       throw clientError(code, translatedMessage(code), response.status);
     }
     if (!validateResponse(payload) || payload.meta.snapshotSignature !== signature) {

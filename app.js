@@ -218,6 +218,7 @@ let aiCoachUIState = {
   loading: false,
   loaded: false,
   busy: false,
+  busyLabel: "",
   lastResponse: null,
   lastError: "",
   saveWarning: "",
@@ -5625,7 +5626,7 @@ function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
   const lastDate = last ? aiCoachRecordDate(last) : "";
   const age = aiCoachDaysSince(lastDate);
   const history = aiCoachUIState.reviews.slice(0, 5);
-  const status = aiCoachUIState.busy ? "Analisando sua estratégia..." : aiCoachUIState.lastError ? aiCoachUIState.lastError : aiCoachUIState.loading ? "Carregando histórico do Coach..." : last ? `Última análise: ${age === 0 ? "hoje" : `há ${age} dia${age === 1 ? "" : "s"}`}` : "Você ainda não fez uma análise com o Coach.";
+  const status = aiCoachUIState.busy ? aiCoachUIState.busyLabel || "Analisando sua estratégia..." : aiCoachUIState.lastError ? aiCoachUIState.lastError : aiCoachUIState.loading ? "Carregando histórico do Coach..." : last ? `Última análise: ${age === 0 ? "hoje" : `há ${age} dia${age === 1 ? "" : "s"}`}` : "Você ainda não fez uma análise com o Coach.";
   const historyMarkup = history.length ? `<div class="ai-coach-history"><h5>Histórico recente</h5>${history.map((record) => `<div class="ai-coach-history-item"><strong>${escapeHtml(formatDateBR(new Date(aiCoachRecordDate(record))) || "Data não informada")} · ${escapeHtml(aiCoachReviewModeLabel(record.mode))}</strong>${record.question ? `<span>${escapeHtml(record.question)}</span>` : `<span>${escapeHtml(aiCoachRecordReview(record).periodDiagnosis?.summary || "Análise estratégica")}</span>`}</div>`).join("")}</div>` : "";
   const cycleDisabled = !getAICoachReviewableCycle() || aiCoachUIState.busy;
   const content = aiCoachUIState.lastResponse
@@ -5633,7 +5634,23 @@ function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
     : last && deltaLoading
       ? `<p class="ai-coach-context-loading" role="status">Atualizando o contexto desde a última análise...</p>`
       : aiCoachDeltaMarkup(delta);
-  return `<section class="ai-coach-section" data-ai-coach-content aria-labelledby="aiCoachTitle"><div class="ai-coach-heading"><div><span class="section-kicker">AI Coach</span><h4 id="aiCoachTitle">Orientação estratégica sob demanda</h4><p>${escapeHtml(status)}</p></div><i data-lucide="sparkles" aria-hidden="true"></i></div>${content}<div class="ai-coach-actions"><button class="primary-button compact-button" type="button" data-ai-coach-mode="cycle-review" ${cycleDisabled ? "disabled" : ""}>Analisar ciclo</button><button class="ghost-button compact-button" type="button" data-ai-coach-mode="progress-check" ${aiCoachUIState.busy ? "disabled" : ""}>Ver minha evolução</button><button class="ghost-button compact-button" type="button" data-ai-coach-focus-question ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar ao Coach</button></div><div class="ai-coach-question-box" hidden><label for="aiCoachQuestion">Pergunte ao Coach sobre sua estratégia</label><textarea id="aiCoachQuestion" maxlength="2000" rows="3" placeholder="Ex.: estou gastando tempo demais em Português?"></textarea><button class="primary-button compact-button" type="button" data-ai-coach-mode="question" ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar</button></div>${historyMarkup}</section>`;
+  return `<section class="ai-coach-section" data-ai-coach-content aria-labelledby="aiCoachTitle"><div class="ai-coach-heading"><div><span class="section-kicker">AI Coach</span><h4 id="aiCoachTitle">Orientação estratégica sob demanda</h4><p ${aiCoachUIState.busy ? 'role="status" aria-live="polite"' : aiCoachUIState.lastError ? 'role="alert"' : ""}>${escapeHtml(status)}</p></div><i data-lucide="sparkles" aria-hidden="true"></i></div>${content}<div class="ai-coach-actions"><button class="primary-button compact-button" type="button" data-ai-coach-mode="cycle-review" ${cycleDisabled ? "disabled" : ""}>Analisar ciclo</button><button class="ghost-button compact-button" type="button" data-ai-coach-mode="progress-check" ${aiCoachUIState.busy ? "disabled" : ""}>Ver minha evolução</button><button class="ghost-button compact-button" type="button" data-ai-coach-focus-question ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar ao Coach</button></div><div class="ai-coach-question-box" hidden><label for="aiCoachQuestion">Pergunte ao Coach sobre sua estratégia</label><textarea id="aiCoachQuestion" maxlength="2000" rows="3" placeholder="Ex.: estou gastando tempo demais em Português?"></textarea><button class="primary-button compact-button" type="button" data-ai-coach-mode="question" ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar</button></div>${historyMarkup}</section>`;
+}
+
+function renderAICoachSection(options = {}) {
+  const current = els.strategicAdvisorModal?.querySelector("[data-ai-coach-content]");
+  if (!current) return false;
+  current.outerHTML = aiCoachMarkup(options);
+  renderLucideIcons(els.strategicAdvisorModal);
+  return true;
+}
+
+function scrollAICoachResultIntoView() {
+  const dialog = els.strategicAdvisorModal?.querySelector(".strategic-advisor-dialog");
+  const result = dialog?.querySelector(".ai-coach-result");
+  if (!dialog || !result) return;
+  const targetTop = dialog.scrollTop + result.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 16;
+  dialog.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
 }
 
 async function loadAICoachHistory() {
@@ -5655,34 +5672,35 @@ async function requestAICoachAnalysis(mode, question = "") {
   const cycleTarget = mode === "cycle-review" ? getAICoachReviewableCycle() : null;
   if (mode === "cycle-review" && !cycleTarget) {
     aiCoachUIState.lastError = "Nenhum ciclo fechado está disponível para uma nova análise.";
-    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
     return;
   }
-  const snapshot = buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() });
-  if (!snapshot || !window.AIStrategicCoachClient) {
-    aiCoachUIState.lastError = "O orientador estratégico está indisponível no momento.";
-    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
-    return;
-  }
-  if (cycleTarget && !window.AICoachCycleTarget?.matchesSnapshot?.(cycleTarget, snapshot)) {
-    aiCoachUIState.lastError = "O ciclo fechado disponível não corresponde ao estado estratégico atual.";
-    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
-    return;
-  }
-  const latest = aiCoachUIState.reviews[0] || null;
-  const previousCycleReview = mode === "cycle-review"
-    ? aiCoachUIState.reviews.find((record) => record.mode === "cycle-review"
-      && record.id !== latest?.id
-      && window.AICoachCycleTarget?.hasReviewFor?.(cycleTarget.previousRecord, [record]))
-      || null
-    : null;
-  const previousCheckpoint = aiCoachRecordCheckpoint(latest);
-  const delta = window.AICoachDelta?.compare?.({ previousCheckpoint, currentSnapshot: snapshot, now: snapshot.generatedAt }) || null;
+  const performanceTrace = createFocusPerformanceTrace(`ai-coach-${mode}`);
   aiCoachUIState.busy = true;
+  aiCoachUIState.busyLabel = mode === "progress-check" ? "Analisando sua evolução..." : mode === "cycle-review" ? "Analisando seu ciclo..." : "Respondendo sua pergunta...";
   aiCoachUIState.lastError = "";
   aiCoachUIState.saveWarning = "";
-  openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+  if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
   try {
+    await measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction());
+    const snapshot = measureFocusPerformance(performanceTrace, "AI snapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
+    if (!snapshot || !window.AIStrategicCoachClient) {
+      aiCoachUIState.lastError = "O orientador estratégico está indisponível no momento.";
+      return;
+    }
+    if (cycleTarget && !window.AICoachCycleTarget?.matchesSnapshot?.(cycleTarget, snapshot)) {
+      aiCoachUIState.lastError = "O ciclo fechado disponível não corresponde ao estado estratégico atual.";
+      return;
+    }
+    const latest = aiCoachUIState.reviews[0] || null;
+    const previousCycleReview = mode === "cycle-review"
+      ? aiCoachUIState.reviews.find((record) => record.mode === "cycle-review"
+        && record.id !== latest?.id
+        && window.AICoachCycleTarget?.hasReviewFor?.(cycleTarget.previousRecord, [record]))
+        || null
+      : null;
+    const previousCheckpoint = aiCoachRecordCheckpoint(latest);
+    const delta = measureFocusPerformance(performanceTrace, "Coach delta", () => window.AICoachDelta?.compare?.({ previousCheckpoint, currentSnapshot: snapshot, now: snapshot.generatedAt }) || null);
     const context = {
       previousCoachReview: latest ? window.AICoachMemory?.compactCoachReviewForContext?.(latest) : null,
       previousCoachCheckpoint: previousCheckpoint,
@@ -5690,15 +5708,18 @@ async function requestAICoachAnalysis(mode, question = "") {
       previousCycleReview: previousCycleReview ? window.AICoachMemory?.compactCoachReviewForContext?.(previousCycleReview) : null,
       previousCycleSnapshot: previousCycleReview ? aiCoachRecordCheckpoint(previousCycleReview) : null,
     };
-    const result = mode === "question"
-      ? await window.AIStrategicCoachClient.ask(snapshot, question, context)
+    const result = await measureFocusPerformance(performanceTrace, "Coach provider", () => mode === "question"
+      ? window.AIStrategicCoachClient.ask(snapshot, question, context)
       : mode === "cycle-review"
-        ? await window.AIStrategicCoachClient.analyzeCycle(snapshot, context)
-        : await window.AIStrategicCoachClient.checkProgress(snapshot, context);
+        ? window.AIStrategicCoachClient.analyzeCycle(snapshot, context)
+        : window.AIStrategicCoachClient.checkProgress(snapshot, context));
     const response = { ...result, mode, question: mode === "question" ? question : "", delta, saveWarning: "" };
     aiCoachUIState.lastResponse = response;
+    aiCoachUIState.busyLabel = "Salvando análise...";
+    renderAICoachSection({ delta });
+    scrollAICoachResultIntoView();
     try {
-      const saved = await window.AICoachMemory.saveReview({ response: result, snapshot, mode, question: mode === "question" ? question : null, previousReview: latest, previousCycleReview });
+      const saved = await measureFocusPerformance(performanceTrace, "save Coach review", () => window.AICoachMemory.saveReview({ response: result, snapshot, mode, question: mode === "question" ? question : null, previousReview: latest, previousCycleReview }));
       aiCoachUIState.reviews = [saved, ...aiCoachUIState.reviews.filter((record) => record.id !== saved.id)].slice(0, 10);
       showToast("Análise do Coach salva no histórico.");
     } catch (saveError) {
@@ -5710,7 +5731,9 @@ async function requestAICoachAnalysis(mode, question = "") {
     aiCoachUIState.lastError = error?.message || "Não foi possível concluir a análise estratégica.";
   } finally {
     aiCoachUIState.busy = false;
-    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    aiCoachUIState.busyLabel = "";
+    if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    reportFocusPerformance(performanceTrace);
   }
 }
 

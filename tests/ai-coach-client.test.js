@@ -83,6 +83,22 @@ test("transforma falha de rede em erro estável do provider", async () => {
   }
 });
 
+test("informa quando a Edge Function do Coach não está acessível", async () => {
+  const originalFetch = global.fetch;
+  const originalConfig = global.supabaseConfiguration;
+  const originalClient = global.supabaseClient;
+  global.supabaseConfiguration = { url: "https://example.supabase.co", publishableKey: "publishable-key" };
+  global.supabaseClient = { auth: { getSession: async () => ({ data: { session: { access_token: "user-token" } }, error: null }) } };
+  global.fetch = async () => new Response("Not found", { status: 404 });
+  try {
+    await assert.rejects(() => client.checkProgress({ signature: { value: "missing-function-signature" } }), (error) => error.code === "AI_FUNCTION_UNAVAILABLE" && error.status === 404 && error.message.includes("função do AI Coach"));
+  } finally {
+    global.fetch = originalFetch;
+    global.supabaseConfiguration = originalConfig;
+    global.supabaseClient = originalClient;
+  }
+});
+
 test("expõe ciclo, progress-check e ask, encaminha contexto e deduplica por modo e pergunta normalizada", async () => {
   const originalFetch = global.fetch;
   const originalConfig = global.supabaseConfiguration;
