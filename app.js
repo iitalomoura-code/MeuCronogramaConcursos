@@ -16932,10 +16932,11 @@ async function startMeuCronogramaApp() {
     newPlanCloudReadyPromise = initializeNewPlanCloudSource();
     return;
   }
-  // O cache da conta melhora a primeira pintura, mas a versão remota permanece
-  // a fonte definitiva e é aplicada assim que a consulta for concluída.
+  // Restaura cache online ou snapshot local antes da consulta remota. Assim,
+  // o F5 não exibe o setup vazio enquanto a nuvem confirma a versão atual.
   const restoredFromCloudCache = restoreAppState({ cacheOnly: true });
-  if (!restoredFromCloudCache) {
+  const restoredImmediately = restoredFromCloudCache || restoreAppState({ preserveDataSource: true, preferCloudCache: false });
+  if (!restoredImmediately) {
     renderRows();
     updateContestSummary();
     activateTab("continuar");
@@ -16946,10 +16947,9 @@ async function startMeuCronogramaApp() {
     updateSidebarActiveIndicator();
     animatePanelNumbers(getActiveTabName());
   });
-  scheduleKnowledgeBaseBootstrap();
   void initializeCloudPlanSource().then((loadedFromCloud) => {
     const cloudUnavailable = state.dataSource === "cloud-unavailable";
-    if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredFromCloudCache)) {
+    if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredImmediately)) {
       const restoredLegacy = restoreAppState({ preserveDataSource: cloudUnavailable, preferCloudCache: false });
       if (!restoredLegacy) {
         renderRows();
@@ -16962,6 +16962,7 @@ async function startMeuCronogramaApp() {
     }
     scheduleLocalMigrationPrompt();
     renderBackupReminder();
+    scheduleKnowledgeBaseBootstrap();
     const requestedTab = sessionStorage.getItem(APP_ENTRY_TAB_KEY) || "";
     sessionStorage.removeItem(APP_ENTRY_TAB_KEY);
     sessionStorage.removeItem(APP_ENTRY_ACTION_KEY);
@@ -16970,7 +16971,6 @@ async function startMeuCronogramaApp() {
     } else if (requestedTab) {
       switchTab(requestedTab);
     }
-    scheduleKnowledgeBaseBootstrap();
   });
 }
 

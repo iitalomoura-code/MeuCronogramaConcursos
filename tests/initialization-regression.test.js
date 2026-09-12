@@ -15,5 +15,9 @@ assert.ok(!app.includes("  renderEvolution();\n  renderContinuePanel();\n\n  if 
 assert.ok(app.includes("const restoredTab = setupIsIncomplete()") && app.includes("saved.activeTab"), "A aba válida salva deve ser restaurada ou direcionada à configuração incompleta.");
 assert.ok(app.includes('console.error("Falha ao restaurar planejamento:", error)'), "Falhas de restauração devem ser registradas no console.");
 assert.ok(app.includes("const horas = entries.reduce"), "A métrica de tempo deve retornar a variável correta.");
+assert.ok(app.includes("const restoredImmediately = restoredFromCloudCache || restoreAppState({ preserveDataSource: true, preferCloudCache: false })"), "O F5 deve restaurar o snapshot local enquanto a nuvem é consultada.");
+assert.ok(app.includes("if (!loadedFromCloud && (state.dataSource === \"cloud-empty\" || !restoredImmediately))"), "A recuperação legada deve respeitar o estado restaurado imediatamente.");
+const appStart = app.slice(app.indexOf("async function startMeuCronogramaApp"));
+assert.ok(appStart.indexOf("scheduleKnowledgeBaseBootstrap();") > appStart.indexOf("initializeCloudPlanSource().then"), "O bootstrap pesado deve começar depois da recuperação da fonte principal.");
 
 console.log("OK - inicialização restaura painéis independentemente e preserva a aba salva.");
