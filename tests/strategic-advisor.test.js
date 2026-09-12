@@ -42,6 +42,13 @@ assert.ok(localized.priorities[0].title.includes("AFO:") && localized.priorities
 assert.notEqual(advisor.categoryFor(input[3]), "prioritize", "Poucos dados não podem ser classificados como deficiência automaticamente.");
 assert.ok(index.includes("js/strategic-advisor.js") && index.indexOf("js/strategic-advisor.js") < index.indexOf("app.js?v="), "O módulo do Orientador deve carregar antes da aplicação.");
 assert.ok(index.includes("strategicAdvisorModal") && app.includes("strategicAdvisorCompactMarkup") && app.includes("data-open-strategic-advisor"), "O card compacto e a análise completa devem estar integrados sem nova aba.");
+const advisorModalPosition = index.indexOf('id="strategicAdvisorModal"');
+const evolutionPanelStart = index.indexOf('id="tab-evolucao"');
+const evolutionPanelEnd = index.indexOf("\n        </section>", evolutionPanelStart);
+assert.ok(advisorModalPosition > index.lastIndexOf("</main>", advisorModalPosition), "O Orientador completo deve ficar fora da área principal das abas.");
+assert.ok(advisorModalPosition > evolutionPanelEnd, "O modal do Orientador não deve ficar dentro de #tab-evolucao.");
+assert.ok(!index.slice(advisorModalPosition, index.indexOf("<script", advisorModalPosition)).match(/class="tab-panel"/), "O modal global não deve pertencer a outra aba.");
+assert.ok(app.includes('document.body.classList.add("strategic-advisor-open")') && app.includes('document.body.classList.remove("strategic-advisor-open")'), "A visão completa deve controlar o scroll global enquanto estiver aberta.");
 assert.ok(index.includes("js/strategic-advisor-history.js") && app.includes("strategicAdvisorSnapshots") && app.includes("data-register-strategic-advisor"), "Marcos estratégicos devem usar a persistência do planejamento e uma ação explícita.");
 assert.ok(app.includes("modalPriorities") && app.includes("independentPriorityChanges"), "O modal deve deduplicar matérias mistas e exibir mudanças independentes de prioridade.");
 

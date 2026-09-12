@@ -13264,6 +13264,7 @@ textarea:focus {
 .strategic-advisor-temporal { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .strategic-advisor-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; }
 .strategic-advisor-modal[hidden] { display: none; }
+.strategic-advisor-open { overflow: hidden; }
 .strategic-advisor-backdrop { position: absolute; inset: 0; border: 0; background: rgba(15, 23, 42, .42); }
 .strategic-advisor-dialog { position: relative; display: grid; gap: 18px; width: min(700px, 100%); max-height: min(760px, calc(100dvh - 36px)); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-card); }
 .strategic-advisor-dialog header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
@@ -13277,6 +13278,13 @@ textarea:focus {
 .strategic-advisor-dialog-body li strong { font-size: 13px; }
 .strategic-advisor-dialog-body li span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .strategic-advisor-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 4px; }
+
+@media (max-width: 700px) {
+  .strategic-advisor-modal { align-items: stretch; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .strategic-advisor-dialog { width: 100%; max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); border-radius: 8px; padding: 18px max(16px, env(safe-area-inset-right)) 18px max(16px, env(safe-area-inset-left)); }
+  .strategic-advisor-dialog footer { display: grid; grid-template-columns: 1fr; align-items: stretch; }
+  .strategic-advisor-dialog footer button { width: 100%; justify-content: center; }
+}
 
 .ai-coach-section {
   display: grid;

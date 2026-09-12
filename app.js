@@ -5776,6 +5776,7 @@ function openStrategicAdvisorModal(trigger = null) {
   const comparison = strategicAdvisorHistoryState().comparison || {};
   els.strategicAdvisorModal._trigger = trigger;
   els.strategicAdvisorModal.innerHTML = `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>${escapeHtml(advisor.summary.join(" "))}</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${strategicAdvisorEvolutionMarkup()}${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", modalPriorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Mudanças de prioridade", comparison.independentPriorityChanges || [])}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}${aiCoachMarkup()}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
+  document.body.classList.add("strategic-advisor-open");
   els.strategicAdvisorModal.hidden = false;
   renderLucideIcons(els.strategicAdvisorModal);
   els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
@@ -5786,7 +5787,8 @@ function closeStrategicAdvisorModal() {
   const trigger = els.strategicAdvisorModal._trigger;
   els.strategicAdvisorModal.hidden = true;
   els.strategicAdvisorModal.innerHTML = "";
-  trigger?.focus?.();
+  document.body.classList.remove("strategic-advisor-open");
+  if (trigger && document.contains(trigger)) trigger.focus();
 }
 
 function learningRecoveryQueue() {
