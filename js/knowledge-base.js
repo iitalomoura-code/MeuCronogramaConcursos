@@ -425,6 +425,10 @@
     return MAPPING?.applyMappingDecision ? MAPPING.applyMappingDecision(normalizeExistingBase(base), mapping, decision) : normalizeExistingBase(base);
   }
 
+  function revokeTopicMapping(base = {}, mapping = {}, options = {}) {
+    return MAPPING?.revokeMappingDecision ? MAPPING.revokeMappingDecision(normalizeExistingBase(base), mapping, options) : normalizeExistingBase(base);
+  }
+
   const api = {
     SCHEMA_VERSION,
     normalizeConcept,
@@ -445,6 +449,7 @@
     dedupeMappingRejections,
     mapTopic,
     decideTopicMapping,
+    revokeTopicMapping,
     migrateKnowledgeMappings: (base) => MAPPING?.migrateKnowledgeMappings ? MAPPING.migrateKnowledgeMappings(normalizeExistingBase(base)) : normalizeExistingBase(base),
   };
   global.KnowledgeBase = api;

@@ -234,8 +234,11 @@ let knowledgeBaseState = null;
 let knowledgeBaseCloudVersion = 0;
 let knowledgeBaseBootstrapPromise = null;
 let knowledgeMappingReviewCache = [];
+let knowledgeMappingConfirmedCache = [];
 let knowledgeMappingReviewCacheKey = "";
 let knowledgeMappingReviewCacheValue = null;
+let knowledgeMappingView = "review";
+let knowledgeMappingManagerOpen = false;
 
 function invalidateDerivedStudyCaches() {
   adaptiveHistoryCache = null;
@@ -12908,7 +12911,7 @@ function saveLocalKnowledgeBase(base = knowledgeBaseState) {
 }
 
 function currentKnowledgeMappingReviews() {
-  if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [] };
+  if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [], confirmed: [] };
   const baseSignature = knowledgeBaseStructureSignature(knowledgeBaseState);
   const contentSignature = state.rows.map((row) => [row.id, row.programUnitId, row.materia, row.titulo, row.assunto, row.descricao, JSON.stringify(row.conteudosOriginais || []), row.estudar].join("|")).join("||");
   const cacheKey = `${baseSignature}|${contentSignature}`;
@@ -12916,6 +12919,7 @@ function currentKnowledgeMappingReviews() {
   const index = window.KnowledgeMapping?.buildKnowledgeMappingIndex ? window.KnowledgeMapping.buildKnowledgeMappingIndex(knowledgeBaseState) : undefined;
   const seen = new Set();
   const items = [];
+  const confirmed = [];
   let automatic = 0;
   state.rows.filter((row) => row?.materia && (row.assunto || row.titulo) && row.estudar !== "Nao").forEach((row) => {
     const topic = { planId: state.currentPlanId, topicId: row.programUnitId || row.id, materia: row.materia, assunto: row.assunto || row.titulo, titulo: row.titulo, descricao: row.descricao, conteudosOriginais: row.conteudosOriginais };
@@ -12923,20 +12927,54 @@ function currentKnowledgeMappingReviews() {
     const key = result?.topic?.topicId || topic.assunto;
     if (!result || seen.has(key)) return;
     seen.add(key);
-    if (result.status === "auto-confirmed" || result.status === "user-confirmed") automatic += 1;
+    if (result.status === "auto-confirmed" || result.status === "user-confirmed") {
+      automatic += 1;
+      confirmed.push(result);
+    }
     if (result.status === "suggested") items.push(result);
   });
   knowledgeMappingReviewCacheKey = cacheKey;
-  knowledgeMappingReviewCacheValue = { automatic, suggested: items };
+  knowledgeMappingReviewCacheValue = { automatic, suggested: items, confirmed };
   return knowledgeMappingReviewCacheValue;
+}
+
+function knowledgeMappingConceptTitles(item = {}) {
+  return (item.conceptKeys || []).map((key) => item.candidates?.find((candidate) => candidate.conceptKey === key)?.title
+    || knowledgeBaseState?.concepts?.find((concept) => normalizeForMatch(concept.canonicalKey) === normalizeForMatch(key))?.canonicalTitle
+    || key);
+}
+
+function knowledgeMappingRelationshipLabel(item = {}) {
+  if (item.relationship === "equivalent") return "Equivalente";
+  if (item.relationship === "composite") return "Composta";
+  return "Parcial";
+}
+
+function knowledgeMappingReviewItemMarkup(item, index) {
+  const summary = window.KnowledgeMapping?.evidenceSummaryForConceptKeys?.(knowledgeBaseState, item.conceptKeys) || {};
+  const history = summary.questions ? `${summary.questions} questões · ${summary.correctAnswers} acertos${summary.sourcePlans?.length ? ` · ${summary.sourcePlans.join(", ")}` : ""}` : "Histórico ainda sem evidência agregada";
+  const context = item.semanticGate?.sourceFamilies?.length ? `Contexto compatível: ${item.semanticGate.sourceFamilies.join(", ")}` : "Correspondência contextual";
+  return `<article class="knowledge-mapping-item"><div class="knowledge-mapping-route"><div><small>${escapeHtml(item.topic.subject)}</small><strong>${escapeHtml(item.topic.title)}</strong></div><i data-lucide="arrow-right" aria-hidden="true"></i><div><small>Conhecimento encontrado</small><strong>${escapeHtml(knowledgeMappingConceptTitles(item).join(" + "))}</strong></div></div><div class="knowledge-mapping-meta"><span>${escapeHtml(knowledgeMappingRelationshipLabel(item))}</span><span>${escapeHtml(context)}</span><span>${escapeHtml(history)}</span></div><div class="knowledge-mapping-actions"><button class="text-action" type="button" data-knowledge-mapping-decision="confirm" data-knowledge-mapping-index="${index}">Confirmar</button><button class="text-action danger" type="button" data-knowledge-mapping-decision="reject" data-knowledge-mapping-index="${index}">Não corresponde</button></div></article>`;
+}
+
+function knowledgeMappingConfirmedItemMarkup(item, index) {
+  const summary = window.KnowledgeMapping?.evidenceSummaryForConceptKeys?.(knowledgeBaseState, item.conceptKeys) || {};
+  const origin = item.status === "user-confirmed" ? "Confirmada por você" : "Confirmada automaticamente";
+  const coverage = Number.isFinite(Number(item.coverage)) ? `${Math.round(Number(item.coverage) * 100)}% de cobertura` : "Cobertura não informada";
+  const evidence = summary.questions ? `${summary.questions} questões no histórico` : "Sem questões agregadas";
+  const undo = item.status === "user-confirmed" ? `<button class="text-action" type="button" data-knowledge-mapping-revoke="undo" data-knowledge-mapping-index="${index}">Desfazer confirmação</button>` : "";
+  return `<article class="knowledge-mapping-item"><div class="knowledge-mapping-route"><div><small>${escapeHtml(item.topic.subject)}</small><strong>${escapeHtml(item.topic.title)}</strong></div><i data-lucide="arrow-right" aria-hidden="true"></i><div><small>Conceito histórico relacionado</small><strong>${escapeHtml(knowledgeMappingConceptTitles(item).join(" + "))}</strong></div></div><div class="knowledge-mapping-meta"><span>${escapeHtml(knowledgeMappingRelationshipLabel(item))}</span><span>${escapeHtml(origin)}</span><span>${escapeHtml(item.confidence || "")}</span><span>${escapeHtml(coverage)}</span><span>${escapeHtml(evidence)}</span></div><div class="knowledge-mapping-actions">${undo}<button class="text-action danger" type="button" data-knowledge-mapping-revoke="reject" data-knowledge-mapping-index="${index}">Marcar como incorreta</button></div></article>`;
 }
 
 function knowledgeMappingReviewMarkup() {
   const review = currentKnowledgeMappingReviews();
   knowledgeMappingReviewCache = review.suggested;
-  if (!review.automatic && !review.suggested.length) return "";
-  const suggested = review.suggested.length ? ` <button class="text-action" type="button" data-open-knowledge-mappings>Revisar correspondências</button>` : "";
-  return `<details class="knowledge-mapping-review"><summary>Correspondências da sua base</summary><p>${review.automatic} confirmada${review.automatic === 1 ? "" : "s"} automaticamente${review.suggested.length ? ` · ${review.suggested.length} para revisar` : ""}.${suggested}</p><div class="knowledge-mapping-review-list">${review.suggested.map((item, index) => { const summary = window.KnowledgeMapping?.evidenceSummaryForConceptKeys?.(knowledgeBaseState, item.conceptKeys) || {}; const history = summary.questions ? `Histórico: ${summary.questions} questões · ${summary.correctAnswers} acertos${summary.sourcePlans?.length ? ` · ${summary.sourcePlans.join(", ")}` : ""}` : "Histórico ainda sem evidência agregada"; const context = item.semanticGate?.sourceFamilies?.length ? `Contexto compatível: ${item.semanticGate.sourceFamilies.join(", ")}` : "Correspondência contextual"; return `<article><strong>${escapeHtml(item.topic.title)}</strong><small>${escapeHtml(item.topic.subject)} · ${escapeHtml(item.matchBasis === "detail-coverage" || item.matchBasis === "composite-coverage" ? "Correspondência por conteúdo" : "Correspondência parcial")}</small><small>${escapeHtml(context)}</small><small>Conhecimento encontrado: ${escapeHtml(item.conceptKeys.map((key) => item.candidates.find((candidate) => candidate.conceptKey === key)?.title || key).join(" + "))} · ${escapeHtml(history)}</small><span><button class="text-action" type="button" data-knowledge-mapping-decision="confirm" data-knowledge-mapping-index="${index}">Confirmar</button><button class="text-action danger" type="button" data-knowledge-mapping-decision="reject" data-knowledge-mapping-index="${index}">Não corresponde</button></span></article>`; }).join("")}</div></details>`;
+  knowledgeMappingConfirmedCache = review.confirmed;
+  if (!knowledgeBaseState) return "";
+  const reviewActive = knowledgeMappingView === "review";
+  const reviewList = review.suggested.length ? review.suggested.map(knowledgeMappingReviewItemMarkup).join("") : `<p class="knowledge-mapping-empty">Nenhuma correspondência aguardando revisão.</p>`;
+  const confirmedList = review.confirmed.length ? review.confirmed.map(knowledgeMappingConfirmedItemMarkup).join("") : `<p class="knowledge-mapping-empty">Nenhuma correspondência confirmada neste planejamento.</p>`;
+  return `<details class="knowledge-mapping-review"${knowledgeMappingManagerOpen ? " open" : ""}><summary>Gerenciar correspondências</summary><p>${review.confirmed.length} confirmada${review.confirmed.length === 1 ? "" : "s"} · ${review.suggested.length} para revisar.</p><div class="knowledge-mapping-tabs" role="tablist" aria-label="Visualizações das correspondências"><button type="button" role="tab" aria-selected="${reviewActive}" class="${reviewActive ? "is-active" : ""}" data-knowledge-mapping-view="review">Para revisar <span>${review.suggested.length}</span></button><button type="button" role="tab" aria-selected="${!reviewActive}" class="${!reviewActive ? "is-active" : ""}" data-knowledge-mapping-view="confirmed">Confirmadas <span>${review.confirmed.length}</span></button></div><div class="knowledge-mapping-review-list">${reviewActive ? reviewList : confirmedList}</div></details>`;
 }
 
 function knowledgeBaseCloudIsAvailable() {
@@ -13067,6 +13105,19 @@ function scheduleKnowledgeBaseBootstrap() {
   else window.setTimeout(run, 180);
 }
 
+function commitKnowledgeBaseDecision(next) {
+  knowledgeBaseState = window.KnowledgeBase?.migrateKnowledgeMappings?.(next) || next;
+  knowledgeMappingReviewCacheKey = "";
+  knowledgeMappingReviewCacheValue = null;
+  saveLocalKnowledgeBase(knowledgeBaseState);
+  if (knowledgeBaseCloudIsAvailable()) {
+    void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion }).then((saved) => {
+      knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
+    }).catch(() => {});
+  }
+  return knowledgeBaseState;
+}
+
 window.KnowledgeBaseStore = {
   refresh: bootstrapKnowledgeBase,
   inspect: () => window.KnowledgeBase?.inspectKnowledgeBase(knowledgeBaseState || readLocalKnowledgeBase() || {}),
@@ -13074,16 +13125,11 @@ window.KnowledgeBaseStore = {
   suggestForTopic: (topic, options) => window.KnowledgeBase?.mapTopic(knowledgeBaseState || readLocalKnowledgeBase() || {}, topic, options),
   decideMapping: (mapping, decision) => {
     const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
-    knowledgeBaseState = window.KnowledgeBase?.migrateKnowledgeMappings?.(window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current) || current;
-    knowledgeMappingReviewCacheKey = "";
-    knowledgeMappingReviewCacheValue = null;
-    saveLocalKnowledgeBase(knowledgeBaseState);
-    if (knowledgeBaseCloudIsAvailable()) {
-      void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion }).then((saved) => {
-        knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
-      }).catch(() => {});
-    }
-    return knowledgeBaseState;
+    return commitKnowledgeBaseDecision(window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current);
+  },
+  revokeMapping: (mapping, mode) => {
+    const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
+    return commitKnowledgeBaseDecision(window.KnowledgeBase?.revokeTopicMapping(current, mapping, { mode }) || current);
   },
 };
 
@@ -16307,10 +16353,18 @@ els.initialDiagnosisList?.addEventListener("change", (event) => {
   updateInitialDiagnosisSubjectNotice(row);
   scheduleAutoSave();
 });
-els.initialDiagnosisList?.addEventListener("click", (event) => {
+els.initialDiagnosisList?.addEventListener("click", async (event) => {
   const openMappings = event.target.closest("[data-open-knowledge-mappings]");
   if (openMappings) {
+    knowledgeMappingManagerOpen = true;
     openMappings.closest("details")?.setAttribute("open", "");
+    return;
+  }
+  const mappingView = event.target.closest("[data-knowledge-mapping-view]");
+  if (mappingView) {
+    knowledgeMappingView = mappingView.dataset.knowledgeMappingView === "confirmed" ? "confirmed" : "review";
+    knowledgeMappingManagerOpen = true;
+    renderInitialDiagnosis();
     return;
   }
   const mappingDecision = event.target.closest("[data-knowledge-mapping-decision]");
@@ -16319,8 +16373,28 @@ els.initialDiagnosisList?.addEventListener("click", (event) => {
     const item = knowledgeMappingReviewCache[index];
     if (item) {
       window.KnowledgeBaseStore?.decideMapping(item, mappingDecision.dataset.knowledgeMappingDecision);
+      knowledgeMappingManagerOpen = true;
       renderInitialDiagnosis();
     }
+    return;
+  }
+  const mappingRevoke = event.target.closest("[data-knowledge-mapping-revoke]");
+  if (mappingRevoke) {
+    const item = knowledgeMappingConfirmedCache[Number(mappingRevoke.dataset.knowledgeMappingIndex)];
+    if (!item) return;
+    const mode = mappingRevoke.dataset.knowledgeMappingRevoke === "reject" ? "reject" : "undo";
+    const message = mode === "reject"
+      ? "A relação deixará de ser usada e não será sugerida novamente para este tópico. Seu histórico de estudo não será apagado."
+      : "Desfazer esta confirmação? A correspondência poderá voltar a ser sugerida, mas seu histórico de estudo será preservado.";
+    const confirmed = await dialogConfirm(message, {
+      title: mode === "reject" ? "Marcar correspondência como incorreta?" : "Desfazer confirmação?",
+      confirmLabel: mode === "reject" ? "Marcar como incorreta" : "Desfazer confirmação",
+      variant: mode === "reject" ? "danger" : "default",
+    });
+    if (!confirmed) return;
+    window.KnowledgeBaseStore?.revokeMapping(item, mode);
+    knowledgeMappingManagerOpen = true;
+    renderInitialDiagnosis();
     return;
   }
   const button = event.target.closest("[data-toggle-history-subject]");

@@ -267,6 +267,63 @@
     return next;
   }
 
+  function revokeMappingDecision(base = {}, mapping = {}, options = {}) {
+    const mode = options.mode === "reject" ? "reject" : "undo";
+    const now = options.now || new Date().toISOString();
+    const topic = topicDescriptor(mapping.topic || mapping);
+    const conceptKeys = normalizedKeys(mapping.conceptKeys || mapping.confirmedConceptKeys || mapping.suggestedConceptKeys);
+    const identity = mapping.topicIdentity || mappingIdentity(topic);
+    const targetTitle = topic.normalizedTitle;
+    const targetSubject = normalize(topic.subject);
+    const sameKeys = (item = {}) => normalizedKeys(item.conceptKeys || [item.canonicalKey]).join("|") === conceptKeys.join("|");
+    const isManualDecision = (item = {}) => item.status === "user-confirmed" || item.basis === "user-confirmed";
+    const storedMappingDescriptor = (item = {}) => topicDescriptor({
+      planId: item.planId,
+      topicId: item.topicId,
+      materia: item.originalSubject,
+      assunto: item.originalTopic,
+      titulo: item.originalTitle,
+      descricao: item.originalDetails,
+    });
+    const mappingMatches = (item = {}) => {
+      const itemIdentity = item.topicIdentity || mappingIdentity(storedMappingDescriptor(item));
+      return isManualDecision(item) && itemIdentity === identity && sameKeys(item);
+    };
+    const nextMappings = (base.topicMappings || []).filter((item) => !mappingMatches(item)).map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys || [item.canonicalKey]) }));
+    const anotherDecisionUses = (conceptKey) => nextMappings.some((item) => {
+      if (!isManualDecision(item) || !normalizedKeys(item.conceptKeys || [item.canonicalKey]).includes(conceptKey)) return false;
+      const descriptor = storedMappingDescriptor(item);
+      return descriptor.normalizedTitle === targetTitle && normalize(descriptor.subject) === targetSubject;
+    });
+    const nextRules = (base.mappingRules || []).filter((rule) => {
+      const matches = rule.basis === "user-confirmed"
+        && normalize(rule.normalizedTargetTitle) === targetTitle
+        && normalize(rule.targetSubjectContext) === targetSubject
+        && sameKeys(rule);
+      if (!matches) return true;
+      return conceptKeys.some((key) => anotherDecisionUses(key));
+    }).map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys) }));
+    const nextAliases = (base.aliases || []).filter((alias) => {
+      const conceptKey = normalize(alias.conceptKey);
+      const removable = alias.basis === "user-confirmed"
+        && normalize(alias.aliasNormalized || alias.aliasDisplay) === targetTitle
+        && conceptKeys.includes(conceptKey)
+        && normalize(alias.subjectContext) === targetSubject;
+      return !removable || anotherDecisionUses(conceptKey);
+    }).map((item) => ({ ...item }));
+    const nextRejections = (base.mappingRejections || []).map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys) }));
+    if (mode === "reject" && conceptKeys.length && !nextRejections.some((item) => item.topicIdentity === identity && sameKeys(item))) {
+      nextRejections.push({ topicIdentity: identity, planId: topic.planId, normalizedTitle: targetTitle, targetSubjectContext: targetSubject, conceptKeys, basis: "user-rejected", rejectedAt: now });
+    }
+    return {
+      ...base,
+      topicMappings: nextMappings,
+      mappingRules: nextRules,
+      aliases: nextAliases,
+      mappingRejections: nextRejections,
+    };
+  }
+
   function migrateKnowledgeMappings(base = {}) {
     const mappings = (base.topicMappings || []).map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys || [item.canonicalKey || item.conceptId?.replace(/^concept:/, "")]), status: item.status || (item.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed") }));
     return { ...base, schemaVersion: Math.max(2, Number(base.schemaVersion) || 1), topicMappings: mappings, aliases: Array.isArray(base.aliases) ? base.aliases.map((item) => ({ ...item })) : [], mappingRules: Array.isArray(base.mappingRules) ? base.mappingRules.map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys) })) : [], mappingRejections: Array.isArray(base.mappingRejections) ? base.mappingRejections.map((item) => ({ ...item, conceptKeys: normalizedKeys(item.conceptKeys) })) : [] };
@@ -290,7 +347,7 @@
 
   function inspectTopicMapping(base = {}, topic = {}) { const mapping = matchTopicToConcepts(topic, base); return { topicId: mapping.topic.topicId, title: mapping.topic.title, subject: mapping.topic.subject, candidates: mapping.candidates, confirmedConceptKeys: mapping.status === "auto-confirmed" || mapping.status === "user-confirmed" ? mapping.conceptKeys : [], suggestedConceptKeys: mapping.status === "suggested" ? mapping.conceptKeys : [], rejectedConceptKeys: (base.mappingRejections || []).filter((item) => item.topicIdentity === mappingIdentity(mapping.topic)).flatMap((item) => item.conceptKeys), coverage: mapping.coverage, matchBasis: mapping.matchBasis, confidence: mapping.confidence, semanticGate: mapping.semanticGate, coreSharedTerms: mapping.coreSharedTerms, detailSharedTerms: mapping.sharedTerms, relationship: mapping.relationship, rulesApplied: mapping.rulesApplied }; }
 
-  const api = { normalize, topicDescriptor, conceptDescriptor, mappingIdentity, buildKnowledgeMappingIndex, tokenDistinctiveness, titleAffinity, topicAnchorCompatibility, candidateConcepts, matchTopicToConcepts, matchConceptToTopics, suggestMappings, applyMappingDecision, migrateKnowledgeMappings, evidenceSummaryForConceptKeys, inspectTopicMapping };
+  const api = { normalize, topicDescriptor, conceptDescriptor, mappingIdentity, buildKnowledgeMappingIndex, tokenDistinctiveness, titleAffinity, topicAnchorCompatibility, candidateConcepts, matchTopicToConcepts, matchConceptToTopics, suggestMappings, applyMappingDecision, revokeMappingDecision, migrateKnowledgeMappings, evidenceSummaryForConceptKeys, inspectTopicMapping };
   global.KnowledgeMapping = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
