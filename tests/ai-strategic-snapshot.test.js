@@ -83,6 +83,7 @@ assert.equal(portuguese.inheritedKnowledge.source, "permanent-knowledge");
 assert.equal(portuguese.strategic.score, .82, "O score estratégico deve ser apenas transportado do motor local.");
 assert.ok(portuguese.errors.recurrence === "high");
 assert.equal(portuguese.maintenanceDue, false);
+assert.equal(portuguese.diagnosis.learningState.key, portuguese.strategic.learningState.key, "As visões do estado de aprendizagem devem usar a mesma fonte local.");
 
 const accounting = snapshot.topics.find((topic) => topic.subject === "Contabilidade");
 assert.equal(accounting.inheritedKnowledge.available, false, "Suggested não pode aparecer como conhecimento confirmado.");
@@ -99,6 +100,25 @@ assert.equal(control.diagnosis.masteryLevel, "strong");
 const partialSnapshot = snapshotEngine.buildStrategicSnapshot({ now, subjects: [{ name: "Direito", topicCount: 10 }], topics: [{ subject: "Direito", topic: "Tema estudado", diagnosis: { level: "adequate" }, currentEvidence: { questions: 60, sessions: 5 }, inheritedKnowledge: { available: true, knowledgeBase: true, level: "partial", confidence: .7, coverage: .4, relationship: "partial", mapping: { status: "auto-confirmed" } } }] });
 assert.equal(partialSnapshot.topics[0].inheritedKnowledge.coverage, .4);
 assert.ok(partialSnapshot.subjects[0].diagnosticConfidence < partialSnapshot.topics[0].confidence.value, "A confiança da matéria deve considerar a cobertura dos tópicos.");
+assert.deepEqual(partialSnapshot.subjects[0].confidenceCoverage, { confirmedTopics: 1, developingTopics: 0, earlyTopics: 0, unknownTopics: 9, confirmedShare: .1, evidenceCoveredShare: .1 });
+assert.ok(partialSnapshot.subjects[0].diagnosticConfidence < .68, "Um único tópico forte entre dez não pode produzir confiança alta para a matéria.");
+
+const historicalRankChange = snapshotEngine.buildStrategicSnapshot({
+  now,
+  topics: [
+    { subject: "Direito", topic: "A", diagnosis: { level: "attention" }, strategic: { score: .8, rank: 2, learningState: { key: "recovery" } }, currentEvidence: { questions: 30, sessions: 3 } },
+  ],
+  previousTopics: [
+    { subject: "Direito", topic: "A", diagnosis: { masteryLevel: "deficiency", learningState: { key: "building" } }, strategic: { score: .2, rank: 8, learningState: { key: "building" } }, currentEvidence: { questions: 20, sessions: 2 } },
+  ],
+});
+assert.equal(historicalRankChange.comparison.deltas.priorityMovement[0].fromRank, 8);
+assert.equal(historicalRankChange.comparison.deltas.priorityMovement[0].toRank, 2);
+assert.ok(historicalRankChange.comparison.deltas.learningStateChanges.some((change) => change.from === "building" && change.to === "recovery"));
+assert.ok(historicalRankChange.comparison.meaningfulChanges.some((change) => change.type === "priority-rise"));
+assert.notEqual(historicalRankChange.signature.value, snapshot.signature.value, "Mudança estratégica anterior deve participar da assinatura.");
+assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("isolated bad week")));
+assert.ok(snapshot.instructions.rules.some((rule) => rule.includes("override-suggestion")));
 
 assert.equal(snapshot.weeklyCycle.plannedMinutes, 1159);
 assert.equal(snapshot.weeklyCycle.executedMinutes, 720);

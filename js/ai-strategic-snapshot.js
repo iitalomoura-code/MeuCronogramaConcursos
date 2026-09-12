@@ -150,6 +150,7 @@
 
   function buildTopic(topic = {}, { now = 0, subject = {} } = {}) {
     const diagnosis = topic.diagnosis || {};
+    const strategicSource = topic.strategic || topic.strategicPriority || {};
     const current = currentEvidence(topic.currentEvidence || topic.current || diagnosis.evidence || {}, diagnosis);
     const confidence = Confidence?.calculate?.({ diagnosis, evidence: topic.currentEvidence || topic.current || diagnosis.evidence || current, now }) || {
       value: numberOrNull(diagnosis.confidence) ?? 0,
@@ -160,8 +161,8 @@
       limitations: [],
     };
     const inherited = sanitizeInherited(topic.inheritedKnowledge || topic.historyInheritance || diagnosis.historyInheritance || {}, now);
-    const learningState = normalizeLearningState(topic.learningState || diagnosis.learningState || {});
-    const strategicSource = topic.strategic || topic.strategicPriority || {};
+    // O estado calculado pelo motor estratégico é a fonte comum das duas visões.
+    const learningState = normalizeLearningState(topic.learningState || diagnosis.learningState || strategicSource.learningState || {});
     const strategic = {
       score: numberOrNull(strategicSource.score),
       band: text(strategicSource.band) || null,
@@ -229,6 +230,14 @@
     const studiedTopicCount = Math.max(0, Number(subject.studiedTopicCount) || subjectTopics.filter((topic) => topic.currentEvidence.questions > 0 || topic.currentEvidence.sessions > 0).length);
     const coverage = numberOrNull(subject.coverage) ?? (topicCount ? studiedTopicCount / topicCount : 0);
     const coverageAdjustedConfidence = topicCount ? rawConfidence * (.5 + .5 * clamp(coverage)) : rawConfidence;
+    const stages = { confirmed: 0, developing: 0, early: 0, unknown: 0 };
+    subjectTopics.forEach((topic) => {
+      const stage = stages[topic.confidence.evidenceStage] !== undefined ? topic.confidence.evidenceStage : "unknown";
+      stages[stage] += 1;
+    });
+    const totalTopics = Math.max(topicCount, subjectTopics.length);
+    stages.unknown += Math.max(0, totalTopics - subjectTopics.length);
+    const evidenceTopics = stages.confirmed + stages.developing;
     return {
       name,
       importance: {
@@ -244,6 +253,14 @@
       studiedTopicCount,
       coverage,
       diagnosticConfidence: Number(coverageAdjustedConfidence.toFixed(3)),
+      confidenceCoverage: {
+        confirmedTopics: stages.confirmed,
+        developingTopics: stages.developing,
+        earlyTopics: stages.early,
+        unknownTopics: stages.unknown,
+        confirmedShare: totalTopics ? Number((stages.confirmed / totalTopics).toFixed(3)) : 0,
+        evidenceCoveredShare: totalTopics ? Number((evidenceTopics / totalTopics).toFixed(3)) : 0,
+      },
       strategicShare: numberOrNull(subject.strategicShare),
       topics: subjectTopics.map((topic) => topic.topic),
     };
@@ -399,12 +416,17 @@
       "Current factual performance has precedence over historical knowledge.",
       "Historical knowledge is context and baseline, not current performance.",
       "Low confidence means caution, not low ability.",
+      "An isolated bad week does not prove a structural trend when confidence is low.",
       "Missing evidence is unknown, not weakness; null accuracy must remain unknown.",
       "Planning is not execution, and remaining planned capacity is not debt.",
       "strategic.score is calculated by the local engine and must not be recomputed.",
-      "Suggested or partial mappings are not confirmed equivalent knowledge.",
+      "Suggested or partial mappings are not confirmed equivalent knowledge; partial mapping never means integral current-topic mastery.",
+      "Strong historical knowledge plus little current evidence means strong baseline plus uncertain current state.",
       "Self-assessment has lower authority than factual evidence.",
-      "Maintenance and recovery are different states.",
+      "Maintenance and recovery are different states; maintenance does not compete equally with reliable deficiency or recovery without exceptional strategic context.",
+      "Never turn missing execution into student failure.",
+      "Treat trend as a trend only when the local engine has already classified it as such.",
+      "If an AI recommendation diverges from strategic.rank, use relationToEngine=override-suggestion and explain the reason.",
       "Separate fact, interpretation, and recommendation in any future response.",
     ],
   });
@@ -412,6 +434,9 @@
   const AI_OUTPUT_SCHEMA = Object.freeze({
     periodDiagnosis: { summary: "", confidence: "" },
     readiness: {},
+    facts: [],
+    interpretation: [],
+    recommendation: [],
     advances: [],
     bottlenecks: [],
     priorities: [{
@@ -445,7 +470,8 @@
     const previousTopics = Array.isArray(input.previousTopics) ? input.previousTopics.map((topic) => buildTopic(topic, { now })) : Array.isArray(input.previousCycle?.topics) ? input.previousCycle.topics : [];
     const currentCycle = normalizeCycle(input.currentCycle || weeklySource, input);
     const previousCycle = input.previousCycle ? normalizeCycle(input.previousCycle, input) : null;
-    const comparison = previousCycle ? compareCycles(currentCycle, previousCycle, topics, previousTopics) : null;
+    const hasPreviousStrategicState = Boolean(previousCycle || previousTopics.length);
+    const comparison = hasPreviousStrategicState ? compareCycles(currentCycle, previousCycle || {}, topics, previousTopics) : null;
     const uncertainties = topics.filter((topic) => topic.confidence.level === "low" || topic.confidence.evidenceStage === "unknown" || topic.confidence.evidenceStage === "early").map((topic) => ({
       subject: topic.subject,
       topic: topic.topic,
@@ -481,7 +507,7 @@
         previousCycle,
         rollingWindow: rollingWindow(input.rollingWindow),
         deltas: comparison,
-        meaningfulChanges: previousCycle ? meaningfulChanges(topics, previousTopics) : [],
+        meaningfulChanges: hasPreviousStrategicState ? meaningfulChanges(topics, previousTopics) : [],
       },
       uncertainties,
       readiness: {},

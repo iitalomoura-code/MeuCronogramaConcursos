@@ -39,7 +39,11 @@ assert.ok(app.includes("bundle.planSnapshots"), "O importador deve usar planSnap
 assert.ok(cloud.includes("function loadCloudKnowledgeBase") && cloud.includes("function saveCloudKnowledgeBase"), "A base permanente deve usar a mesma autenticação da nuvem, em armazenamento independente.");
 assert.ok(app.includes("function knowledgeBaseStorageKey") && app.includes("function bootstrapKnowledgeBase"), "A base permanente deve manter cache isolado por usuário e bootstrap não bloqueante.");
 assert.ok(index.includes("js/knowledge-base.js?v=20260912-live-ingestion"), "O motor puro da base permanente deve carregar antes do aplicativo.");
-assert.ok(index.includes("js/diagnostic-confidence.js?v=20260912-ai-contract") && index.includes("js/ai-strategic-snapshot.js?v=20260912-ai-contract"), "O contrato de leitura da IA deve carregar como módulo explícito antes do aplicativo.");
+assert.ok(index.includes("js/diagnostic-confidence.js?v=20260912-ai-contract-stabilization") && index.includes("js/ai-strategic-snapshot.js?v=20260912-ai-contract-stabilization"), "O contrato de leitura da IA deve carregar como módulo explícito antes do aplicativo.");
 assert.ok(app.includes("function buildCurrentAIStrategicSnapshot") && app.includes("window.buildCurrentAIStrategicSnapshot"), "O aplicativo deve expor somente o adaptador estratégico explícito, sem serializar o state bruto.");
+assert.ok(app.includes("function previousStrategicAdvisorTopics") && app.includes("previousTopics: previousStrategicAdvisorTopics()"), "O adaptador deve fornecer o último estado estratégico registrado por tópico.");
+assert.ok(app.includes("const currentRanks = aiStrategicRankMap(planningTopics)") && app.includes("rank: currentRanks.get(index)"), "A comparação deve receber ranking estratégico atual e anterior.");
+assert.ok(app.includes("const config = scheduleConfig()") && app.includes("contestName: config.concurso") && app.includes("role: config.cargo") && app.includes("banca: config.banca || config.examBoardName"), "O snapshot deve usar a configuração canônica do planejamento.");
+assert.ok(app.includes("learningState: topic.strategic?.learningState"), "O adaptador deve transportar explicitamente o estado calculado pelo motor.");
 
 console.log("OK - camada online, migra\u00e7\u00e3o controlada e versionamento otimista presentes.");

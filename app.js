@@ -5296,18 +5296,86 @@ function strategicPlanningTopics() {
   });
 }
 
+function aiStrategicTopicIdentity(topic = {}) {
+  return [topic.materia || topic.subject, topic.subarea, topic.assunto || topic.topic]
+    .map((value) => String(value || "").trim().toLocaleLowerCase())
+    .join("|");
+}
+
+function aiStrategicRankMap(topics = []) {
+  const entries = topics.map((topic, index) => ({
+    ...topic,
+    index,
+    unit: { materia: topic.materia || topic.subject, assunto: topic.assunto || topic.topic, subarea: topic.subarea || "" },
+    strategic: topic.strategic || {},
+  }));
+  const queue = window.StrategicPriorityEngine?.buildStrategicStudyQueue?.(entries);
+  if (Array.isArray(queue) && queue.length === entries.length) return new Map(queue.map((entry) => [entry.index, entry.queueRank]));
+  return new Map([...entries]
+    .sort((left, right) => Number(right.strategic?.score) - Number(left.strategic?.score)
+      || aiStrategicTopicIdentity(left).localeCompare(aiStrategicTopicIdentity(right)))
+    .map((entry, rank) => [entry.index, rank + 1]));
+}
+
+function previousStrategicAdvisorTopics() {
+  const snapshots = Array.isArray(state.strategicAdvisorSnapshots) ? state.strategicAdvisorSnapshots : [];
+  const previous = snapshots.at(-1);
+  const sourceTopics = Array.isArray(previous?.topics) ? previous.topics : [];
+  if (!sourceTopics.length) return [];
+  const normalizedTopics = sourceTopics.map((topic) => {
+    const subject = topic.materia || topic.subject || "";
+    const title = topic.assunto || topic.topic || "";
+    const learningState = topic.learningState || topic.strategic?.learningState || topic.diagnosis?.learningState;
+    const score = topic.strategic?.score ?? topic.strategicScore;
+    return {
+      subject,
+      topic: title,
+      subarea: topic.subarea || "",
+      diagnosis: {
+        masteryLevel: topic.diagnosis?.masteryLevel || topic.diagnosisLevel || topic.diagnosis?.level || "insufficient",
+        learningState,
+        trend: topic.diagnosis?.trend || topic.trend,
+        needsDiagnostic: topic.diagnosis?.needsDiagnostic,
+        accuracy: topic.diagnosis?.currentAccuracy ?? topic.recentAccuracy,
+        questions: topic.diagnosis?.questions ?? topic.questions,
+        sessionCount: topic.diagnosis?.sessionCount ?? topic.sessions,
+      },
+      currentEvidence: {
+        questions: topic.currentEvidence?.questions ?? topic.questions,
+        correctAnswers: topic.currentEvidence?.correctAnswers ?? topic.correctAnswers,
+        sessions: topic.currentEvidence?.sessions ?? topic.sessions,
+        recentAccuracy: topic.currentEvidence?.recentAccuracy ?? topic.recentAccuracy,
+      },
+      strategic: {
+        score,
+        rank: topic.strategic?.rank ?? topic.rank,
+        learningState,
+      },
+      errorSignals: topic.errorSignals || { recurrence: topic.errorRecurrence },
+    };
+  });
+  const computedRanks = aiStrategicRankMap(normalizedTopics);
+  return normalizedTopics.map((topic, index) => ({
+    ...topic,
+    strategic: { ...topic.strategic, rank: topic.strategic.rank ?? computedRanks.get(index) },
+  }));
+}
+
 // Public read-only adapter for a future AI boundary. It assembles explicit
 // engine outputs and never exposes the application state or UI structures.
 function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rollingWindow = null } = {}) {
   const snapshotEngine = window.AIStrategicSnapshot;
   if (!snapshotEngine?.buildStrategicSnapshot) return null;
+  const config = scheduleConfig();
+  const planningTopics = strategicPlanningTopics();
+  const currentRanks = aiStrategicRankMap(planningTopics);
   const topicEntries = (materia, assunto) => adaptivePerformanceForTopic(materia, assunto).map((entry) => ({
     questions: Number(entry.questoes) || 0,
     correctAnswers: Number(entry.acertos) || 0,
     studiedMinutes: Math.max(0, Number(entry.tempoEstudado) || 0) * 60,
     completedAt: entryContactDateValue(entry) ? new Date(entryContactDateValue(entry)).toISOString() : null,
   }));
-  const topics = strategicPlanningTopics().map((topic) => ({
+  const topics = planningTopics.map((topic, index) => ({
     subject: topic.materia,
     topic: topic.assuntoOriginal || topic.assunto,
     subarea: topic.subarea || "",
@@ -5319,6 +5387,7 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
       sessionCount: topic.diagnosis?.sessionCount,
       evidenceStage: topic.diagnosis?.evidenceStage,
       trend: topic.diagnosis?.trend,
+      learningState: topic.strategic?.learningState,
       needsDiagnostic: topic.diagnosis?.needsDiagnostic,
       historyInheritance: topic.historyInheritance,
       errorSignals: topic.errorSignals,
@@ -5334,7 +5403,7 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     },
     inheritedKnowledge: topic.historyInheritance,
     selfAssessment: topic.initialProfile,
-    strategic: topic.strategic,
+    strategic: { ...topic.strategic, rank: currentRanks.get(index), learningState: topic.strategic?.learningState },
     errorSignals: topic.errorSignals,
     coverage: Number(topic.diagnosis?.questions) > 0 || Number(topic.diagnosis?.sessionCount) > 0 ? 1 : 0,
     daysWithoutContact: topic.diagnosis?.daysWithoutContact,
@@ -5348,7 +5417,6 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     topicCount: subject.assuntos?.length || 0,
   }));
   const cycle = weeklyStudyCycleSummary() || state.weeklyStudyCycle || {};
-  const config = scheduleConfig();
   const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
   const cycleApi = weeklyStudyCycleApi();
   const baseline = cycle.executionBaselineByBlock || {};
@@ -5374,9 +5442,9 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
   } : null;
   return snapshotEngine.buildStrategicSnapshot({
     now,
-    contestName: state.form?.contestName,
-    role: state.form?.role || state.form?.cargo,
-    banca: state.form?.examBoardName || state.form?.banca,
+    contestName: config.concurso,
+    role: config.cargo,
+    banca: config.banca || config.examBoardName,
     subjects,
     topics,
     weeklyHours: config.horasSemana,
@@ -5384,6 +5452,7 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     plannedBlocks,
     executedBlocks,
     previousCycle,
+    previousTopics: previousStrategicAdvisorTopics(),
     rollingWindow,
   });
 }
