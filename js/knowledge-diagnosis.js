@@ -60,6 +60,11 @@
     return text(item.sourcePlanId || item.planId || item.sourceId);
   }
 
+  function factualDate(item = {}) {
+    const completedAt = dateValue(item.completedAt);
+    return completedAt || dateValue(item.observedAt);
+  }
+
   function inheritedEvidence(base = {}, conceptKeys = [], currentPlanId = "") {
     const keys = new Set(conceptKeys.map(normalize).filter(Boolean));
     const seen = new Set();
@@ -76,7 +81,7 @@
   function aggregateEvidence(evidence = [], now = Date.now()) {
     const questions = evidence.reduce((sum, item) => sum + Math.max(0, Number(item.questions) || 0), 0);
     const correctAnswers = evidence.reduce((sum, item) => sum + Math.min(Math.max(0, Number(item.questions) || 0), Math.max(0, Number(item.correctAnswers) || 0)), 0);
-    const dates = evidence.map((item) => dateValue(item.completedAt || item.observedAt)).filter(Boolean).sort((left, right) => left - right);
+    const dates = evidence.map(factualDate).filter(Boolean).sort((left, right) => left - right);
     const lastContact = dates.at(-1) || 0;
     const sessions = evidence.filter((item) => Number(item.questions) > 0 || Number(item.studiedMinutes) > 0).length;
     const studiedMinutes = evidence.reduce((sum, item) => sum + Math.max(0, Number(item.studiedMinutes) || 0), 0);
@@ -93,7 +98,7 @@
       current.correct += Math.min(itemQuestions, Math.max(0, Number(item.correctAnswers) || 0));
       current.sessions += Number(item.questions) > 0 || Number(item.studiedMinutes) > 0 ? 1 : 0;
       current.studiedMinutes += Math.max(0, Number(item.studiedMinutes) || 0);
-      current.lastContact = Math.max(current.lastContact, dateValue(item.completedAt || item.observedAt));
+      current.lastContact = Math.max(current.lastContact, factualDate(item));
       bySource.set(id, current);
     });
     const sources = [...bySource.values()].map((item) => ({
@@ -124,6 +129,9 @@
 
   function masteryFor({ evidence = [], summary = {}, relationship = "equivalent", mappingCoverage = 0, now = Date.now() } = {}) {
     const strongReference = Number(MASTERY?.STRONG_REFERENCE) || .85;
+    // Abaixo de 60% o MasteryDiagnosis já classifica a evidência como deficiência;
+    // esse mesmo limite evita chamar desempenho fraco de conhecimento reaproveitável.
+    const reusableAccuracyReference = .60;
     const minimumQuestions = Number(MASTERY?.STRONG_MIN_QUESTIONS) || 30;
     const minimumSessions = Number(MASTERY?.STRONG_MIN_SESSIONS) || 2;
     const confidence = confidenceFor(evidence, summary);
@@ -131,7 +139,7 @@
     const strongEvidence = enough && Number(summary.accuracy) >= strongReference && confidence >= .45;
     let level = summary.questions || summary.sessions ? "contact" : "none";
     if (strongEvidence && relationship === "equivalent" && mappingCoverage >= .8) level = "strong";
-    else if (summary.questions >= 10 || summary.sessions >= 2) level = "partial";
+    else if (Number(summary.accuracy) >= reusableAccuracyReference && (summary.questions >= 10 || summary.sessions >= 2)) level = "partial";
     const freshness = summary.lastContact
       ? summary.daysSinceContact >= STALE_AFTER_DAYS ? "stale" : "fresh"
       : "unknown";
@@ -153,17 +161,20 @@
     return result;
   }
 
-  function mappingWasRejected(base = {}, topic = {}) {
+  function mappingWasRejected(base = {}, topic = {}, conceptKeys = null) {
     if (!MAPPING?.mappingIdentity) return false;
     const identity = MAPPING.mappingIdentity(topic);
-    return (base.mappingRejections || []).some((item) => item.topicIdentity === identity && item.basis === "user-rejected");
+    const expected = conceptKeys ? conceptKeys.map(normalize).filter(Boolean).sort().join("|") : "";
+    return (base.mappingRejections || []).some((item) => item.topicIdentity === identity
+      && item.basis === "user-rejected"
+      && (!expected || (item.conceptKeys || []).map(normalize).filter(Boolean).sort().join("|") === expected));
   }
 
   function derive({ base = null, topic = {}, currentPlanId = "", currentEvidence = {}, initialProfile = {}, legacyInheritance = null, now = Date.now() } = {}) {
     if (!base || !MAPPING?.matchTopicToConcepts) return legacyInheritance || emptyContext({ currentEvidence, initialProfile });
-    if (mappingWasRejected(base, topic)) return emptyContext({ currentEvidence, initialProfile });
     const candidate = MAPPING.matchTopicToConcepts(topic, base);
     if (candidate?.status === "suggested") return emptyContext({ currentEvidence, initialProfile });
+    if (candidate?.status === "unmatched" && mappingWasRejected(base, topic, candidate.conceptKeys)) return emptyContext({ currentEvidence, initialProfile });
     const mapping = trustedMappingFor(base, topic);
     if (!mapping) return legacyInheritance || emptyContext({ currentEvidence, initialProfile });
     const evidence = inheritedEvidence(base, mapping.conceptKeys, currentPlanId);

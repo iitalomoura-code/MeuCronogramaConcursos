@@ -11,13 +11,23 @@
     return signals.recurrence === "high" || Number(signals.postInterventionErrors) >= 2;
   }
 
-  function hasRecoveryEvidence(diagnosis = {}, intervention = {}, signals = {}) {
+  function hasRecoveryEvidence(diagnosis = {}, intervention = {}, signals = {}, historyInheritance = {}) {
     const thresholds = config.thresholds || {};
-    const hadStrongHistory = Number(diagnosis.overallAccuracy) >= Number(thresholds.recoveryHistoricalAccuracy || .80);
+    const inheritedConfidence = clamp(historyInheritance.confidence);
+    const inheritedAccuracy = Number.isFinite(historyInheritance.metrics?.accuracy)
+      ? Number(historyInheritance.metrics.accuracy)
+      : Number.isFinite(historyInheritance.evidence?.accuracy) ? Number(historyInheritance.evidence.accuracy) : null;
+    const reliableInheritedReference = historyInheritance.level === "strong"
+      && inheritedConfidence >= Number(config.confidence?.recovery || .48)
+      && inheritedAccuracy !== null;
+    const historicalReferenceAccuracy = reliableInheritedReference ? inheritedAccuracy : Number(diagnosis.overallAccuracy);
+    const hadStrongHistory = historicalReferenceAccuracy >= Number(thresholds.recoveryHistoricalAccuracy || .80);
     const recentAccuracy = Number.isFinite(diagnosis.accuracy) ? Number(diagnosis.accuracy) : null;
+    const currentSampleIsUsable = Number(diagnosis.questions) >= 10 && diagnosis.needsDiagnostic !== true;
     const declinedEnough = diagnosis.trend?.label === "falling"
+      && currentSampleIsUsable
       && recentAccuracy !== null
-      && Number(diagnosis.overallAccuracy) - recentAccuracy >= Number(thresholds.recoveryDrop || .12);
+      && historicalReferenceAccuracy - recentAccuracy >= Number(thresholds.recoveryDrop || .12);
     const reliable = clamp(diagnosis.confidence) >= Number(config.confidence?.recovery || .48);
     const persistent = hasRecurringErrors(signals) || Number(intervention?.ineffectiveInterventions) >= 1 || ["worse", "unchanged"].includes(intervention?.lastResult);
     return hadStrongHistory && declinedEnough && reliable && persistent;
@@ -28,7 +38,7 @@
     const questions = Math.max(0, Number(diagnosis.questions) || 0);
     const covered = Math.max(clamp(coverage), hasContact ? .5 : 0);
     const mastery = diagnosis.level || "insufficient";
-    const recovery = hasRecoveryEvidence(diagnosis, intervention || {}, signals);
+    const recovery = hasRecoveryEvidence(diagnosis, intervention || {}, signals, historyInheritance || {});
     const profileLevel = initialProfile?.level || "unknown";
     const profileIsActive = Boolean(initialProfile?.active);
     const inheritedLevel = historyInheritance?.level || "none";

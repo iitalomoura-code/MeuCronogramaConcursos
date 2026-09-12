@@ -6,6 +6,7 @@ const path = require("node:path");
 const knowledge = require("../js/knowledge-base.js");
 const mapping = require("../js/knowledge-mapping.js");
 const diagnosis = require("../js/knowledge-diagnosis.js");
+const LearningState = require("../js/learning-state.js");
 
 function baseFor(titles, evidence = []) {
   return knowledge.migrateKnowledgeMappings({
@@ -30,6 +31,7 @@ function historicalEvidence(title, values = {}) {
     correctAnswers: values.correctAnswers ?? 18,
     studiedMinutes: values.studiedMinutes ?? 45,
     completedAt: values.completedAt || "2026-08-01T12:00:00.000Z",
+    observedAt: values.observedAt || "",
   };
 }
 
@@ -117,6 +119,14 @@ const weak = diagnosis.derive({
   topic: topic("Créditos Adicionais"), currentPlanId: "current-plan", now,
 });
 assert.notEqual(weak.mastery.level, "strong", "Histórico com baixo acerto não pode virar base forte.");
+const weakVoluminous = diagnosis.derive({
+  base: baseFor(["Execução Orçamentária"], [
+    historicalEvidence("Execução Orçamentária", { id: "weak-volume-1", sessionId: "weak-volume-1", questions: 30, correctAnswers: 13 }),
+    historicalEvidence("Execução Orçamentária", { id: "weak-volume-2", sessionId: "weak-volume-2", questions: 30, correctAnswers: 14 }),
+  ]),
+  topic: topic("Execução Orçamentária"), currentPlanId: "current-plan", now,
+});
+assert.equal(weakVoluminous.mastery.level, "contact", "Volume alto com 45% de acerto continua sendo apenas contato.");
 
 const stale = diagnosis.derive({
   base: baseFor(["Licitações"], [
@@ -128,6 +138,31 @@ const stale = diagnosis.derive({
 assert.equal(stale.mastery.level, "strong");
 assert.equal(stale.mastery.freshness, "stale");
 assert.equal(stale.recommendation, "Revisão curta + questões");
+
+const observedFallback = diagnosis.derive({
+  base: baseFor(["Orçamento Público"], [historicalEvidence("Orçamento Público", {
+    id: "observed-date", sessionId: "observed-date", questions: 20, correctAnswers: 16,
+    completedAt: "data inválida", observedAt: "2026-09-01T12:00:00.000Z",
+  })]),
+  topic: topic("Orçamento Público"), currentPlanId: "current-plan", now,
+});
+assert.equal(observedFallback.metrics.lastContact, Date.parse("2026-09-01T12:00:00.000Z"), "Data observada deve ser usada quando completedAt é inválido.");
+
+const recoveryHistory = { level: "strong", confidence: .8, metrics: { accuracy: .9 } };
+const recovery = LearningState.derive({
+  diagnosis: { level: "attention", questions: 50, needsDiagnostic: false, accuracy: .63, trend: { label: "falling" }, overallAccuracy: null, confidence: .72 },
+  hasContact: true,
+  historyInheritance: recoveryHistory,
+  errorSignals: { recurrence: "high" },
+});
+assert.equal(recovery.key, "recovery", "Base forte pode servir como referência para recovery após queda atual confiável.");
+const recoveryWithTinyCurrentSample = LearningState.derive({
+  diagnosis: { level: "attention", questions: 3, needsDiagnostic: true, accuracy: .63, trend: { label: "falling" }, overallAccuracy: null, confidence: .72 },
+  hasContact: true,
+  historyInheritance: recoveryHistory,
+  errorSignals: { recurrence: "high" },
+});
+assert.notEqual(recoveryWithTinyCurrentSample.key, "recovery", "Base forte não dispara recovery com amostra atual pequena.");
 
 const currentOnly = diagnosis.derive({
   base: baseFor(["Atos Administrativos"], [historicalEvidence("Atos Administrativos", { sourcePlanId: "current-plan", sessionId: "current-1", questions: 50, correctAnswers: 50 })]),
@@ -150,6 +185,22 @@ const rejectedBase = mapping.applyMappingDecision(baseFor(["Atos Administrativos
 }, "reject", "2026-09-12T10:00:00.000Z");
 const rejected = diagnosis.derive({ base: rejectedBase, topic: topic("Atos da Administração Pública"), currentPlanId: "current-plan", legacyInheritance: legacy, now });
 assert.equal(rejected.mastery.level, "none", "Mapping rejeitado não pode produzir crédito herdado.");
+
+const topicWithAlternative = topic("Tópico X", { topicId: "topic-x", subject: "Direito Administrativo" });
+const alternativeBase = baseFor(["Conceito A", "Conceito B"], [
+  historicalEvidence("Conceito B", { id: "alternative-b-1", sessionId: "alternative-b-1", questions: 25, correctAnswers: 23 }),
+  historicalEvidence("Conceito B", { id: "alternative-b-2", sessionId: "alternative-b-2", questions: 25, correctAnswers: 24 }),
+]);
+const rejectedA = mapping.applyMappingDecision(alternativeBase, {
+  topic: topicWithAlternative, conceptKeys: ["conceito a"], confidence: "high", matchBasis: "controlled-alias", relationship: "equivalent", coverage: 1,
+}, "reject", "2026-09-12T10:00:00.000Z");
+const confirmedB = mapping.applyMappingDecision(rejectedA, {
+  topic: topicWithAlternative, conceptKeys: ["conceito b"], confidence: "high", matchBasis: "controlled-alias", relationship: "equivalent", coverage: 1,
+}, "confirm", "2026-09-12T11:00:00.000Z");
+assert.equal(diagnosis.mappingWasRejected(confirmedB, topicWithAlternative, ["conceito a"]), true, "A rejeição original deve continuar específica ao conceito A.");
+assert.equal(diagnosis.mappingWasRejected(confirmedB, topicWithAlternative, ["conceito b"]), false, "A confirmação do conceito B não deve ser bloqueada pela rejeição de A.");
+const alternative = diagnosis.derive({ base: confirmedB, topic: topicWithAlternative, currentPlanId: "current-plan", now });
+assert.equal(alternative.mastery.level, "strong", "A confirmação posterior do conceito B deve produzir herança normalmente.");
 
 const deterministicInput = { base: strongBase, topic: exactTopic, currentPlanId: "current-plan", now };
 const strongBaseBeforeDerivation = structuredClone(strongBase);
