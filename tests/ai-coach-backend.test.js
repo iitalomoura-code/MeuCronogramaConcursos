@@ -55,6 +55,24 @@ function review() {
     avoidForNow: [],
     uncertainties: [],
     strategicNotes: [],
+    answerToQuestion: null,
+    sinceLastReview: {
+      summary: "",
+      advances: [],
+      declines: [],
+      unchangedImportantAreas: [],
+      newRisks: [],
+      resolvedRisks: [],
+    },
+    cycleEvaluation: {
+      executionSummary: "",
+      strategyEffectiveness: "",
+      whatWorked: [],
+      whatDidNotWork: [],
+      interventionsToKeep: [],
+      interventionsToChange: [],
+      comparisonWithPreviousCycle: "",
+    },
   };
 }
 
@@ -101,6 +119,76 @@ test("valida contrato, chama Responses API com schema e devolve metadata segura"
   assert.equal(sent.text.format.type, "json_schema");
   assert.equal(sent.text.format.strict, true);
   assert.equal(sent.text.format.schema.additionalProperties, false);
+  const providerInput = JSON.parse(sent.input[0].content[0].text);
+  assert.equal(providerInput.request.mode, "progress-check");
+  assert.deepEqual(providerInput.currentSnapshot, snapshot);
+  assert.equal(payload.meta.mode, "progress-check");
+  assert.equal(payload.meta.questionIncluded, false);
+});
+
+test("aceita progress-check sob demanda e pergunta com continuidade, sem depender do ciclo", async () => {
+  let received;
+  const coach = handler({ providerFetch: async (_url, options) => {
+    received = JSON.parse(options.body);
+    const requestPayload = JSON.parse(received.input[0].content[0].text);
+    const answer = requestPayload.request.mode === "question"
+      ? { directAnswer: "Leitura baseada nos dados atuais.", supportingFacts: ["Há evidência no snapshot."], interpretation: ["A evolução deve ser lida com o contexto atual."], recommendation: ["Continue acompanhando o diagnóstico."] }
+      : null;
+    const sinceLastReview = requestPayload.request.mode === "progress-check"
+      ? { summary: "Mudanças desde a última análise.", advances: [], declines: [], unchangedImportantAreas: [], newRisks: [], resolvedRisks: [] }
+      : null;
+    return providerResponse(200, { ...review(), answerToQuestion: answer, sinceLastReview });
+  } });
+  const context = {
+    previousCoachReview: { generatedAt: "2026-09-01T00:00:00.000Z", summary: "Revisão anterior" },
+    previousCoachCheckpoint: { snapshotSignature: "previous-signature", generatedAt: "2026-09-01T00:00:00.000Z" },
+    deltaSinceLastCoachReview: { newSessions: 1, newQuestions: 10 },
+  };
+  const progress = await coach(request({ payload: body({ mode: "progress-check", ...context }) }));
+  assert.equal(progress.status, 200);
+  assert.equal(JSON.parse(received.input[0].content[0].text).request.mode, "progress-check");
+  const question = await handler({ providerFetch: async (_url, options) => {
+    received = JSON.parse(options.body);
+    return providerResponse(200, { ...review(), answerToQuestion: { directAnswer: "Resposta", supportingFacts: [], interpretation: [], recommendation: [] } });
+  } })(request({ payload: body({ mode: "question", question: "Como estou evoluindo?", ...context }) }));
+  assert.equal(question.status, 200);
+  assert.equal((await question.clone().json()).meta.questionIncluded, true);
+  const questionPayload = JSON.parse(received.input[0].content[0].text);
+  assert.equal(questionPayload.request.question, "Como estou evoluindo?");
+  assert.deepEqual(questionPayload.request.previousCoachReview, context.previousCoachReview);
+  assert.deepEqual(questionPayload.request.deltaSinceLastCoachReview, context.deltaSinceLastCoachReview);
+  assert.deepEqual(questionPayload.request.previousCycleSnapshot, null);
+  assert.deepEqual((await question.json()).review.answerToQuestion, { directAnswer: "Resposta", supportingFacts: [], interpretation: [], recommendation: [] });
+});
+
+test("rejeita modos e perguntas inválidos", async () => {
+  const invalidMode = await handler()(request({ payload: body({ mode: "chat" }) }));
+  assert.equal(invalidMode.status, 422);
+  const missingQuestion = await handler()(request({ payload: body({ mode: "question" }) }));
+  assert.equal(missingQuestion.status, 422);
+  assert.equal((await missingQuestion.json()).error.code, "AI_INVALID_QUESTION");
+  const oversizedQuestion = await handler()(request({ payload: body({ mode: "question", question: "x".repeat(2001) }) }));
+  assert.equal(oversizedQuestion.status, 422);
+  assert.equal((await oversizedQuestion.json()).error.code, "AI_INVALID_QUESTION");
+});
+
+test("exige resposta específica para o modo question", async () => {
+  const response = await handler({ providerFetch: async () => providerResponse(200, review()) })(request({ payload: body({ mode: "question", question: "Como estou evoluindo?" }) }));
+  assert.equal(response.status, 502);
+});
+
+test("cycle-review recebe snapshot do ciclo anterior separado do contexto do Coach", async () => {
+  let received;
+  const previousCycleSnapshot = { signature: "previous-cycle-signature", weeklyCycle: { plannedMinutes: 600, executedMinutes: 540 } };
+  const cycleEvaluation = { executionSummary: "Execução registrada.", strategyEffectiveness: "A avaliar.", whatWorked: [], whatDidNotWork: [], interventionsToKeep: [], interventionsToChange: [], comparisonWithPreviousCycle: "Comparação disponível." };
+  const response = await handler({ providerFetch: async (_url, options) => {
+    received = JSON.parse(options.body);
+    return providerResponse(200, { ...review(), cycleEvaluation });
+  } })(request({ payload: body({ mode: "cycle-review", previousCycleSnapshot }) }));
+  assert.equal(response.status, 200);
+  const sent = JSON.parse(received.input[0].content[0].text);
+  assert.deepEqual(sent.request.previousCycleSnapshot, previousCycleSnapshot);
+  assert.deepEqual((await response.json()).review.cycleEvaluation, cycleEvaluation);
 });
 
 test("rejeita versão, snapshot e payload grande sem expor detalhes internos", async () => {

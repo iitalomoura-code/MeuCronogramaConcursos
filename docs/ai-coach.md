@@ -31,7 +31,41 @@ Snapshot; não contém state bruto, HTML, tokens, UID ou e-mail.
 
 O review possui `periodDiagnosis`, `facts`, `interpretation`,
 `recommendation`, `advances`, `bottlenecks`, até três `priorities`,
-`maintenance`, `avoidForNow`, `uncertainties` e `strategicNotes`.
+`maintenance`, `avoidForNow`, `uncertainties`, `strategicNotes` e, no modo
+`question`, `answerToQuestion`. O modo `progress-check` usa também
+`sinceLastReview`, enquanto `cycle-review` usa `cycleEvaluation`.
+
+## Modos e continuidade
+
+O contrato aceita três modos independentes do fechamento de ciclo:
+
+- `cycle-review`: revisão oficial e mais profunda ligada ao ciclo, podendo comparar o snapshot do ciclo anterior;
+- `progress-check`: consulta intermediária sobre o que mudou desde a última análise;
+- `question`: pergunta contextual do usuário, limitada a 2.000 caracteres.
+
+`AIStrategicCoachClient.analyze(snapshot)` mantém o modo
+`progress-check` durante a transição por compatibilidade. Também estão disponíveis
+`analyzeCycle(snapshot, previousContext)`,
+`checkProgress(snapshot, previousContext)`,
+`reanalyze(snapshot, previousContext)` como alias de compatibilidade, e
+`ask(snapshot, question, previousContext)`.
+
+`previousContext` pode conter `previousCoachReview`,
+`previousCoachCheckpoint`, `deltaSinceLastCoachReview` e
+`previousCycleSnapshot`. `previousCoachReview` é a memória da última consulta
+do Coach; `previousCycleSnapshot` é a referência factual/estratégica do ciclo
+anterior. Eles não são intercambiáveis. A revisão anterior é contexto
+estratégico, não evidência factual: o snapshot atual sempre tem precedência.
+Consultas intermediárias priorizam o delta e o snapshot atual, sem exigir
+releitura completa do histórico; `cycle-review` pode comparar os dois
+snapshots de ciclo. A última consulta do Coach nunca substitui
+`previousCycleSnapshot`.
+
+O dedupe do cliente considera `snapshotSignature`, modo e pergunta
+normalizada. Assim, análises iguais de `cycle-review`/`reanalyze-now` podem
+ser compartilhadas, enquanto perguntas diferentes continuam independentes.
+Não existe regra de uma consulta por ciclo; permanece apenas o rate limit
+técnico por usuário.
 
 ## Códigos de erro
 
@@ -45,7 +79,9 @@ ficam fora da Fase 4.3A.
 
 ## Teste e deploy
 
-O navegador expõe `AIStrategicCoachClient.analyze(snapshot)` e
+O navegador expõe `AIStrategicCoachClient.analyze(snapshot)`,
+`AIStrategicCoachClient.reanalyze(snapshot, previousContext)` e
+`AIStrategicCoachClient.ask(snapshot, question, previousContext)`, além de
 `requestAIStrategicCoachReview()` para teste manual. A chamada não é automática.
 
 Com o Supabase CLI autenticado e o projeto conectado:

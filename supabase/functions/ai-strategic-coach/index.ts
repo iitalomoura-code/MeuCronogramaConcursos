@@ -1,9 +1,12 @@
 const AI_COACH_MODEL = "gpt-5.6-terra";
 const SUPPORTED_CONTRACT_VERSION = 1;
+const DEFAULT_COACH_MODE = "progress-check";
 const MAX_SNAPSHOT_BYTES = 500 * 1024;
 const PROVIDER_TIMEOUT_MS = 40_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const COACH_MODES = ["cycle-review", "progress-check", "question"];
+const MAX_QUESTION_CHARS = 2000;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -27,13 +30,26 @@ Respeite comparison.basis e só use linguagem de ciclo anterior quando temporall
 Separe fatos, interpretação e recomendação. strategic.rank e strategic.score são autoridade operacional.
 Se divergir do ranking, use relationToEngine=override-suggestion e informe engineRank, reason e aiSuggestedImportance.
 Priorize ganho esperado de pontos por unidade de tempo, respeitando a capacidade semanal e sem criar calendário diário rígido.
-Retorne no máximo três prioridades principais.`;
+Retorne no máximo três prioridades principais.
+
+Modos de consulta:
+- cycle-review: revisão oficial e mais profunda do ciclo, podendo comparar previousCycleSnapshot com currentSnapshot;
+- progress-check: verificação intermediária do progresso, sem depender do fechamento de ciclo;
+- question: responda a pergunta do usuário usando o snapshot atual.
+A pergunta é somente intenção/contexto, nunca evidência factual, e o Coach não é um chatbot genérico.
+Use previousCoachReview apenas como contexto da última consulta e previousCycleSnapshot apenas como referência do ciclo anterior;
+eles não são intercambiáveis. O snapshot atual é a fonte de verdade;
+se a evidência atual contradizer a revisão anterior, atualize a conclusão.
+Para perguntas sobre evolução, priorize deltaSinceLastCoachReview e o snapshot atual.
+Não limite consultas a uma por ciclo. Em question, preencha answerToQuestion;
+em progress-check, preencha sinceLastReview; em cycle-review, preencha cycleEvaluation.
+Nos demais campos específicos, use null.`;
 
 const nullableText = { type: ["string", "null"] };
 const reviewSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["periodDiagnosis", "facts", "interpretation", "recommendation", "advances", "bottlenecks", "priorities", "maintenance", "avoidForNow", "uncertainties", "strategicNotes"],
+  required: ["periodDiagnosis", "facts", "interpretation", "recommendation", "advances", "bottlenecks", "priorities", "maintenance", "avoidForNow", "uncertainties", "strategicNotes", "answerToQuestion", "sinceLastReview", "cycleEvaluation"],
   properties: {
     periodDiagnosis: {
       type: "object",
@@ -72,6 +88,44 @@ const reviewSchema = {
     avoidForNow: { type: "array", items: { type: "object", additionalProperties: false, required: ["text", "reason"], properties: { text: { type: "string" }, reason: { type: "string" } } } },
     uncertainties: { type: "array", items: { type: "object", additionalProperties: false, required: ["text", "subject", "topic"], properties: { text: { type: "string" }, subject: nullableText, topic: nullableText } } },
     strategicNotes: { type: "array", items: { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string" } } } },
+    answerToQuestion: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["directAnswer", "supportingFacts", "interpretation", "recommendation"],
+      properties: {
+        directAnswer: { type: "string" },
+        supportingFacts: { type: "array", items: { type: "string" } },
+        interpretation: { type: "array", items: { type: "string" } },
+        recommendation: { type: "array", items: { type: "string" } },
+      },
+    },
+    sinceLastReview: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["summary", "advances", "declines", "unchangedImportantAreas", "newRisks", "resolvedRisks"],
+      properties: {
+        summary: { type: "string" },
+        advances: { type: "array", items: { type: "string" } },
+        declines: { type: "array", items: { type: "string" } },
+        unchangedImportantAreas: { type: "array", items: { type: "string" } },
+        newRisks: { type: "array", items: { type: "string" } },
+        resolvedRisks: { type: "array", items: { type: "string" } },
+      },
+    },
+    cycleEvaluation: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["executionSummary", "strategyEffectiveness", "whatWorked", "whatDidNotWork", "interventionsToKeep", "interventionsToChange", "comparisonWithPreviousCycle"],
+      properties: {
+        executionSummary: { type: "string" },
+        strategyEffectiveness: { type: "string" },
+        whatWorked: { type: "array", items: { type: "string" } },
+        whatDidNotWork: { type: "array", items: { type: "string" } },
+        interventionsToKeep: { type: "array", items: { type: "string" } },
+        interventionsToChange: { type: "array", items: { type: "string" } },
+        comparisonWithPreviousCycle: { type: "string" },
+      },
+    },
   },
 };
 
@@ -96,8 +150,9 @@ function isObject(value) {
 }
 
 function validateSnapshotRequest(body) {
-  if (!isObject(body) || !isObject(body.snapshot)) return false;
-  const snapshot = body.snapshot;
+  if (!isObject(body)) return false;
+  const snapshot = isObject(body.currentSnapshot) ? body.currentSnapshot : body.snapshot;
+  if (!isObject(snapshot)) return false;
   if (body.aiReadContractVersion !== SUPPORTED_CONTRACT_VERSION || snapshot.aiReadContractVersion !== SUPPORTED_CONTRACT_VERSION) return false;
   const embeddedSignature = typeof snapshot.signature === "string" ? snapshot.signature : snapshot.signature?.value;
   if (!embeddedSignature || typeof body.snapshotSignature !== "string" || body.snapshotSignature !== embeddedSignature) return false;
@@ -109,12 +164,62 @@ function validateSnapshotRequest(body) {
     && isObject(snapshot.weeklyCycle);
 }
 
+function currentSnapshotFromRequest(body) {
+  return isObject(body?.currentSnapshot) ? body.currentSnapshot : body?.snapshot;
+}
+
+function coachRequestOptions(body) {
+  if (!isObject(body)) return null;
+  const mode = body.mode || DEFAULT_COACH_MODE;
+  if (!COACH_MODES.includes(mode)) return null;
+  const question = body.question;
+  if (mode === "question") {
+    if (typeof question !== "string" || !question.trim() || question.trim().length > MAX_QUESTION_CHARS) return null;
+  } else if (question !== undefined && question !== null && String(question).trim()) {
+    return null;
+  }
+  for (const field of ["previousCoachReview", "previousCoachCheckpoint", "deltaSinceLastCoachReview", "previousCycleSnapshot"]) {
+    if (body[field] !== undefined && !isObject(body[field])) return null;
+  }
+  return {
+    mode,
+    question: mode === "question" ? question.trim() : null,
+    previousCoachReview: body.previousCoachReview || null,
+    previousCoachCheckpoint: body.previousCoachCheckpoint || null,
+    deltaSinceLastCoachReview: body.deltaSinceLastCoachReview || null,
+    previousCycleSnapshot: body.previousCycleSnapshot || null,
+  };
+}
+
+function invalidQuestion(body) {
+  return body?.mode === "question" && (typeof body.question !== "string" || !body.question.trim() || body.question.trim().length > MAX_QUESTION_CHARS);
+}
+
+function validateCoachRequest(body) {
+  return Boolean(coachRequestOptions(body));
+}
+
 function validateReview(review) {
   if (!isObject(review) || !isObject(review.periodDiagnosis)) return false;
   const requiredArrays = ["facts", "interpretation", "recommendation", "advances", "bottlenecks", "priorities", "maintenance", "avoidForNow", "uncertainties", "strategicNotes"];
   if (requiredArrays.some((field) => !Array.isArray(review[field]))) return false;
   if (!review.periodDiagnosis.summary || !["high", "medium", "low"].includes(review.periodDiagnosis.confidence)) return false;
   if (review.priorities.length > 3) return false;
+  if (review.answerToQuestion !== undefined && review.answerToQuestion !== null && (!isObject(review.answerToQuestion)
+    || typeof review.answerToQuestion.directAnswer !== "string"
+    || !Array.isArray(review.answerToQuestion.supportingFacts)
+    || !Array.isArray(review.answerToQuestion.interpretation)
+    || !Array.isArray(review.answerToQuestion.recommendation)
+    || review.answerToQuestion.supportingFacts.some((item) => typeof item !== "string")
+    || review.answerToQuestion.interpretation.some((item) => typeof item !== "string")
+    || review.answerToQuestion.recommendation.some((item) => typeof item !== "string"))) return false;
+  for (const [field, requiredFields] of [["sinceLastReview", ["summary", "advances", "declines", "unchangedImportantAreas", "newRisks", "resolvedRisks"]], ["cycleEvaluation", ["executionSummary", "strategyEffectiveness", "whatWorked", "whatDidNotWork", "interventionsToKeep", "interventionsToChange", "comparisonWithPreviousCycle"]]]) {
+    const value = review[field];
+    if (value !== undefined && value !== null && (!isObject(value)
+      || requiredFields.some((required) => value[required] === undefined)
+      || ["summary", "executionSummary", "strategyEffectiveness", "comparisonWithPreviousCycle"].some((required) => value[required] !== undefined && typeof value[required] !== "string")
+      || ["advances", "declines", "unchangedImportantAreas", "newRisks", "resolvedRisks", "whatWorked", "whatDidNotWork", "interventionsToKeep", "interventionsToChange"].some((required) => value[required] !== undefined && (!Array.isArray(value[required]) || value[required].some((item) => typeof item !== "string"))))) return false;
+  }
   return review.priorities.every((item) => isObject(item)
     && typeof item.subject === "string"
     && typeof item.topic === "string"
@@ -157,7 +262,7 @@ async function readProviderReview(response) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS }) {
+async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS, requestOptions = {} }) {
   const controller = new AbortController();
   let timeoutId;
   try {
@@ -168,7 +273,17 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
       body: JSON.stringify({
         model: AI_COACH_MODEL,
         instructions: AI_COACH_INSTRUCTIONS,
-        input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify(snapshot) }] }],
+        input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify({
+          request: {
+            mode: requestOptions.mode || DEFAULT_COACH_MODE,
+            question: requestOptions.question || null,
+            previousCoachReview: requestOptions.previousCoachReview || null,
+            previousCoachCheckpoint: requestOptions.previousCoachCheckpoint || null,
+            deltaSinceLastCoachReview: requestOptions.deltaSinceLastCoachReview || null,
+            previousCycleSnapshot: requestOptions.previousCycleSnapshot || null,
+          },
+          currentSnapshot: snapshot,
+        }) }] }],
         text: { format: { type: "json_schema", name: "ai_coach_review", strict: true, schema: reviewSchema } },
         store: false,
       }),
@@ -205,6 +320,8 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     }
     if (body.aiReadContractVersion !== SUPPORTED_CONTRACT_VERSION) return errorResponse(422, "AI_CONTRACT_VERSION_UNSUPPORTED");
     if (!validateSnapshotRequest(body)) return errorResponse(422, "AI_INVALID_SNAPSHOT");
+    const requestOptions = coachRequestOptions(body);
+    if (!requestOptions) return errorResponse(422, invalidQuestion(body) ? "AI_INVALID_QUESTION" : "AI_INVALID_SNAPSHOT");
     if (!authClient?.auth?.getUser) return errorResponse(500, "AI_CONFIG_MISSING");
     let authResult;
     try {
@@ -223,17 +340,22 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     if (!apiKey) return errorResponse(500, "AI_CONFIG_MISSING");
     let review;
     try {
-      review = await callProvider({ snapshot: body.snapshot, apiKey, providerFetch, timeoutMs });
+      review = await callProvider({ snapshot: currentSnapshotFromRequest(body), apiKey, providerFetch, timeoutMs, requestOptions });
     } catch (providerError) {
       if (providerError?.name === "AI_PROVIDER_TIMEOUT") return errorResponse(504, "AI_PROVIDER_TIMEOUT");
       if (providerError?.status === 429) return errorResponse(429, "AI_RATE_LIMITED");
       return errorResponse(502, "AI_PROVIDER_ERROR");
     }
-    if (!validateReview(review)) return errorResponse(502, "AI_PROVIDER_ERROR");
+    if (!validateReview(review)
+      || (requestOptions.mode === "question" && !review.answerToQuestion)
+      || (requestOptions.mode === "progress-check" && !review.sinceLastReview)
+      || (requestOptions.mode === "cycle-review" && !review.cycleEvaluation)) return errorResponse(502, "AI_PROVIDER_ERROR");
     return jsonResponse({
       review,
       meta: {
         model: AI_COACH_MODEL,
+        mode: requestOptions.mode,
+        questionIncluded: Boolean(requestOptions.question),
         snapshotSignature: body.snapshotSignature,
         contractVersion: SUPPORTED_CONTRACT_VERSION,
         generatedAt: clock().toISOString(),
@@ -262,5 +384,5 @@ const defaultExport = {
   },
 };
 
-export { AI_COACH_MODEL, AI_COACH_INSTRUCTIONS, reviewSchema, validateSnapshotRequest, validateReview, createRateLimiter, MAX_SNAPSHOT_BYTES };
+export { AI_COACH_MODEL, AI_COACH_INSTRUCTIONS, reviewSchema, validateSnapshotRequest, validateCoachRequest, validateReview, createRateLimiter, MAX_SNAPSHOT_BYTES, COACH_MODES, MAX_QUESTION_CHARS, DEFAULT_COACH_MODE };
 export default defaultExport;
