@@ -5296,6 +5296,98 @@ function strategicPlanningTopics() {
   });
 }
 
+// Public read-only adapter for a future AI boundary. It assembles explicit
+// engine outputs and never exposes the application state or UI structures.
+function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rollingWindow = null } = {}) {
+  const snapshotEngine = window.AIStrategicSnapshot;
+  if (!snapshotEngine?.buildStrategicSnapshot) return null;
+  const topicEntries = (materia, assunto) => adaptivePerformanceForTopic(materia, assunto).map((entry) => ({
+    questions: Number(entry.questoes) || 0,
+    correctAnswers: Number(entry.acertos) || 0,
+    studiedMinutes: Math.max(0, Number(entry.tempoEstudado) || 0) * 60,
+    completedAt: entryContactDateValue(entry) ? new Date(entryContactDateValue(entry)).toISOString() : null,
+  }));
+  const topics = strategicPlanningTopics().map((topic) => ({
+    subject: topic.materia,
+    topic: topic.assuntoOriginal || topic.assunto,
+    subarea: topic.subarea || "",
+    diagnosis: {
+      level: topic.diagnosis?.level,
+      accuracy: topic.diagnosis?.accuracy,
+      questions: topic.diagnosis?.questions,
+      correct: topic.diagnosis?.correct,
+      sessionCount: topic.diagnosis?.sessionCount,
+      evidenceStage: topic.diagnosis?.evidenceStage,
+      trend: topic.diagnosis?.trend,
+      needsDiagnostic: topic.diagnosis?.needsDiagnostic,
+      historyInheritance: topic.historyInheritance,
+      errorSignals: topic.errorSignals,
+      reasons: topic.diagnosis?.reasons,
+    },
+    currentEvidence: {
+      entries: topicEntries(topic.materia, topic.assuntoOriginal || topic.assunto),
+      questions: topic.diagnosis?.questions,
+      sessions: topic.diagnosis?.sessionCount,
+      recentAccuracy: topic.diagnosis?.accuracy,
+      interventions: topic.intervention,
+      reviewResults: (state.reviews || []).filter((review) => topicMatches(review, topic.materia, topic.assuntoOriginal || topic.assunto)).map((review) => ({ status: review.status, tentativas: review.tentativas })),
+    },
+    inheritedKnowledge: topic.historyInheritance,
+    selfAssessment: topic.initialProfile,
+    strategic: topic.strategic,
+    errorSignals: topic.errorSignals,
+    coverage: Number(topic.diagnosis?.questions) > 0 || Number(topic.diagnosis?.sessionCount) > 0 ? 1 : 0,
+    daysWithoutContact: topic.diagnosis?.daysWithoutContact,
+    maintenanceDue: topic.strategic?.learningState?.key === "maintenance",
+  }));
+  const subjects = (state.planningBase?.materias || []).map((subject) => ({
+    name: subject.materia,
+    peso: subject.peso,
+    dominio: subject.dominio,
+    examImportance: subject.examImportance,
+    topicCount: subject.assuntos?.length || 0,
+  }));
+  const cycle = weeklyStudyCycleSummary() || state.weeklyStudyCycle || {};
+  const config = scheduleConfig();
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  const cycleApi = weeklyStudyCycleApi();
+  const baseline = cycle.executionBaselineByBlock || {};
+  const plannedBlocks = cycleBlocks.map((block) => ({ materia: block.materia, assunto: block.assunto, tipoAtividade: block.tipoAtividade, plannedMinutes: Math.max(0, Number(block.duracao) || 0) * 60 }));
+  const executedBlocks = cycleBlocks.map((block, index) => ({
+    materia: block.materia,
+    assunto: block.assunto,
+    tipoAtividade: block.tipoAtividade,
+    studiedMinutes: Math.max(0, (cycleApi?.recordedMinutes?.(block) || 0) - (Number(baseline[weeklyBlockKey(block, index)]) || 0)),
+  }));
+  const cycleQuestions = cycleBlocks.reduce((sum, block) => sum + (Number(block.questoes) || 0), 0);
+  const cycleCorrect = cycleBlocks.reduce((sum, block) => sum + Math.min(Number(block.questoes) || 0, Math.max(0, Number(block.acertos) || 0)), 0);
+  const cycleConfidence = topics.length ? topics.reduce((sum, topic) => sum + Number(topic.diagnosis?.confidence || 0), 0) / topics.length : 0;
+  const previousRecord = state.cycleHistory?.at?.(-1) || null;
+  const previousCycle = previousRecord?.weeklyStudyCycle ? {
+    ...previousRecord.weeklyStudyCycle,
+    questions: (previousRecord.generatedBlocks || []).reduce((sum, block) => sum + (Number(block.questoes) || 0), 0),
+    accuracy: (() => {
+      const questions = (previousRecord.generatedBlocks || []).reduce((sum, block) => sum + (Number(block.questoes) || 0), 0);
+      const correct = (previousRecord.generatedBlocks || []).reduce((sum, block) => sum + Math.min(Number(block.questoes) || 0, Math.max(0, Number(block.acertos) || 0)), 0);
+      return questions ? correct / questions : null;
+    })(),
+  } : null;
+  return snapshotEngine.buildStrategicSnapshot({
+    now,
+    contestName: state.form?.contestName,
+    role: state.form?.role || state.form?.cargo,
+    banca: state.form?.examBoardName || state.form?.banca,
+    subjects,
+    topics,
+    weeklyHours: config.horasSemana,
+    weeklyCycle: { ...cycle, weeklyHours: config.horasSemana, questions: cycleQuestions, accuracy: cycleQuestions ? cycleCorrect / cycleQuestions : null, confidence: cycleConfidence },
+    plannedBlocks,
+    executedBlocks,
+    previousCycle,
+    rollingWindow,
+  });
+}
+
 function strategicAdvisorModel() {
   if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
   const topics = strategicPlanningTopics();
@@ -16782,6 +16874,7 @@ async function startMeuCronogramaApp() {
 }
 
 window.startMeuCronogramaApp = startMeuCronogramaApp;
+window.buildCurrentAIStrategicSnapshot = buildCurrentAIStrategicSnapshot;
 if (window.authGate?.isAuthenticated?.()) {
   startMeuCronogramaApp();
 } else {
