@@ -12531,14 +12531,13 @@ textarea:focus {
 .knowledge-mapping-review summary { cursor: pointer; color: var(--text); font-size: 12px; font-weight: 700; }
 .knowledge-mapping-review > p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .knowledge-mapping-review-list { display: grid; gap: 8px; margin-top: 10px; }
-.knowledge-mapping-review-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding-top: 8px; border-top: 1px solid var(--divider); }
+.knowledge-mapping-review-list article { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding-top: 10px; border-top: 1px solid var(--divider); }
 .knowledge-mapping-review-list article strong { font-size: 12px; }
-.knowledge-mapping-review-list article small { color: var(--muted); font-size: 11px; }
-.knowledge-mapping-review-list article span { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 10px; align-items: center; }
+.knowledge-mapping-review-list article small { min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.knowledge-mapping-review-list article span { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 3px; }
 .knowledge-mapping-review-list .danger { color: var(--danger, var(--muted)); }
 @media (max-width: 640px) {
-  .knowledge-mapping-review-list article { grid-template-columns: 1fr; }
-  .knowledge-mapping-review-list article span { grid-column: 1; grid-row: auto; }
+  .knowledge-mapping-review-list article span { gap: 8px; }
 }
 .priority-history-note { color: var(--muted); font-size: 11px; }
 
