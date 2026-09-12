@@ -12779,7 +12779,7 @@ function saveLocalKnowledgeBase(base = knowledgeBaseState) {
 function currentKnowledgeMappingReviews() {
   if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [] };
   const baseSignature = knowledgeBaseStructureSignature(knowledgeBaseState);
-  const contentSignature = state.rows.map((row) => [row.id, row.programUnitId, row.materia, row.titulo, row.assunto, row.descricao, row.estudar].join("|")).join("||");
+  const contentSignature = state.rows.map((row) => [row.id, row.programUnitId, row.materia, row.titulo, row.assunto, row.descricao, JSON.stringify(row.conteudosOriginais || []), row.estudar].join("|")).join("||");
   const cacheKey = `${baseSignature}|${contentSignature}`;
   if (cacheKey === knowledgeMappingReviewCacheKey && knowledgeMappingReviewCacheValue) return knowledgeMappingReviewCacheValue;
   const index = window.KnowledgeMapping?.buildKnowledgeMappingIndex ? window.KnowledgeMapping.buildKnowledgeMappingIndex(knowledgeBaseState) : undefined;
@@ -12816,7 +12816,7 @@ function knowledgeBaseStructureSignature(base = {}) {
   return JSON.stringify({
     schemaVersion: base.schemaVersion,
     concepts: (base.concepts || []).map((item) => [item.id, item.canonicalKey, item.canonicalTitle, item.domain]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
-    evidence: (base.evidence || []).map((item) => [item.id, item.canonicalKey, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    evidence: (base.evidence || []).map((item) => [item.id, item.canonicalKey, item.originalDetails, item.questions, item.correctAnswers, item.studiedMinutes, item.completedAt, item.activityType, item.difficulty]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
     topicMappings: (base.topicMappings || []).map((item) => [item.planId, item.topicId, item.originalSubject, item.originalTopic, ...(item.conceptKeys || [item.canonicalKey || ""]), item.status, item.basis]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
     aliases: (base.aliases || []).map((item) => [item.aliasNormalized, item.conceptKey, item.subjectContext]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),
     mappingRules: (base.mappingRules || []).map((item) => [item.normalizedTargetTitle, item.targetSubjectContext, ...(item.conceptKeys || [])]).sort((left, right) => left.join("|").localeCompare(right.join("|"))),

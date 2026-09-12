@@ -77,7 +77,7 @@
     const title = target.normalizedTitle;
     const source = concept.normalizedTitle;
     const subject = subjectScore(target, concept);
-    const alias = concept.aliases.find((item) => normalize(item.aliasNormalized || item.aliasDisplay) === title && (!item.subjectContext || !target.subject || subjectScore(target, { subjects: [item.subjectContext] }).score >= .45) || item.global === true);
+    const alias = concept.aliases.find((item) => normalize(item.aliasNormalized || item.aliasDisplay) === title && (item.global === true || !item.subjectContext || subjectScore(target, { subjects: [item.subjectContext] }).score >= .45));
     const exact = title === source && !GENERIC_TITLES.has(title);
     const targetTokens = tokenSet(title);
     const sourceTokens = tokenSet(source);
@@ -87,7 +87,10 @@
     // Detalhes reais podem revelar equivalência mesmo quando a matéria mudou
     // de nome (por exemplo, RLM em uma prova e Lógica em outra). A exigência
     // de dois termos compartilhados mantém títulos genéricos fora do match.
-    const plausible = exact || Boolean(alias) || (containment && subject.score >= .45) || (details.sharedTerms.length >= 1 && details.coverage >= .1);
+    const detailMatch = subject.score >= .45
+      ? details.sharedTerms.length >= 1 && details.coverage >= .1
+      : details.sharedTerms.length >= 2 && details.coverage >= .25;
+    const plausible = exact || Boolean(alias) || (containment && subject.score >= .45) || detailMatch;
     if (!plausible) return { accepted: false, score: 0, confidence: "low", basis: "none", direction: "none", coverage: details.coverage, sharedTerms: details.sharedTerms, subject };
     const basis = exact ? "canonical-title-exact" : alias ? "confirmed-alias" : containment ? "title-containment" : "detail-coverage";
     const confidence = exact || alias ? "high" : details.coverage >= .7 && subject.score >= .45 ? "high" : "medium";
@@ -130,7 +133,7 @@
     const descriptor = topicDescriptor(target);
     const index = options.index || buildKnowledgeMappingIndex(base);
     const rule = index.rulesByTitle.get(`${descriptor.normalizedTitle}|${normalize(descriptor.subject)}`) || findRule(base, descriptor);
-    if (rule && !findRejection(base, descriptor, rule.conceptKeys)) return { topic: descriptor, conceptKeys: [...rule.conceptKeys], candidates: [], status: "user-confirmed", confidence: "high", coverage: 1, matchBasis: "user-confirmed-rule", sharedTerms: [], confirmed: true, rulesApplied: [rule] };
+    if (rule && !findRejection(base, descriptor, rule.conceptKeys)) return { topic: descriptor, conceptKeys: normalizedKeys(rule.conceptKeys), candidates: [], status: "user-confirmed", confidence: rule.confidence || "high", coverage: rule.coverage ?? (rule.relationship === "equivalent" ? 1 : 0), relationship: rule.relationship || "partial", matchBasis: rule.matchBasis || "user-confirmed-rule", sharedTerms: [...(rule.sharedTerms || [])], confirmed: true, rulesApplied: [rule] };
     const candidates = candidateConcepts(base, descriptor, index);
     const exact = candidates.filter((item) => ["canonical-title-exact", "confirmed-alias"].includes(item.match.basis) && !findRejection(base, descriptor, [item.descriptor.key]));
     const composite = compositeCandidates(base, descriptor, candidates).filter((item) => !findRejection(base, descriptor, [item.descriptor.key]));
@@ -139,9 +142,13 @@
     const completeRejection = (base.mappingRejections || []).some((item) => item.topicIdentity === mappingIdentity(descriptor) && normalizedKeys(item.conceptKeys).join("|") === conceptKeys.join("|"));
     if (completeRejection) return { topic: descriptor, conceptKeys: [], candidates: candidates.map((item) => ({ conceptKey: item.descriptor.key, title: item.descriptor.canonicalTitle, ...item.match })), status: "unmatched", confidence: "low", coverage: 0, matchBasis: "user-rejected", sharedTerms: [], confirmed: false, rulesApplied: [] };
     const coverageTerms = new Set(selected.flatMap((item) => item.match.sharedTerms));
-    const coverage = tokenSet(`${descriptor.title} ${descriptor.details}`, { content: true }).size ? coverageTerms.size / tokenSet(`${descriptor.title} ${descriptor.details}`, { content: true }).size : selected.length ? 1 : 0;
+    const rawCoverage = tokenSet(`${descriptor.title} ${descriptor.details}`, { content: true }).size ? coverageTerms.size / tokenSet(`${descriptor.title} ${descriptor.details}`, { content: true }).size : selected.length ? 1 : 0;
+    // Composição válida não é sinônimo de equivalência: mesmo que os termos
+    // do título tenham sido cobertos, o vínculo continua composto e parcial.
+    const coverage = conceptKeys.length > 1 ? Math.min(rawCoverage, .85) : rawCoverage;
     const high = exact.length > 0;
-    return { topic: descriptor, conceptKeys, candidates: candidates.map((item) => ({ conceptKey: item.descriptor.key, title: item.descriptor.canonicalTitle, ...item.match })), status: high ? "auto-confirmed" : conceptKeys.length ? "suggested" : "unmatched", confidence: high ? "high" : conceptKeys.length ? "medium" : "low", coverage, matchBasis: high ? exact[0].match.basis : conceptKeys.length > 1 ? "composite-coverage" : candidates[0]?.match.basis || "none", sharedTerms: [...coverageTerms].sort(), confirmed: high, rulesApplied: [] };
+    const matchBasis = high ? exact[0].match.basis : conceptKeys.length > 1 ? "composite-coverage" : candidates[0]?.match.basis || "none";
+    return { topic: descriptor, conceptKeys, candidates: candidates.map((item) => ({ conceptKey: item.descriptor.key, title: item.descriptor.canonicalTitle, ...item.match })), status: high ? "auto-confirmed" : conceptKeys.length ? "suggested" : "unmatched", confidence: high ? "high" : conceptKeys.length ? "medium" : "low", coverage, relationship: high ? "equivalent" : conceptKeys.length > 1 ? "composite" : "partial", matchBasis, sharedTerms: [...coverageTerms].sort(), confirmed: high, rulesApplied: [] };
   }
 
   function matchConceptToTopics(base = {}, topics = [], options = {}) { const index = options.index || buildKnowledgeMappingIndex(base); return topics.map((topic) => matchTopicToConcepts(topic, base, { index })).filter((mapping) => mapping.conceptKeys.length); }
@@ -158,9 +165,9 @@
       return next;
     }
     const status = decision === "confirm" ? "user-confirmed" : "suggested";
-    next.topicMappings.push({ planId: topic.planId, topicId: topic.topicId, originalSubject: topic.subject, originalTopic: topic.title, originalTitle: topic.title, originalDetails: topic.details, conceptKeys, confidence: mapping.confidence || "medium", basis: decision === "confirm" ? "user-confirmed" : mapping.matchBasis || "suggestion", status, topicIdentity: identity, updatedAt: now });
+    next.topicMappings.push({ planId: topic.planId, topicId: topic.topicId, originalSubject: topic.subject, originalTopic: topic.title, originalTitle: topic.title, originalDetails: topic.details, conceptKeys, confidence: mapping.confidence || "medium", basis: decision === "confirm" ? "user-confirmed" : mapping.matchBasis || "suggestion", status, relationship: mapping.relationship || (conceptKeys.length > 1 ? "composite" : "partial"), matchBasis: mapping.matchBasis || "suggestion", coverage: mapping.coverage ?? 0, sharedTerms: [...(mapping.sharedTerms || [])], topicIdentity: identity, updatedAt: now });
     if (decision === "confirm") {
-      const rule = { normalizedTargetTitle: topic.normalizedTitle, targetSubjectContext: normalize(topic.subject), conceptKeys, basis: "user-confirmed", createdAt: now };
+      const rule = { normalizedTargetTitle: topic.normalizedTitle, targetSubjectContext: normalize(topic.subject), conceptKeys, relationship: mapping.relationship || (conceptKeys.length > 1 ? "composite" : "partial"), matchBasis: mapping.matchBasis || "user-confirmed", coverage: mapping.coverage ?? 0, sharedTerms: [...(mapping.sharedTerms || [])], confidence: mapping.confidence || "medium", basis: "user-confirmed", createdAt: now, updatedAt: now };
       next.mappingRules = next.mappingRules.filter((item) => !(item.normalizedTargetTitle === rule.normalizedTargetTitle && item.targetSubjectContext === rule.targetSubjectContext));
       next.mappingRules.push(rule);
       if (["canonical-title-exact", "canonical-title-equivalent", "confirmed-equivalent", "controlled-alias"].includes(mapping.matchBasis || mapping.basis) && conceptKeys.length === 1) conceptKeys.forEach((conceptKey) => {
@@ -185,8 +192,15 @@
     const evidence = [...new Map((base.evidence || []).filter((item) => keys.has(normalize(item.canonicalKey))).map((item) => [item.id || `${item.canonicalKey}|${item.completedAt}`, item])).values()];
     const questions = evidence.reduce((sum, item) => sum + (Number(item.questions) || 0), 0);
     const correctAnswers = evidence.reduce((sum, item) => sum + Math.min(Number(item.questions) || 0, Number(item.correctAnswers) || 0), 0);
-    const dates = evidence.map((item) => text(item.completedAt || item.observedAt)).filter(Boolean).sort();
-    return { questions, correctAnswers, accuracy: questions ? correctAnswers / questions : null, sessions: evidence.length, studiedMinutes: evidence.reduce((sum, item) => sum + (Number(item.studiedMinutes) || 0), 0), lastContact: dates.at(-1) || "", sourcePlans: sorted(unique(evidence.map((item) => text(item.sourcePlanName || item.sourcePlanId)))) };
+    const dateValue = (value) => {
+      const raw = text(value);
+      const brazilian = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (brazilian) return new Date(Number(brazilian[3]), Number(brazilian[2]) - 1, Number(brazilian[1])).getTime();
+      const parsed = new Date(raw).getTime();
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const dates = evidence.map((item) => ({ raw: text(item.completedAt || item.observedAt), value: dateValue(item.completedAt || item.observedAt) })).filter((item) => item.value).sort((a, b) => a.value - b.value);
+    return { questions, correctAnswers, accuracy: questions ? correctAnswers / questions : null, sessions: evidence.length, studiedMinutes: evidence.reduce((sum, item) => sum + (Number(item.studiedMinutes) || 0), 0), lastContact: dates.at(-1)?.raw || "", sourcePlans: sorted(unique(evidence.map((item) => text(item.sourcePlanName || item.sourcePlanId)))) };
   }
 
   function inspectTopicMapping(base = {}, topic = {}) { const mapping = matchTopicToConcepts(topic, base); return { topicId: mapping.topic.topicId, title: mapping.topic.title, subject: mapping.topic.subject, candidates: mapping.candidates, confirmedConceptKeys: mapping.status === "auto-confirmed" || mapping.status === "user-confirmed" ? mapping.conceptKeys : [], suggestedConceptKeys: mapping.status === "suggested" ? mapping.conceptKeys : [], rejectedConceptKeys: (base.mappingRejections || []).filter((item) => item.topicIdentity === mappingIdentity(mapping.topic)).flatMap((item) => item.conceptKeys), coverage: mapping.coverage, matchBasis: mapping.matchBasis, confidence: mapping.confidence, sharedTerms: mapping.sharedTerms, rulesApplied: mapping.rulesApplied }; }

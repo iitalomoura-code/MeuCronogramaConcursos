@@ -88,6 +88,20 @@ assert.equal(compositeConfirmed.aliases.length, 0);
 const partialSuggestion = mapping.matchTopicToConcepts({ materia: "Administração", assunto: "Gestão de Processos e BPM" }, (() => { let value = baseWithConcepts(["Gestão de Processos"]); return evidence(value, "Gestão de Processos", "Administração", "processos organizacionais"); })());
 const partialConfirmed = mapping.applyMappingDecision(base, partialSuggestion, "confirm");
 assert.equal(partialConfirmed.aliases.length, 0);
+const partialRematched = mapping.matchTopicToConcepts(partialSuggestion.topic, partialConfirmed);
+assert.equal(partialRematched.status, "user-confirmed");
+assert.equal(partialRematched.relationship, "partial");
+assert.ok(partialRematched.coverage < 1);
+
+const compositeRematched = mapping.matchTopicToConcepts(compositeTopic, compositeConfirmed);
+assert.equal(compositeRematched.status, "user-confirmed");
+assert.equal(compositeRematched.relationship, "composite");
+assert.ok(compositeRematched.coverage < 1);
+
+const equivalentBase = baseWithConcepts(["Atos Administrativos"]);
+const equivalent = mapping.matchTopicToConcepts({ materia: "Direito Administrativo", assunto: "Atos Administrativos" }, equivalentBase);
+assert.equal(equivalent.relationship, "equivalent");
+assert.equal(equivalent.coverage, 1);
 
 let constitutional = baseWithConcepts(["Direitos e Garantias Fundamentais", "Organização do Estado", "Controle de Constitucionalidade"]);
 constitutional = evidence(constitutional, "Direitos e Garantias Fundamentais", "Direito Constitucional", "direitos fundamentais individuais coletivos");
@@ -95,5 +109,23 @@ constitutional = evidence(constitutional, "Organização do Estado", "Direito Co
 constitutional = evidence(constitutional, "Controle de Constitucionalidade", "Direito Constitucional", "controle constitucionalidade normas");
 assert.ok(["suggested", "auto-confirmed"].includes(mapping.matchTopicToConcepts({ materia: "Direito Constitucional", assunto: "Direitos Fundamentais", descricao: "direitos fundamentais individuais coletivos" }, constitutional).status));
 assert.equal(mapping.matchTopicToConcepts({ materia: "Direito Constitucional", assunto: "Controle da Administração Pública", descricao: "controle administração pública" }, constitutional).conceptKeys.length, 0);
+
+const staleMerged = knowledge.migrateKnowledgeMappings({ schemaVersion: 2, concepts: [], evidence: [], topicMappings: [], mappingRules: [
+  { normalizedTargetTitle: "logica proposicional", targetSubjectContext: "rlm", conceptKeys: ["a"], relationship: "partial", createdAt: "2026-09-01" },
+  { normalizedTargetTitle: "logica proposicional", targetSubjectContext: "rlm", conceptKeys: ["a", "b"], relationship: "composite", createdAt: "2026-09-02", updatedAt: "2026-09-02" },
+] });
+assert.equal(staleMerged.mappingRules.length, 1);
+assert.deepEqual(staleMerged.mappingRules[0].conceptKeys, ["a", "b"]);
+
+const dateBase = { schemaVersion: 2, concepts: [], evidence: [
+  { id: "date-1", canonicalKey: "x", questions: 1, correctAnswers: 1, completedAt: "31/07/2026", sourcePlanName: "TCE" },
+  { id: "date-2", canonicalKey: "x", questions: 1, correctAnswers: 1, completedAt: "2026-08-05T10:00:00Z", sourcePlanName: "TCE" },
+  { id: "date-3", canonicalKey: "x", questions: 1, correctAnswers: 1, completedAt: "01/06/2026", sourcePlanName: "TCE" },
+] };
+assert.equal(mapping.evidenceSummaryForConceptKeys(dateBase, ["x"]).lastContact, "2026-08-05T10:00:00Z");
+
+const globalAliasBase = knowledge.migrateKnowledgeMappings({ schemaVersion: 2, concepts: [{ canonicalKey: "atos administrativos", canonicalTitle: "Atos Administrativos" }], evidence: [], topicMappings: [], aliases: [{ aliasDisplay: "Atos da Administração Pública", aliasNormalized: "atos da administracao publica", conceptKey: "atos administrativos", global: true }] });
+assert.equal(mapping.matchTopicToConcepts({ assunto: "Responsabilidade Civil do Estado" }, globalAliasBase).conceptKeys.length, 0);
+assert.equal(mapping.matchTopicToConcepts({ assunto: "Atos da Administração Pública" }, globalAliasBase).status, "auto-confirmed");
 
 console.log("OK - matching conceitual determinístico, composição, decisões persistentes e migração v1/v2.");

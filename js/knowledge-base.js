@@ -223,7 +223,7 @@
       })) : [],
       topicMappings: Array.isArray(base.topicMappings) ? base.topicMappings.map((item) => ({
         ...item,
-        conceptKeys: [...new Set((item.conceptKeys || [item.canonicalKey || item.conceptId?.replace(/^concept:/, "")]).filter(Boolean))],
+        conceptKeys: sortedConceptKeys(item),
         status: item.status || (item.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed"),
       })) : [],
       aliases: dedupeAliases(base.aliases),
@@ -246,12 +246,14 @@
   }
 
   function dedupeMappingRules(items = []) {
-    const seen = new Set();
-    return (Array.isArray(items) ? items : []).map((item) => ({ ...item, conceptKeys: sortedConceptKeys(item), normalizedTargetTitle: text(item.normalizedTargetTitle).toLowerCase(), targetSubjectContext: text(item.targetSubjectContext).toLowerCase() })).filter((item) => {
+    const latest = new Map();
+    const dateOf = (item) => dateValue(item.updatedAt || item.createdAt);
+    (Array.isArray(items) ? items : []).map((item) => ({ ...item, conceptKeys: sortedConceptKeys(item), normalizedTargetTitle: text(item.normalizedTargetTitle).toLowerCase(), targetSubjectContext: text(item.targetSubjectContext).toLowerCase() })).filter((item) => item.normalizedTargetTitle && item.conceptKeys.length).forEach((item) => {
       const key = [item.normalizedTargetTitle, item.targetSubjectContext].join("|");
-      if (!item.normalizedTargetTitle || !item.conceptKeys.length || seen.has(key)) return false;
-      seen.add(key); return true;
-    }).sort((a, b) => [a.normalizedTargetTitle, a.targetSubjectContext].join("|").localeCompare([b.normalizedTargetTitle, b.targetSubjectContext].join("|")));
+      const previous = latest.get(key);
+      if (!previous || dateOf(item) > dateOf(previous) || (dateOf(item) === dateOf(previous) && JSON.stringify(item).localeCompare(JSON.stringify(previous)) > 0)) latest.set(key, item);
+    });
+    return [...latest.values()].sort((a, b) => [a.normalizedTargetTitle, a.targetSubjectContext].join("|").localeCompare([b.normalizedTargetTitle, b.targetSubjectContext].join("|")));
   }
 
   function dedupeMappingRejections(items = []) {
@@ -320,7 +322,7 @@
       return true;
     }).map((mapping) => ({
       ...mapping,
-      conceptKeys: [...new Set((mapping.conceptKeys || [mapping.canonicalKey || mapping.conceptId?.replace(/^concept:/, "")]).filter(Boolean))],
+      conceptKeys: sortedConceptKeys(mapping),
       status: mapping.status || (mapping.basis === "user-confirmed" ? "user-confirmed" : "auto-confirmed"),
     }));
   }
