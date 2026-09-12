@@ -16,6 +16,8 @@ const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_SDdC8zT2k_I4ZV39_MXvPA_DfUYXZYw
 
   window.supabaseConfiguration = {
     isConfigured,
+    url: SUPABASE_URL,
+    publishableKey: SUPABASE_PUBLISHABLE_KEY,
     message: "A integra\u00e7\u00e3o com o banco ainda n\u00e3o foi configurada.",
   };
   window.supabaseClient = null;
