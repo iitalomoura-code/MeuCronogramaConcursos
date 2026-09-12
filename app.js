@@ -101,6 +101,7 @@ const state = {
   completedHistory: [],
   cycleHistory: [],
   cycleResults: [],
+  weeklyStudyCycle: null,
   weeklyGoals: [],
   studyAlerts: [],
   initialDiagnosis: [],
@@ -5866,6 +5867,56 @@ function scheduleConfig() {
   };
 }
 
+function weeklyStudyCycleApi() {
+  return window.WeeklyStudyCycle || null;
+}
+
+function weeklyStudyCycleSignature(config = scheduleConfig()) {
+  return weeklyStudyCycleApi()?.configurationSignature?.({
+    weeklyHours: config.horasSemana,
+    safetyMargin: config.capacidade?.safetyMargin,
+  }) || `${Number(config.horasSemana) || 0}:${Number(config.capacidade?.safetyMargin) || 1}`;
+}
+
+function weeklyStudyCycleSummary() {
+  const api = weeklyStudyCycleApi();
+  if (!api || !state.weeklyStudyCycle) return null;
+  const blocks = state.generatedBlocks
+    .filter((block) => !isStrategicPlanSessionBlock(block))
+    .filter((block) => !state.weeklyStudyCycle.legacyExecutionBlockKeys?.includes(weeklyBlockKey(block)));
+  return api.summarize(state.weeklyStudyCycle, blocks);
+}
+
+function ensureWeeklyStudyCycle({ reconcile = false, now = new Date() } = {}) {
+  const api = weeklyStudyCycleApi();
+  if (!api) return null;
+  const config = scheduleConfig();
+  const signature = weeklyStudyCycleSignature(config);
+  const blocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  const executionBlocks = blocks.filter((block) => !state.weeklyStudyCycle?.legacyExecutionBlockKeys?.includes(weeklyBlockKey(block)));
+  if (!state.weeklyStudyCycle || state.weeklyStudyCycle.status === "closed") {
+    state.weeklyStudyCycle = api.create({ weeklyHours: config.horasSemana, capacity: config.capacidade, now, sourceConfigurationSignature: signature });
+    return state.weeklyStudyCycle;
+  }
+  if (reconcile && state.weeklyStudyCycle.sourceConfigurationSignature !== signature) {
+    state.weeklyStudyCycle = api.reconcileCapacity(state.weeklyStudyCycle, {
+      weeklyHours: config.horasSemana,
+      capacity: config.capacidade,
+      sourceConfigurationSignature: signature,
+    }, executionBlocks);
+  } else {
+    state.weeklyStudyCycle = api.summarize(state.weeklyStudyCycle, executionBlocks);
+  }
+  return state.weeklyStudyCycle;
+}
+
+function closeWeeklyStudyCycle(now = new Date()) {
+  const api = weeklyStudyCycleApi();
+  if (!api || !state.weeklyStudyCycle) return null;
+  state.weeklyStudyCycle = api.close(state.weeklyStudyCycle, state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block)), now);
+  return state.weeklyStudyCycle;
+}
+
 function completedCycleCount() {
   const results = Array.isArray(state.cycleResults) ? state.cycleResults.filter(cycleResultHasRecordedActivity) : [];
   if (results.length) return results.length;
@@ -6174,6 +6225,18 @@ function fittedDurationMinutes(estimate, remainingMinutes) {
   return [...ALLOWED_BLOCK_MINUTES].reverse().find((minutes) => minutes <= remainingMinutes) || 0;
 }
 
+function weeklyAllocationRanks() {
+  const cycle = weeklyStudyCycleSummary() || state.weeklyStudyCycle;
+  const plan = weeklyStudyCycleApi()?.allocate?.({
+    cycle,
+    topics: strategicPlanningTopics(),
+    // A janela semanal nasce sem execução fictícia. Execuções reais passam a
+    // influenciar o próximo ciclo pelo histórico já existente.
+    recentAllocations: [],
+  });
+  return new Map((plan?.sessions || []).map((session) => [weeklyTopicKey(session.materia, session.assunto), Number(session.rank) || Number.MAX_SAFE_INTEGER]));
+}
+
 function createAdaptiveCycleBlocks(materias, config, analysis) {
   const capacityMinutes = Math.max(0, Math.round((Number(config.horasSemanaCronograma) || 0) * 60));
   if (!capacityMinutes) return { blocks: [], distribution: [] };
@@ -6184,6 +6247,8 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
   const queue = buildAlternatingQueue(plannedDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
+  const allocationRanks = weeklyAllocationRanks();
+  queue.sort((left, right) => (allocationRanks.get(weeklyTopicKey(left.materia, left.assunto)) || Number.MAX_SAFE_INTEGER) - (allocationRanks.get(weeklyTopicKey(right.materia, right.assunto)) || Number.MAX_SAFE_INTEGER) || Number(right.prioridade || 0) - Number(left.prioridade || 0));
   const blocks = [];
   let remainingMinutes = capacityMinutes;
 
@@ -6247,7 +6312,7 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     blocos: actualCounts.get(item.materia) || 0,
     foraDoCiclo: !(actualCounts.get(item.materia) || 0),
   }));
-  return { blocks: assignBlocksToDailyCapacity(integrateReviewNeedsIntoCycle(blocks), config), distribution, remainingMinutes };
+  return { blocks: integrateReviewNeedsIntoCycle(blocks), distribution, remainingMinutes };
 }
 
 function cycleNeedKey(item = {}) {
@@ -6656,7 +6721,7 @@ function unlockCycle() {
   scheduleAutoSave();
 }
 
-async function generateSchedule({ completeSetup = false } = {}) {
+async function generateSchedule({ completeSetup = false, openContinue = false } = {}) {
   if (!state.planningBase) {
     await dialogAlert("Confirme as mat\u00e9rias e temas antes de gerar o ciclo.");
     return;
@@ -6675,16 +6740,18 @@ async function generateSchedule({ completeSetup = false } = {}) {
   }
   syncPlanningSliders();
   const config = scheduleConfig();
+  const weeklyCycle = ensureWeeklyStudyCycle();
   const analysis = updateDeadlineDisplays(config);
   const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis);
   state.distribution = cycle.distribution;
-  state.generatedBlocks = cycle.blocks;
+  state.generatedBlocks = cycle.blocks.map((block) => ({ ...block, weeklyCycleId: weeklyCycle?.id || "" }));
+  ensureWeeklyStudyCycle();
   if ((completeSetup || setupIsIncomplete()) && state.generatedBlocks.length) finishSetup();
   setTabEnabled("cronograma", true);
   renderAppViews();
   lockCycle();
   queueStudyAlertsRefresh();
-  switchTab("cronograma");
+  switchTab(openContinue ? "continuar" : "cronograma");
   if (analysis.status === "insufficient") {
     els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo com prazo insuficiente`;
   }
@@ -8889,16 +8956,22 @@ async function discardFocusedStudySession() {
 
 function renderContinueCycleProgress(completed = 0, total = 0, progress = 0) {
   if (!els.continueCycleProgress) return;
-  if (!total) {
+  const weeklyCycle = weeklyStudyCycleSummary();
+  if (!total && !weeklyCycle?.plannedMinutes) {
     els.continueCycleProgress.hidden = true;
     els.continueCycleProgress.innerHTML = "";
     return;
   }
-  const percentage = Math.max(0, Math.min(100, Number(progress) || 0));
+  const percentage = weeklyCycle?.plannedMinutes
+    ? Math.max(0, Math.min(100, Math.round((weeklyCycle.completedMinutes / weeklyCycle.plannedMinutes) * 100)))
+    : Math.max(0, Math.min(100, Number(progress) || 0));
+  const cycleCopy = weeklyCycle?.plannedMinutes
+    ? `<span>Ciclo atual · Meta-base: ${formatMinutesShort(weeklyCycle.plannedMinutes)} · Realizado: ${formatMinutesShort(weeklyCycle.completedMinutes)} · Restante planejado: ${formatMinutesShort(weeklyCycle.remainingPlannedMinutes)}</span>`
+    : `<span>${completed} de ${total} blocos conclu&iacute;dos</span>`;
   els.continueCycleProgress.hidden = false;
   els.continueCycleProgress.innerHTML = `
     <div class="continue-header-progress-copy">
-      <span>${completed} de ${total} blocos conclu&iacute;dos</span>
+      ${cycleCopy}
       <div class="continue-header-progress-track" role="progressbar" aria-label="Progresso do ciclo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width: ${percentage}%"></span></div>
     </div>
     <button class="text-action continue-header-cycle-action" type="button" data-open-cycle-goals>Ver ciclo completo</button>
@@ -9001,6 +9074,7 @@ function renderContinuePanel() {
   // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
   if (focusedStudyIndex < 0) removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
+  if (state.generatedBlocks.length) ensureWeeklyStudyCycle();
   renderContinueCycleProgress();
   renderContinueWeeklySummary(null, null);
   if (!els.continuePanel) return;
@@ -9095,7 +9169,6 @@ function renderContinuePanel() {
         ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
-    ${strategicTimePlanMarkup()}
     ${strategicAdvisorCompactMarkup()}
     <section class="continue-side-card continue-next-steps"><div class="continue-card-header compact"><div><span class="section-kicker">Próximos passos sugeridos</span><h3>Depois deste estudo</h3></div></div><ol>${nextSteps.length ? nextSteps.map((entry) => "<li><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span>" + (entry.block.conteudoBloco && normalizeForMatch(entry.block.conteudoBloco) !== normalizeForMatch(entry.block.assunto) ? "<small>" + escapeHtml(shortText(entry.block.conteudoBloco, 82)) + "</small>" : "") + "</li>").join("") : "<li><span>O ciclo está concluído.</span></li>"}</ol></section>
     <section class="continue-side-card continue-reviews-card"><div class="continue-card-header compact"><div><span class="section-kicker">Próximas revisões</span><h3>${reviews.length ? reviews.length + (reviews.length === 1 ? " revisão prevista" : " revisões previstas") : "Nenhuma revisão prevista"}</h3></div></div><div class="continue-review-list">${reviews.length ? reviews.map((item) => "<article><strong>" + escapeHtml(item.materia) + "</strong><span>" + escapeHtml(shortText(item.assunto, 82)) + "</span><em>" + escapeHtml(reviewTypeLabel(item)) + "</em><small>" + escapeHtml(reviewReasonText(item)) + "</small><button class=\"text-action\" type=\"button\" data-start-review=\"" + escapeHtml(item.id || "") + "\">Iniciar revisão</button></article>").join("") : "<p class=\"muted-note\">As revisões previstas aparecerão aqui quando forem registradas.</p>"}</div><button class="ghost-button compact-button" type="button" data-open-reviews><i data-lucide="repeat-2"></i><span>Ver todas as revisões</span></button></section>
@@ -11076,6 +11149,7 @@ function snapshotCurrentCycle() {
     generatedBlocks: structuredClone(state.generatedBlocks),
     completedHistory: structuredClone(state.completedHistory),
     reviews: structuredClone(state.reviews),
+    weeklyStudyCycle: structuredClone(weeklyStudyCycleSummary() || state.weeklyStudyCycle),
   };
 }
 
@@ -11092,12 +11166,14 @@ async function completeCurrentWeekAndGenerateNext() {
   state.generatedBlocks.forEach((block) => {
     if (!block.ciclo) block.ciclo = closingCycle;
   });
+  closeWeeklyStudyCycle();
   state.cycleHistory.push(snapshotCurrentCycle());
   state.cycleHistory = state.cycleHistory.slice(-12);
   const completedCount = archiveCompletedFromCurrentWeek();
   // O ciclo fechado já está preservado no histórico. Revisões e desempenho continuam no estado global.
   state.generatedBlocks = [];
   state.distribution = [];
+  state.weeklyStudyCycle = null;
   advanceReferenceWeek();
   await generateSchedule();
   queueStudyAlertsRefresh();
@@ -11123,6 +11199,7 @@ function restorePreviousCycle() {
   state.reviews = Array.isArray(previous.reviews)
     ? previous.reviews.map((record) => normalizeAdaptiveReviewRecord(record))
     : state.reviews;
+  state.weeklyStudyCycle = previous.weeklyStudyCycle || state.weeklyStudyCycle;
   if (state.generatedBlocks.length) setTabEnabled("cronograma", true);
   updateContestSummary();
   renderAppViews();
@@ -13447,6 +13524,7 @@ function captureAppState() {
     completedHistory: state.completedHistory,
     cycleHistory: state.cycleHistory,
     cycleResults: state.cycleResults,
+    weeklyStudyCycle: state.weeklyStudyCycle,
     weeklyGoals: state.weeklyGoals,
     studyAlerts: state.studyAlerts,
     initialDiagnosis: state.initialDiagnosis,
@@ -13524,6 +13602,18 @@ function applyAppSnapshot(saved = {}) {
     }))
     : [];
   state.cycleResults = Array.isArray(saved.cycleResults) ? saved.cycleResults : [];
+  state.weeklyStudyCycle = saved.weeklyStudyCycle && typeof saved.weeklyStudyCycle === "object" ? saved.weeklyStudyCycle : null;
+  if (!state.weeklyStudyCycle && state.generatedBlocks.length && weeklyStudyCycleApi()) {
+    const config = scheduleConfig();
+    state.weeklyStudyCycle = weeklyStudyCycleApi().create({
+      weeklyHours: config.horasSemana,
+      capacity: config.capacidade,
+      sourceConfigurationSignature: weeklyStudyCycleSignature(config),
+    });
+    state.weeklyStudyCycle.legacyExecutionBlockKeys = state.generatedBlocks
+      .filter((block) => Number(block.tempoEstudado) > 0)
+      .map((block) => weeklyBlockKey(block));
+  }
   state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
   state.studyAlerts = Array.isArray(saved.studyAlerts) ? saved.studyAlerts : [];
   state.initialDiagnosis = Array.isArray(saved.initialDiagnosis)
@@ -14064,6 +14154,7 @@ function blankAppSnapshot(name = "") {
     completedHistory: [],
     cycleHistory: [],
     cycleResults: [],
+    weeklyStudyCycle: null,
     weeklyGoals: [],
     studyAlerts: [],
     initialDiagnosis: [],
@@ -14963,7 +15054,7 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-continue-generate]")) {
     if (setupIsIncomplete()) switchTab("pesos");
-    else openPlanningSettings("pesos");
+    else void generateSchedule({ openContinue: true });
   }
 });
 els.learningDiagnosisSubjectFilter?.addEventListener("change", () => {
@@ -16315,6 +16406,12 @@ els.downloadButton.addEventListener("click", downloadJson);
 [els.weeklyHours, els.blockDuration, els.overrideWeeklyHours, els.overrideCycleToggle, els.allowResidualBlock, els.referenceWeek, els.examDate, els.planStartDate].filter(Boolean).forEach((input) => {
   input.addEventListener("input", updateContestSummary);
   input.addEventListener("change", updateContestSummary);
+});
+els.weeklyHours?.addEventListener("change", () => {
+  if (!state.weeklyStudyCycle) return;
+  ensureWeeklyStudyCycle({ reconcile: true });
+  renderContinuePanel();
+  scheduleAutoSave();
 });
 document.addEventListener("input", (event) => {
   markPlanningSettingsDirty(event);

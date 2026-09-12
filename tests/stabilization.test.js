@@ -37,7 +37,7 @@ assert.ok(app.includes("NOTEBOOK_QUILL_ALIGNMENTS"), "Os alinhamentos do Quill d
 assert.ok(index.includes("pedagogical-grouping.js?v=20260909-explicit-subject-markers"), "A taxonomia pedagógica deve usar o modelo canônico atualizado.");
 assert.ok(app.includes("function parseExplicitSubjectMarkerContent"), "Marcadores MATÉRIA: devem ter uma leitura explícita própria.");
 assert.ok(app.includes("function explicitSubjectsMissingFromRows"), "A prévia deve avisar quando uma matéria marcada não foi aplicada ao conteúdo salvo.");
-assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
+assert.ok(app.includes("state.generatedBlocks = [];\n  state.distribution = [];\n  state.weeklyStudyCycle = null;\n  advanceReferenceWeek();"), "O ciclo encerrado deve ser arquivado antes de gerar o próximo.");
 assert.ok(app.includes("function pruneTrailingEmptyCycleClosures"), "Fechamentos vazios devem ser removidos do histórico ao restaurar dados.");
 assert.ok(app.includes("function reviewDeduplicationKey"), "Revisões duplicadas devem ser consolidadas com uma chave estável.");
 assert.ok(app.includes("if (!block.ciclo) block.ciclo = closingCycle;"), "O ciclo de origem deve ser definido antes de arquivar metas concluídas.");
@@ -72,5 +72,7 @@ assert.ok(app.includes("function positionTopicActionsMenu") && styles.includes("
 assert.ok(app.includes("maxWeightedQuestions") && app.includes("weightedQuestions / maxWeightedQuestions"), "A estrutura da prova deve normalizar importância pela maior matéria ponderada.");
 assert.ok(app.includes("Importância relativa na prova") && app.includes("Participação estimada"), "A explicação deve separar importância relativa de participação absoluta.");
 assert.ok(app.includes("function strategicPriorityForTarget"), "A fila e a geração do ciclo devem consumir a mesma prioridade estratégica derivada.");
+assert.ok(index.includes("js/weekly-study-cycle.js?v=20260912-weekly-adaptive-cycle"), "O ciclo semanal deve carregar antes do app.");
+assert.ok(app.includes("function ensureWeeklyStudyCycle"), "A capacidade semanal deve criar e reconciliar o ciclo persistido.");
 
 console.log("OK - estabilização central, extração local e diálogos internos presentes.");
