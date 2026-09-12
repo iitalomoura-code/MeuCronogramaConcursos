@@ -43,8 +43,33 @@ assert.equal(Delta.compare({ previousCheckpoint: null, currentSnapshot: current 
 assert.deepEqual(result, Delta.compare({ previousCheckpoint: previous, currentSnapshot: current, now: current.generatedAt }), "mesma entrada e now devem ser determinísticos");
 
 const unknown = Checkpoint.fromSnapshot(snapshot({ questions: null, correct: null, sessions: null }));
-assert.equal(unknown.totals.questions, 0);
+assert.equal(unknown.totals.questions, null);
+assert.equal(unknown.totals.sessions, null);
 assert.equal(unknown.topics[0].accuracy, null);
 assert.equal(Delta.compare({ previousCheckpoint: { generatedAt: "2026-09-01T00:00:00.000Z", totals: { questions: null, sessions: null, correct: null, studyMinutes: null }, subjects: [], topics: [] }, currentSnapshot: unknown }).newQuestions, null);
+
+const mixed = Checkpoint.fromSnapshot({
+  topics: [
+    { subject: "Português", topic: "A", currentEvidence: { questions: 10, correctAnswers: 0, sessions: 0, studiedMinutes: 0 } },
+    { subject: "Português", topic: "B", currentEvidence: { questions: null, correctAnswers: null, sessions: null, studiedMinutes: null } },
+    { subject: "Português", topic: "C", currentEvidence: { questions: 15, correctAnswers: 12, sessions: 2, studiedMinutes: 30 } },
+  ],
+});
+assert.equal(mixed.totals.questions, 25);
+assert.equal(mixed.totals.correct, 12);
+assert.equal(mixed.totals.sessions, 2);
+assert.equal(mixed.totals.studyMinutes, 30);
+assert.equal(mixed.subjects[0].correct, 12);
+
+const zero = Checkpoint.fromSnapshot({
+  topics: [{ subject: "Português", topic: "Sem questões", currentEvidence: { questions: 0, correctAnswers: 0, sessions: 0, studiedMinutes: 0 } }],
+});
+assert.equal(zero.totals.questions, 0);
+assert.equal(zero.totals.sessions, 0);
+assert.equal(zero.totals.studyMinutes, 0);
+assert.equal(Delta.compare({
+  previousCheckpoint: { generatedAt: "2026-09-01T00:00:00.000Z", totals: { questions: 0, sessions: 0, correct: 0, studyMinutes: 0 }, subjects: [], topics: [] },
+  currentSnapshot: snapshot({ questions: 5, correct: 2, sessions: 1 }),
+}).newQuestions, 5);
 
 console.log("OK - checkpoint factual e delta do AI Coach são determinísticos, não inventam execução e preservam a entrada.");

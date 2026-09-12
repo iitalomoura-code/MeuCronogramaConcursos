@@ -5542,15 +5542,15 @@ function aiCoachRecordDate(record = {}) {
   return window.AICoachMemory?.createdAt?.(record) || record.created_at || "";
 }
 
+function getAICoachReviewableCycle() {
+  return window.AICoachCycleTarget?.getReviewableCycle?.({
+    cycleHistory: state.cycleHistory,
+    reviews: aiCoachUIState.reviews,
+  }) || null;
+}
+
 function aiCoachClosedCycleAvailable() {
-  const records = Array.isArray(state.cycleHistory) ? state.cycleHistory : [];
-  return records.some((record) => {
-    const cycle = record?.weeklyStudyCycle || {};
-    const closed = Boolean(cycle.closedAt || cycle.finalizedAt || cycle.status === "closed" || record?.closedAt || record?.finalizedAt);
-    if (!closed) return false;
-    const cycleId = cycle.id || cycle.cycleId || null;
-    return !aiCoachUIState.reviews.some((review) => review.mode === "cycle-review" && ((cycleId && review.cycle_id === cycleId) || (!cycleId && review.cycle_reference_at && review.cycle_reference_at === (cycle.closedAt || cycle.finalizedAt || record.closedAt || record.finalizedAt))));
-  });
+  return Boolean(getAICoachReviewableCycle());
 }
 
 function aiCoachDaysSince(dateValue) {
@@ -5596,7 +5596,7 @@ function aiCoachMarkup() {
   const history = aiCoachUIState.reviews.slice(0, 5);
   const status = aiCoachUIState.busy ? "Analisando sua estratégia..." : aiCoachUIState.lastError ? aiCoachUIState.lastError : aiCoachUIState.loading ? "Carregando histórico do Coach..." : last ? `Última análise: ${age === 0 ? "hoje" : `há ${age} dia${age === 1 ? "" : "s"}`}` : "Você ainda não fez uma análise com o Coach.";
   const historyMarkup = history.length ? `<div class="ai-coach-history"><h5>Histórico recente</h5>${history.map((record) => `<div class="ai-coach-history-item"><strong>${escapeHtml(formatDateBR(new Date(aiCoachRecordDate(record))) || "Data não informada")} · ${escapeHtml(aiCoachReviewModeLabel(record.mode))}</strong>${record.question ? `<span>${escapeHtml(record.question)}</span>` : `<span>${escapeHtml(aiCoachRecordReview(record).periodDiagnosis?.summary || "Análise estratégica")}</span>`}</div>`).join("")}</div>` : "";
-  const cycleDisabled = !aiCoachClosedCycleAvailable() || aiCoachUIState.busy;
+  const cycleDisabled = !getAICoachReviewableCycle() || aiCoachUIState.busy;
   return `<section class="ai-coach-section" aria-labelledby="aiCoachTitle"><div class="ai-coach-heading"><div><span class="section-kicker">AI Coach</span><h4 id="aiCoachTitle">Orientação estratégica sob demanda</h4><p>${escapeHtml(status)}</p></div><i data-lucide="sparkles" aria-hidden="true"></i></div>${aiCoachUIState.lastResponse ? aiCoachDeltaMarkup(aiCoachUIState.lastResponse.delta) + aiCoachResponseMarkup(aiCoachUIState.lastResponse) : aiCoachDeltaMarkup(last ? window.AICoachDelta?.compare?.({ previousCheckpoint: aiCoachRecordCheckpoint(last), currentSnapshot: buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }), now: new Date().toISOString() }) : null)}<div class="ai-coach-actions"><button class="primary-button compact-button" type="button" data-ai-coach-mode="cycle-review" ${cycleDisabled ? "disabled" : ""}>Analisar ciclo</button><button class="ghost-button compact-button" type="button" data-ai-coach-mode="progress-check" ${aiCoachUIState.busy ? "disabled" : ""}>Ver minha evolução</button><button class="ghost-button compact-button" type="button" data-ai-coach-focus-question ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar ao Coach</button></div><div class="ai-coach-question-box" hidden><label for="aiCoachQuestion">Pergunte ao Coach sobre sua estratégia</label><textarea id="aiCoachQuestion" maxlength="2000" rows="3" placeholder="Ex.: estou gastando tempo demais em Português?"></textarea><button class="primary-button compact-button" type="button" data-ai-coach-mode="question" ${aiCoachUIState.busy ? "disabled" : ""}>Perguntar</button></div>${historyMarkup}</section>`;
 }
 
@@ -5616,17 +5616,28 @@ async function loadAICoachHistory() {
 
 async function requestAICoachAnalysis(mode, question = "") {
   if (aiCoachUIState.busy) return;
+  const cycleTarget = mode === "cycle-review" ? getAICoachReviewableCycle() : null;
+  if (mode === "cycle-review" && !cycleTarget) {
+    aiCoachUIState.lastError = "Nenhum ciclo fechado está disponível para uma nova análise.";
+    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    return;
+  }
   const snapshot = buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() });
   if (!snapshot || !window.AIStrategicCoachClient) {
     aiCoachUIState.lastError = "O orientador estratégico está indisponível no momento.";
     openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
     return;
   }
+  if (cycleTarget && !window.AICoachCycleTarget?.matchesSnapshot?.(cycleTarget, snapshot)) {
+    aiCoachUIState.lastError = "O ciclo fechado disponível não corresponde ao estado estratégico atual.";
+    openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    return;
+  }
   const latest = aiCoachUIState.reviews[0] || null;
-  const previousCycleId = snapshot.comparison?.previousCycle?.cycleId || snapshot.comparison?.previousCycle?.id || null;
   const previousCycleReview = mode === "cycle-review"
-    ? aiCoachUIState.reviews.find((record) => record.mode === "cycle-review" && record.id !== latest?.id && previousCycleId && record.cycle_id === previousCycleId)
-      || aiCoachUIState.reviews.find((record) => record.mode === "cycle-review" && record.id !== latest?.id && record.cycle_id !== snapshot.weeklyCycle?.cycleId)
+    ? aiCoachUIState.reviews.find((record) => record.mode === "cycle-review"
+      && record.id !== latest?.id
+      && window.AICoachCycleTarget?.hasReviewFor?.(cycleTarget.previousRecord, [record]))
       || null
     : null;
   const previousCheckpoint = aiCoachRecordCheckpoint(latest);

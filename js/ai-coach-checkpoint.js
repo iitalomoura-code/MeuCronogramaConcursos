@@ -13,6 +13,17 @@
     return Number.isFinite(date.getTime()) ? date.toISOString() : null;
   };
   const accuracy = (questions, correct) => questions ? Number((correct / questions).toFixed(4)) : null;
+  const sumKnown = (values = []) => {
+    let known = false;
+    let total = 0;
+    values.forEach((value) => {
+      const parsed = numberOrNull(value);
+      if (parsed === null) return;
+      known = true;
+      total += parsed;
+    });
+    return known ? total : null;
+  };
 
   function evidenceFor(topic = {}) {
     const evidence = topic.currentEvidence || topic.current || {};
@@ -43,7 +54,9 @@
         strategicRank: numberOrNull(strategic.rank),
         strategicScore: numberOrNull(strategic.score),
         questions: evidence.questions,
+        correctAnswers: evidence.correctAnswers,
         accuracy: evidence.accuracy,
+        sessions: evidence.sessions,
         studyMinutes: evidence.studiedMinutes,
         maintenanceDue: Boolean(topic.maintenanceDue),
       };
@@ -59,21 +72,31 @@
       const source = (snapshot.subjects || []).find((subject) => text(subject.name || subject.subject) === group.subject) || {};
       const readiness = source.readiness || {};
       const confidence = numberOrNull(source.diagnosticConfidence ?? source.confidence?.value);
-      const questions = group.topics.reduce((sum, topic) => sum + (topic.questions || 0), 0);
-      const correct = group.topics.reduce((sum, topic) => sum + ((topic.questions || 0) * (topic.accuracy ?? 0)), 0);
+      const questions = sumKnown(group.topics.map((topic) => topic.questions));
+      const correct = sumKnown(group.topics.map((topic) => topic.correctAnswers !== null
+        ? topic.correctAnswers
+        : topic.questions !== null && topic.accuracy !== null
+          ? topic.questions * topic.accuracy
+          : null));
       return {
         subject: group.subject,
         readinessState: text(readiness.state || source.readinessState) || null,
         confidence,
         strategicSummary: text(source.readiness?.summary || source.summary) || null,
         questions,
-        accuracy: questions ? Number((correct / questions).toFixed(4)) : null,
-        studyMinutes: group.topics.some((topic) => topic.studyMinutes !== null) ? group.topics.reduce((sum, topic) => sum + (topic.studyMinutes || 0), 0) : null,
+        correct,
+        sessions: sumKnown(group.topics.map((topic) => topic.sessions)),
+        accuracy: correct === null || questions === null || !questions ? null : Number((correct / questions).toFixed(4)),
+        studyMinutes: sumKnown(group.topics.map((topic) => topic.studyMinutes)),
       };
     });
-    const totalQuestions = topics.reduce((sum, topic) => sum + (topic.questions || 0), 0);
-    const totalCorrect = topics.reduce((sum, topic) => sum + ((topic.questions || 0) * (topic.accuracy ?? 0)), 0);
-    const totalSessions = topics.reduce((sum, topic) => sum + (numberOrNull((snapshot.topics || []).find((item) => topicKey(item) === topicKey(topic))?.currentEvidence?.sessions) || 0), 0);
+    const totalQuestions = sumKnown(topics.map((topic) => topic.questions));
+    const totalCorrect = sumKnown(topics.map((topic) => topic.correctAnswers !== null
+      ? topic.correctAnswers
+      : topic.questions !== null && topic.accuracy !== null
+        ? topic.questions * topic.accuracy
+        : null));
+    const totalSessions = sumKnown(topics.map((topic) => topic.sessions));
     return {
       generatedAt: iso(generatedAt),
       snapshotSignature: text(snapshot.signature?.value || snapshot.signature) || null,
@@ -90,10 +113,10 @@
         accuracy: numberOrNull(snapshot.weeklyCycle?.accuracy),
       },
       totals: {
-        studyMinutes: topics.some((topic) => topic.studyMinutes !== null) ? topics.reduce((sum, topic) => sum + (topic.studyMinutes || 0), 0) : null,
-        sessions: topics.length ? totalSessions : null,
-        questions: topics.length ? totalQuestions : null,
-        correct: topics.length ? Number(totalCorrect.toFixed(4)) : null,
+        studyMinutes: sumKnown(topics.map((topic) => topic.studyMinutes)),
+        sessions: totalSessions,
+        questions: totalQuestions,
+        correct: totalCorrect === null ? null : Number(totalCorrect.toFixed(4)),
       },
       subjects,
       topics: topics.sort((a, b) => topicKey(a).localeCompare(topicKey(b))),
