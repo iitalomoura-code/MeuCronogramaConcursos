@@ -175,4 +175,65 @@ const lowerCorrected = knowledge.buildKnowledgeBase(lowerCorrectionBase, [lowerC
 assert.equal(lowerCorrected.evidence.length, 1);
 assert.deepEqual([lowerCorrected.evidence[0].questions, lowerCorrected.evidence[0].correctAnswers], [20, 18], "Uma correção recente pode reduzir questões e acertos.");
 
+const liveContext = {
+  sourcePlanId: "current-plan",
+  sourcePlanName: "Plano atual",
+  sessionId: "live-1",
+  topicId: "topic-lancamentos",
+  studiedMinutes: 45,
+  questions: 20,
+  correctAnswers: 16,
+  completedAt: "2026-09-12T14:00:00.000Z",
+  observedAt: "2026-09-12T14:00:00.000Z",
+  now: "2026-09-12T14:00:00.000Z",
+};
+const liveSession = { materia: "Contabilidade", titulo: "Lançamentos", tipoAtividade: "Questões", dificuldade: "Média" };
+const liveBase = knowledge.ingestStudySession({}, liveSession, liveContext);
+assert.equal(liveBase.evidence.length, 1, "Sessão factual deve alimentar a base uma única vez.");
+assert.deepEqual(
+  [liveBase.evidence[0].originalSubject, liveBase.evidence[0].originalTopic, liveBase.evidence[0].questions, liveBase.evidence[0].correctAnswers, liveBase.evidence[0].studiedMinutes],
+  ["Contabilidade", "Lançamentos", 20, 16, 45],
+);
+assert.equal(liveBase.evidence[0].activityType, "Questões");
+
+const liveUpdated = knowledge.ingestStudySession(liveBase, liveSession, { ...liveContext, questions: 8, correctAnswers: 6, studiedMinutes: 15, now: "2026-09-12T15:00:00.000Z", observedAt: "2026-09-12T15:00:00.000Z" });
+assert.equal(liveUpdated.evidence.length, 1, "Salvar a mesma sessão novamente deve fazer upsert.");
+assert.deepEqual([liveUpdated.evidence[0].questions, liveUpdated.evidence[0].correctAnswers, liveUpdated.evidence[0].studiedMinutes], [8, 6, 15]);
+const secondLive = knowledge.ingestStudySession(liveUpdated, liveSession, { ...liveContext, sessionId: "live-2" });
+assert.equal(secondLive.evidence.length, 2, "Sessões diferentes devem gerar evidências diferentes.");
+
+const liveReview = knowledge.ingestStudySession(secondLive, { ...liveSession, assunto: "Lançamentos", tipoAtividade: "Revisão" }, { ...liveContext, sessionId: "review-1", sourceType: "live-review-session", questions: 10, correctAnswers: 9, studiedMinutes: 30 });
+assert.equal(liveReview.evidence.filter((item) => item.sessionId === "review-1")[0].activityType, "Revisão");
+assert.equal(liveReview.evidence.length, 3);
+
+const timeOnly = knowledge.ingestStudySession({}, { materia: "Contabilidade", assunto: "Tempo", studiedMinutes: 25 }, { ...liveContext, sessionId: "time-only", questions: 0, correctAnswers: 0 });
+const questionsOnly = knowledge.ingestStudySession({}, { materia: "Contabilidade", assunto: "Questões", questions: 12, correctAnswers: 9 }, { ...liveContext, sessionId: "questions-only", studiedMinutes: 0 });
+const emptySession = knowledge.ingestStudySession({}, { materia: "Contabilidade", assunto: "Vazio" }, { ...liveContext, sessionId: "empty", questions: 0, correctAnswers: 0, studiedMinutes: 0 });
+assert.equal(timeOnly.evidence.length, 1, "Tempo sem questões é uma evidência factual válida.");
+assert.equal(questionsOnly.evidence.length, 1, "Questões sem tempo são uma evidência factual válida.");
+assert.equal(emptySession.evidence.length, 0, "Sessão sem tempo e sem questões não deve alimentar a base.");
+
+const mappedSeed = knowledge.buildKnowledgeBase({}, [source("old-plan", "Histórico", [{ materia: "Direito", assunto: "Atos Administrativos", questoes: 20, acertos: 18, tempoEstudado: 1, sessaoId: "old-1", completedAt: "2026-08-01" }])]);
+const equivalentLive = knowledge.ingestStudySession(mappedSeed, { materia: "Administração", assunto: "Atos Administrativos", questoes: 10, acertos: 8 }, { ...liveContext, sourcePlanId: "another-plan", sessionId: "equivalent-1", studiedMinutes: 20, questions: 10, correctAnswers: 8 });
+assert.equal(equivalentLive.evidence.find((item) => item.sessionId === "equivalent-1").canonicalKey, "atos administrativos", "Equivalência simples pode enriquecer o conceito canônico.");
+const partial = knowledge.ingestStudySession(mappedSeed, { materia: "Administração", assunto: "Atos e poderes", questoes: 5, acertos: 3 }, { ...liveContext, sessionId: "partial-1", questions: 5, correctAnswers: 3, studiedMinutes: 10, mapping: { status: "suggested", conceptKeys: ["atos administrativos"], relationship: "partial" } });
+assert.equal(partial.evidence.find((item) => item.sessionId === "partial-1").canonicalKey, "atos e poderes");
+const composite = knowledge.ingestStudySession(mappedSeed, { materia: "Administração", assunto: "Atos e poderes", questoes: 5, acertos: 3 }, { ...liveContext, sessionId: "composite-1", questions: 5, correctAnswers: 3, studiedMinutes: 10, mapping: { status: "suggested", conceptKeys: ["atos administrativos", "poderes administrativos"], relationship: "composite" } });
+assert.equal(composite.evidence.filter((item) => item.sessionId === "composite-1").length, 1);
+assert.equal(composite.evidence.find((item) => item.sessionId === "composite-1").canonicalKey, "atos e poderes");
+
+const noMutationBase = JSON.stringify(mappedSeed);
+knowledge.ingestStudySession(mappedSeed, { materia: "Direito", assunto: "Novo", questions: 2, correctAnswers: 1, studiedMinutes: 5 }, { ...liveContext, sessionId: "immutable-1" });
+assert.equal(JSON.stringify(mappedSeed), noMutationBase, "A ingestão deve ser não mutante.");
+const deterministicBase = knowledge.emptyKnowledgeBase("2026-09-12T00:00:00.000Z");
+const deterministicOne = knowledge.ingestStudySession(deterministicBase, liveSession, liveContext);
+const deterministicTwo = knowledge.ingestStudySession(deterministicBase, liveSession, liveContext);
+assert.deepEqual(deterministicOne, deterministicTwo, "Timestamp explícito torna a operação determinística.");
+
+const currentPlanDiagnosis = require("../js/knowledge-diagnosis.js");
+const currentOnly = knowledge.ingestStudySession({}, liveSession, { ...liveContext, sessionId: "current-only" });
+const currentDiagnosis = currentPlanDiagnosis.derive({ base: currentOnly, topic: { planId: "current-plan", topicId: "topic-lancamentos", materia: "Contabilidade", assunto: "Lançamentos", titulo: "Lançamentos" }, currentPlanId: "current-plan", now: Date.parse("2026-09-12T16:00:00.000Z") });
+assert.equal(currentDiagnosis.evidence.questions, 0, "Evidência do plano atual não pode virar herança no diagnóstico inicial.");
+assert.equal(currentDiagnosis.mastery.level, "none");
+
 console.log("OK - base permanente consolida evidências executadas, preserva origem e suporta bootstrap incremental.");

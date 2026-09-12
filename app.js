@@ -8852,6 +8852,13 @@ function saveStandaloneReviewResult(block, draft, studiedHours) {
     notes: block.observacoes,
   });
   invalidateDerivedStudyCaches();
+  ingestLiveStudyEvidence(block, {
+    sourceType: "live-review-session",
+    studiedMinutes: Math.round(Math.max(0, Number(studiedHours) || 0) * 60),
+    completedAt: nextStatus === "Concluído" ? block.atualizadoEm : "",
+    observedAt: block.atualizadoEm,
+    now: block.atualizadoEm,
+  });
   const adaptiveOutcome = block.diagnosticInterventionOnly ? syncAdaptiveReviewForBlock(block) : null;
   return { ok: true, block, previousStatus, nextStatus, adaptiveOutcome, standaloneReview: true };
 }
@@ -9765,6 +9772,13 @@ function saveStudyResult({
   const cycleAdaptation = applyAdaptiveCycleNeedFromResult(block);
   integrateReviewNeedsIntoCycle();
   updateBlockAccuracy(block);
+  ingestLiveStudyEvidence(block, {
+    sourceType: "live-study-session",
+    studiedMinutes: Math.round(Math.max(0, nextHours) * 60),
+    completedAt: nextStatus === "Concluído" ? block.atualizadoEm : "",
+    observedAt: block.atualizadoEm,
+    now: block.atualizadoEm,
+  });
   updateNavigationState();
   queueStudyAlertsRefresh();
   if (persist) scheduleAutoSave();
@@ -13132,6 +13146,12 @@ function scheduleKnowledgeBaseBootstrap() {
 
 function commitKnowledgeBaseDecision(next) {
   knowledgeBaseState = window.KnowledgeBase?.migrateKnowledgeMappings?.(next) || next;
+  return commitKnowledgeBaseMutation(knowledgeBaseState);
+}
+
+function commitKnowledgeBaseMutation(next) {
+  if (!next?.schemaVersion) return knowledgeBaseState;
+  knowledgeBaseState = next;
   invalidateDerivedStudyCaches();
   knowledgeMappingReviewCacheKey = "";
   knowledgeMappingReviewCacheValue = null;
@@ -13144,11 +13164,48 @@ function commitKnowledgeBaseDecision(next) {
   return knowledgeBaseState;
 }
 
+function ingestLiveStudyEvidence(block, context = {}) {
+  if (!block || !window.KnowledgeBaseStore?.recordStudyEvidence) return null;
+  try {
+    return window.KnowledgeBaseStore.recordStudyEvidence(block, {
+      sourcePlanId: state.currentPlanId,
+      sourcePlanName: planVisibleName(activePlan() || {}),
+      sourceType: context.sourceType || "live-study-session",
+      sessionId: context.sessionId || block.sessaoId || block.lastSavedSessionId,
+      topicId: block.programUnitId || block.id,
+      topicTitle: block.titulo || block.assunto,
+      topicDetails: block.descricao || block.conteudoBloco || "",
+      studiedMinutes: context.studiedMinutes,
+      questions: block.questoes,
+      correctAnswers: block.acertos,
+      completedAt: context.completedAt || "",
+      observedAt: context.observedAt || block.atualizadoEm,
+      now: context.now || block.atualizadoEm,
+    });
+  } catch (error) {
+    // A Base Permanente é enriquecimento; uma falha nunca desfaz o resultado salvo.
+    console.error("Falha ao registrar evidência na Base Permanente:", error);
+    return null;
+  }
+}
+
 window.KnowledgeBaseStore = {
   refresh: bootstrapKnowledgeBase,
   inspect: () => window.KnowledgeBase?.inspectKnowledgeBase(knowledgeBaseState || readLocalKnowledgeBase() || {}),
   inspectConcept: (concept) => window.KnowledgeBase?.inspectConcept(knowledgeBaseState || readLocalKnowledgeBase() || {}, concept),
   suggestForTopic: (topic, options) => window.KnowledgeBase?.mapTopic(knowledgeBaseState || readLocalKnowledgeBase() || {}, topic, options),
+  recordStudyEvidence: (session, context = {}) => {
+    const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
+    if (!current || !window.KnowledgeBase?.ingestStudySession) return current;
+    try {
+      const next = window.KnowledgeBase.ingestStudySession(current, session, context);
+      if (!next || next.evidence?.length === current.evidence?.length && next.updatedAt === current.updatedAt) return current;
+      return commitKnowledgeBaseMutation(next);
+    } catch (error) {
+      console.error("Falha ao alimentar a Base Permanente:", error);
+      return current;
+    }
+  },
   decideMapping: (mapping, decision) => {
     const current = knowledgeBaseState || readLocalKnowledgeBase() || window.KnowledgeBase?.emptyKnowledgeBase?.();
     return commitKnowledgeBaseDecision(window.KnowledgeBase?.decideTopicMapping(current, mapping, decision) || current);

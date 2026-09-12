@@ -194,6 +194,115 @@
     return [...byIdentity.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  function ingestionTimestamp(value = "") {
+    const date = value instanceof Date ? value : new Date(value || 0);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : nowIso();
+  }
+
+  function sessionTopicDetails(studySession = {}, context = {}) {
+    const rawTitle = text(context.topicTitle || context.title || studySession.titulo || studySession.title || studySession.assunto || studySession.topic || studySession.originalTopic);
+    const separator = rawTitle.indexOf(":");
+    const title = text(context.topicTitle || context.title || studySession.titulo || studySession.title)
+      || text(separator >= 0 ? rawTitle.slice(0, separator) : rawTitle);
+    const details = text(context.topicDetails || context.details || studySession.conteudoBloco || studySession.descricao || studySession.descricaoTema || studySession.metaConteudos || studySession.conteudosOriginais)
+      || (separator >= 0 ? text(rawTitle.slice(separator + 1)) : "");
+    return { title, details };
+  }
+
+  function safeEquivalentMapping(mapping = {}) {
+    const conceptKeys = sortedConceptKeys(mapping);
+    const basis = text(mapping.matchBasis || mapping.basis);
+    const acceptedBasis = ["canonical-title-exact", "canonical-title-equivalent", "confirmed-equivalent", "controlled-alias", "exact-canonical-title"];
+    return conceptKeys.length === 1
+      && text(mapping.relationship) === "equivalent"
+      && (mapping.status === "user-confirmed" || (mapping.status === "auto-confirmed" && acceptedBasis.includes(basis)));
+  }
+
+  // Ingest only a factual study session. The caller supplies the session
+  // context; this operation never searches history, creates mappings, or
+  // mutates the received base/session objects.
+  function ingestStudySession(base = {}, studySession = {}, context = {}) {
+    const normalizedBase = normalizeExistingBase(base);
+    const topic = sessionTopicDetails(studySession, context);
+    if (!topic.title) return normalizedBase;
+    const observedAt = ingestionTimestamp(context.observedAt || studySession.observedAt || studySession.atualizadoEm || context.now);
+    const session = { ...studySession };
+    if (session.questions === undefined && session.questoes === undefined && context.questions !== undefined) session.questions = context.questions;
+    if (session.correctAnswers === undefined && session.acertos === undefined && context.correctAnswers !== undefined) session.correctAnswers = context.correctAnswers;
+    if (session.studiedMinutes === undefined && context.studiedMinutes !== undefined) session.studiedMinutes = context.studiedMinutes;
+    if (session.studiedMinutes === undefined && context.studiedHours !== undefined) session.studiedMinutes = normalizeMinutes(context.studiedHours, { numericUnit: "hours" });
+    session.assunto = topic.title;
+    session.metaTitulo = topic.title;
+    session.titulo = topic.title;
+    session.conteudoBloco = topic.details;
+    session.descricao = topic.details;
+    session.updatedAt = "";
+    session.atualizadoEm = observedAt;
+    const completion = text(context.completedAt || studySession.completedAt || studySession.concluidoEm || studySession.closedAt);
+    session.completedAt = completion;
+    session.concluidoEm = completion;
+    session.closedAt = completion;
+    session.createdAt = "";
+    if (context.sessionId !== undefined) session.sessaoId = context.sessionId;
+    const evidence = evidenceFromStudyEntry(session, {
+      sourcePlanId: context.sourcePlanId || studySession.sourcePlanId || studySession.planId,
+      sourcePlanName: context.sourcePlanName || studySession.sourcePlanName || studySession.planName,
+      sourceType: context.sourceType || "live-study-session",
+      observedAt,
+    });
+    if (!evidence || (!evidence.questions && !evidence.studiedMinutes)) return normalizedBase;
+
+    const mappingTopic = {
+      planId: context.sourcePlanId || studySession.sourcePlanId || studySession.planId,
+      topicId: context.topicId || studySession.topicId || studySession.programUnitId || studySession.id,
+      materia: evidence.originalSubject,
+      subject: evidence.originalSubject,
+      assunto: topic.title,
+      titulo: topic.title,
+      title: topic.title,
+      descricao: topic.details,
+      details: topic.details,
+    };
+    const mapping = context.mapping || context.topicMapping || (MAPPING?.matchTopicToConcepts
+      ? MAPPING.matchTopicToConcepts(mappingTopic, normalizedBase)
+      : null);
+    const mappedKeys = sortedConceptKeys(mapping || {});
+    let canonicalKey = evidence.canonicalKey;
+    let canonicalTitle = evidence.canonicalTitle;
+    let provenance = {};
+    if (safeEquivalentMapping(mapping || {})) {
+      canonicalKey = mappedKeys[0];
+      const mappedConcept = normalizedBase.concepts.find((item) => normalizeConcept(item.canonicalKey || item.canonicalTitle).canonicalKey === canonicalKey);
+      canonicalTitle = text(mappedConcept?.canonicalTitle) || canonicalTitle;
+      provenance = {
+        mappingBasis: mapping.matchBasis || mapping.basis || "equivalent",
+        mappingRelationship: "equivalent",
+      };
+    }
+    const incoming = { ...evidence, canonicalKey, canonicalTitle, ...provenance };
+    incoming.id = evidenceIdentity(incoming);
+    const nextEvidence = dedupeEvidence([...normalizedBase.evidence, incoming]);
+    const concepts = normalizedBase.concepts.map((item) => ({ ...item }));
+    if (!concepts.some((item) => normalizeConcept(item.canonicalKey || item.canonicalTitle).canonicalKey === canonicalKey)) {
+      concepts.push({
+        ...normalizeConcept(canonicalTitle || topic.title),
+        canonicalKey,
+        canonicalTitle: canonicalTitle || topic.title,
+        domain: "",
+        createdAt: incoming.createdAt || observedAt,
+        updatedAt: observedAt,
+      });
+    }
+    const previous = normalizedBase.evidence.find((item) => (item.id || evidenceIdentity(item)) === incoming.id);
+    const changed = !previous || JSON.stringify(previous) !== JSON.stringify(nextEvidence.find((item) => item.id === incoming.id));
+    return {
+      ...normalizedBase,
+      updatedAt: changed ? ingestionTimestamp(context.now || observedAt) : normalizedBase.updatedAt,
+      concepts,
+      evidence: nextEvidence,
+    };
+  }
+
   function emptyKnowledgeBase(now = nowIso()) {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -436,6 +545,7 @@
     evidenceFromStudyEntry,
     evidenceIdentity,
     dedupeEvidence,
+    ingestStudySession,
     summarizeConceptEvidence,
     buildKnowledgeBase,
     inspectKnowledgeBase,
