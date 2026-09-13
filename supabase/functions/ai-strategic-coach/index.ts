@@ -2,16 +2,12 @@ const AI_COACH_MODEL = "gpt-5.6-terra";
 const SUPPORTED_CONTRACT_VERSION = 1;
 const DEFAULT_COACH_MODE = "progress-check";
 const MAX_SNAPSHOT_BYTES = 500 * 1024;
-// Keep this below the Edge runtime's external limit so a diagnostic timeout
-// becomes an explicit, observable 504 instead of a gateway-level 503.
-const PROVIDER_TIMEOUT_MS = 20_000;
+// The compact provider projection keeps the full structured response within
+// this explicit limit while still returning a controlled error when necessary.
+const PROVIDER_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const COACH_MODES = ["cycle-review", "progress-check", "question"];
-// Temporary, authenticated diagnostics. Remove these after the provider path
-// has been isolated in production; they are intentionally not client features.
-const DIAGNOSTIC_MODES = ["health-check", "provider-smoke"];
-const PROVIDER_SMOKE_TIMEOUT_MS = 10_000;
 const MAX_QUESTION_CHARS = 2000;
 
 const CORS_HEADERS = {
@@ -399,63 +395,7 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
   }
 }
 
-async function callProviderSmoke({ apiKey, providerFetch, timeoutMs = PROVIDER_SMOKE_TIMEOUT_MS, logger = console.log, clock = () => new Date(), now = () => Date.now() }) {
-  const controller = new AbortController();
-  let timeoutId;
-  const mode = "provider-smoke";
-  const snapshotBytes = 0;
-  const startedAt = now();
-  const elapsed = () => Math.max(0, now() - startedAt);
-  try {
-    safeStageLog(logger, { stage: "provider-call-start", mode, snapshotBytes, clock });
-    safeStageLog(logger, { stage: "openai-fetch-start", mode, snapshotBytes, clock });
-    const request = providerFetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: AI_COACH_MODEL,
-        input: "Reply with exactly OK.",
-        max_output_tokens: 16,
-        store: false,
-      }),
-    });
-    const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        safeStageLog(logger, { stage: "openai-timeout-triggered", mode, snapshotBytes, clock });
-        controller.abort();
-        reject(Object.assign(new Error("provider timeout"), { name: "AI_PROVIDER_TIMEOUT" }));
-      }, timeoutMs);
-    });
-    const response = await Promise.race([request, timeout]);
-    if (!response) throw Object.assign(new Error("provider unavailable"), { name: "AI_PROVIDER_NETWORK" });
-    safeStageLog(logger, {
-      stage: "openai-fetch-response",
-      mode,
-      snapshotBytes,
-      clock,
-      status: response.status,
-      responseOk: response.ok,
-    });
-    return { ok: response.ok, providerStatus: response.status, elapsedMs: elapsed() };
-  } catch (error) {
-    if (error?.name === "AI_PROVIDER_TIMEOUT" || error?.name === "AbortError") {
-      return { ok: false, providerStatus: null, elapsedMs: elapsed(), timedOut: true };
-    }
-    safeProviderLog(logger, {
-      stage: "openai-network",
-      model: AI_COACH_MODEL,
-      mode,
-      snapshotBytes,
-      errorName: error?.name || null,
-    });
-    return { ok: false, providerStatus: null, elapsedMs: elapsed(), timedOut: false };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-export function createCoachHandler({ authClient, providerFetch = fetch, env = null, rateLimiter = createRateLimiter(), clock = () => new Date(), now = () => Date.now(), timeoutMs = PROVIDER_TIMEOUT_MS, smokeTimeoutMs = PROVIDER_SMOKE_TIMEOUT_MS, logger = console.log } = {}) {
+export function createCoachHandler({ authClient, providerFetch = fetch, env = null, rateLimiter = createRateLimiter(), clock = () => new Date(), timeoutMs = PROVIDER_TIMEOUT_MS, logger = console.log } = {}) {
   return async function handleCoachRequest(request) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
     if (request.method !== "POST") return errorResponse(405, "AI_INVALID_SNAPSHOT");
@@ -473,34 +413,6 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
       body = JSON.parse(raw);
     } catch {
       return errorResponse(422, "AI_INVALID_SNAPSHOT");
-    }
-    const diagnosticMode = DIAGNOSTIC_MODES.includes(body?.mode) ? body.mode : null;
-    if (diagnosticMode) {
-      const stageDetails = { mode: diagnosticMode, snapshotBytes: 0, clock };
-      if (!authClient?.auth?.getUser) return errorResponse(500, "AI_CONFIG_MISSING");
-      let authResult;
-      try {
-        authResult = await authClient.auth.getUser(tokenMatch[1]);
-      } catch {
-        return errorResponse(401, "AI_AUTH_REQUIRED");
-      }
-      const { data, error } = authResult || {};
-      if (error || !data?.user?.id) return errorResponse(401, "AI_AUTH_REQUIRED");
-      safeStageLog(logger, { stage: "auth-ok", ...stageDetails });
-      const allowedUserId = getEnv("AI_ALLOWED_USER_ID", env);
-      if (!allowedUserId) return errorResponse(500, "AI_CONFIG_MISSING");
-      if (data.user.id !== allowedUserId) return errorResponse(403, "AI_ACCESS_DENIED");
-      safeStageLog(logger, { stage: "allowed-user-ok", ...stageDetails });
-      if (diagnosticMode === "health-check") return jsonResponse({ ok: true, stage: "edge-function-reached" });
-      if (!rateLimiter.allow(data.user.id)) return errorResponse(429, "AI_RATE_LIMITED");
-      const apiKey = getEnv("OPENAI_API_KEY", env);
-      if (!apiKey) return errorResponse(500, "AI_CONFIG_MISSING");
-      safeStageLog(logger, { stage: "openai-key-present", ...stageDetails });
-      const smoke = await callProviderSmoke({ apiKey, providerFetch, timeoutMs: smokeTimeoutMs, logger, clock, now });
-      return jsonResponse(
-        { ok: smoke.ok, providerStatus: smoke.providerStatus, elapsedMs: smoke.elapsedMs },
-        smoke.ok ? 200 : (smoke.timedOut ? 504 : 502),
-      );
     }
     if (body.aiReadContractVersion !== SUPPORTED_CONTRACT_VERSION) return errorResponse(422, "AI_CONTRACT_VERSION_UNSUPPORTED");
     if (!validateSnapshotRequest(body)) return errorResponse(422, "AI_INVALID_SNAPSHOT");

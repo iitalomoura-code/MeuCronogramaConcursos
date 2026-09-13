@@ -80,8 +80,8 @@ function providerResponse(status = 200, value = review()) {
   return new Response(JSON.stringify({ output_text: JSON.stringify(value) }), { status });
 }
 
-function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000, logger = () => {}, clock = () => new Date("2026-09-12T00:00:00.000Z"), now } = {}) {
-  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs, logger, clock, now });
+function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000, logger = () => {}, clock = () => new Date("2026-09-12T00:00:00.000Z") } = {}) {
+  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs, logger, clock });
 }
 
 test("exige Authorization e diferencia autenticação de autorização", async () => {
@@ -98,56 +98,6 @@ test("exige Authorization e diferencia autenticação de autorização", async (
   const denied = await handler({ userId: "other-user" })(request());
   assert.equal(denied.status, 403);
   assert.equal((await denied.json()).error.code, "AI_ACCESS_DENIED");
-});
-
-test("health-check isolado valida JWT e usuário permitido sem chamar o provider", async () => {
-  let calls = 0;
-  const logs = [];
-  const response = await handler({
-    logger: (event) => logs.push(event),
-    providerFetch: async () => { calls += 1; return providerResponse(); },
-  })(request({ payload: JSON.stringify({ mode: "health-check" }) }));
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, stage: "edge-function-reached" });
-  assert.equal(calls, 0);
-  assert.deepEqual(logs.map((event) => event.stage), ["request-received", "auth-ok", "allowed-user-ok"]);
-
-  const denied = await handler({ userId: "other-user" })(request({ payload: JSON.stringify({ mode: "health-check" }) }));
-  assert.equal(denied.status, 403);
-});
-
-test("provider-smoke chama Responses com payload mínimo e timeout próprio", async () => {
-  let received;
-  let tick = 1_000;
-  const response = await handler({
-    now: () => (tick += 25),
-    providerFetch: async (_url, options) => {
-      received = JSON.parse(options.body);
-      return new Response(JSON.stringify({ output_text: "OK" }), { status: 200 });
-    },
-  })(request({ payload: JSON.stringify({ mode: "provider-smoke" }) }));
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, providerStatus: 200, elapsedMs: 25 });
-  assert.deepEqual(received, {
-    model: "gpt-5.6-terra",
-    input: "Reply with exactly OK.",
-    max_output_tokens: 16,
-    store: false,
-  });
-  assert.equal(JSON.stringify(received).includes("json_schema"), false);
-
-  const timeout = await backend.createCoachHandler({
-    authClient: authClient(),
-    env: { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" },
-    providerFetch: () => new Promise(() => {}),
-    smokeTimeoutMs: 5,
-    logger: () => {},
-  })(request({ payload: JSON.stringify({ mode: "provider-smoke" }) }));
-  assert.equal(timeout.status, 504);
-  const timeoutPayload = await timeout.json();
-  assert.equal(timeoutPayload.ok, false);
-  assert.equal(timeoutPayload.providerStatus, null);
-  assert.equal(typeof timeoutPayload.elapsedMs, "number");
 });
 
 test("valida contrato, registra etapas seguras, chama Responses API com schema e devolve metadata segura", async () => {
