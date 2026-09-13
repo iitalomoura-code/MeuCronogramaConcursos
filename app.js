@@ -217,6 +217,8 @@ let strategicAdvisorModelCache = null;
 let strategicAdvisorModelRevision = -1;
 let strategicAdvisorModelBuildPromise = null;
 let strategicAdvisorModelBuildRevision = -1;
+let strategicPlanningTopicsCache = null;
+let strategicPlanningTopicsRevision = -1;
 let aiCoachUIState = {
   reviews: [],
   selectedReviewId: "",
@@ -281,6 +283,11 @@ function measureFocusPerformance(trace, label, work) {
   return result;
 }
 
+function markFocusPerformance(trace, label) {
+  if (!trace?.enabled) return;
+  trace.steps.push({ label, ms: Math.round((focusPerformanceNow() - trace.startedAt) * 10) / 10 });
+}
+
 function reportFocusPerformance(trace, phase = "") {
   if (!trace?.enabled) return;
   const total = Math.round((focusPerformanceNow() - trace.startedAt) * 10) / 10;
@@ -301,6 +308,8 @@ function invalidateDerivedStudyCaches() {
   strategicAdvisorModelRevision = -1;
   strategicAdvisorModelBuildPromise = null;
   strategicAdvisorModelBuildRevision = -1;
+  strategicPlanningTopicsCache = null;
+  strategicPlanningTopicsRevision = -1;
   errorAnalysisRevision += 1;
   window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
@@ -5387,11 +5396,17 @@ function strategicPlanningRowsByKey() {
 }
 
 function strategicPlanningTopics() {
+  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === errorAnalysisRevision) return strategicPlanningTopicsCache;
   const rowsByKey = strategicPlanningRowsByKey();
-  return learningDiagnosisModel().topics.map((topic) => strategicPlanningTopic(topic, rowsByKey));
+  const topics = learningDiagnosisModel().topics.map((topic) => strategicPlanningTopic(topic, rowsByKey));
+  strategicPlanningTopicsCache = topics;
+  strategicPlanningTopicsRevision = errorAnalysisRevision;
+  return topics;
 }
 
 async function strategicPlanningTopicsForModal({ onProgress = null } = {}) {
+  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === errorAnalysisRevision) return strategicPlanningTopicsCache;
+  const revision = errorAnalysisRevision;
   const rowsByKey = strategicPlanningRowsByKey();
   const diagnosisModel = await learningDiagnosisModelForModal({ onProgress });
   const topics = [];
@@ -5401,6 +5416,10 @@ async function strategicPlanningTopicsForModal({ onProgress = null } = {}) {
       onProgress?.("Organizando prioridades e pontos de atenção...");
       await yieldForPaint();
     }
+  }
+  if (revision === errorAnalysisRevision) {
+    strategicPlanningTopicsCache = topics;
+    strategicPlanningTopicsRevision = revision;
   }
   return topics;
 }
@@ -5491,30 +5510,14 @@ function previousStrategicAdvisorTopics({ referenceAt = "" } = {}) {
 
 // Public read-only adapter for a future AI boundary. It assembles explicit
 // engine outputs and never exposes the application state or UI structures.
-function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rollingWindow = null } = {}) {
-  const snapshotEngine = window.AIStrategicSnapshot;
-  if (!snapshotEngine?.buildStrategicSnapshot) return null;
-  const config = scheduleConfig();
-  const planningTopics = strategicPlanningTopics();
-  const currentRanks = aiStrategicRankMap(planningTopics);
-  const previousRecord = state.cycleHistory?.at?.(-1) || null;
-  const previousCycleSource = previousRecord?.weeklyStudyCycle || {};
-  const previousCycleReferenceAt = previousCycleSource.closedAt
-    || previousCycleSource.finalizedAt
-    || previousCycleSource.endsAt
-    || previousRecord?.closedAt
-    || previousRecord?.finalizedAt
-    || previousRecord?.savedAt
-    || "";
-  const previousCycleStartedAt = previousCycleSource.startedAt || previousRecord?.startedAt || "";
-  const previousTopicSnapshot = previousStrategicAdvisorSnapshot(previousCycleReferenceAt);
-  const topicEntries = (materia, assunto) => adaptivePerformanceForTopic(materia, assunto).map((entry) => ({
+function aiStrategicSnapshotTopic(topic, index, currentRanks) {
+  const topicEntries = adaptivePerformanceForTopic(topic.materia, topic.assuntoOriginal || topic.assunto).map((entry) => ({
     questions: Number(entry.questoes) || 0,
     correctAnswers: Number(entry.acertos) || 0,
     studiedMinutes: Math.max(0, Number(entry.tempoEstudado) || 0) * 60,
     completedAt: entryContactDateValue(entry) ? new Date(entryContactDateValue(entry)).toISOString() : null,
   }));
-  const topics = planningTopics.map((topic, index) => ({
+  return {
     subject: topic.materia,
     topic: topic.assuntoOriginal || topic.assunto,
     subarea: topic.subarea || "",
@@ -5533,7 +5536,7 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
       reasons: topic.diagnosis?.reasons,
     },
     currentEvidence: {
-      entries: topicEntries(topic.materia, topic.assuntoOriginal || topic.assunto),
+      entries: topicEntries,
       questions: topic.diagnosis?.questions,
       sessions: topic.diagnosis?.sessionCount,
       recentAccuracy: topic.diagnosis?.accuracy,
@@ -5547,7 +5550,24 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     coverage: Number(topic.diagnosis?.questions) > 0 || Number(topic.diagnosis?.sessionCount) > 0 ? 1 : 0,
     daysWithoutContact: topic.diagnosis?.daysWithoutContact,
     maintenanceDue: topic.strategic?.learningState?.key === "maintenance",
-  }));
+  };
+}
+
+function buildAIStrategicSnapshotFromTopics({ now, rollingWindow, planningTopics, topics }) {
+  const snapshotEngine = window.AIStrategicSnapshot;
+  if (!snapshotEngine?.buildStrategicSnapshot) return null;
+  const config = scheduleConfig();
+  const previousRecord = state.cycleHistory?.at?.(-1) || null;
+  const previousCycleSource = previousRecord?.weeklyStudyCycle || {};
+  const previousCycleReferenceAt = previousCycleSource.closedAt
+    || previousCycleSource.finalizedAt
+    || previousCycleSource.endsAt
+    || previousRecord?.closedAt
+    || previousRecord?.finalizedAt
+    || previousRecord?.savedAt
+    || "";
+  const previousCycleStartedAt = previousCycleSource.startedAt || previousRecord?.startedAt || "";
+  const previousTopicSnapshot = previousStrategicAdvisorSnapshot(previousCycleReferenceAt);
   const subjects = (state.planningBase?.materias || []).map((subject) => ({
     name: subject.materia,
     peso: subject.peso,
@@ -5596,6 +5616,28 @@ function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rolli
     previousTopics: previousStrategicAdvisorTopics({ referenceAt: previousCycleReferenceAt }),
     rollingWindow,
   });
+}
+
+function buildCurrentAIStrategicSnapshot({ now = new Date().toISOString(), rollingWindow = null } = {}) {
+  const planningTopics = strategicPlanningTopics();
+  const currentRanks = aiStrategicRankMap(planningTopics);
+  const topics = planningTopics.map((topic, index) => aiStrategicSnapshotTopic(topic, index, currentRanks));
+  return buildAIStrategicSnapshotFromTopics({ now, rollingWindow, planningTopics, topics });
+}
+
+async function buildCurrentAIStrategicSnapshotAsync({ now = new Date().toISOString(), rollingWindow = null, performanceTrace = null, onProgress = null } = {}) {
+  if (!window.AIStrategicSnapshot?.buildStrategicSnapshot) return null;
+  const planningTopics = await measureFocusPerformance(performanceTrace, "strategicPlanningTopics", () => strategicPlanningTopicsForModal({ onProgress }));
+  const currentRanks = aiStrategicRankMap(planningTopics);
+  const topics = [];
+  for (let index = 0; index < planningTopics.length; index += 1) {
+    topics.push(aiStrategicSnapshotTopic(planningTopics[index], index, currentRanks));
+    if ((index + 1) % 8 === 0 && index + 1 < planningTopics.length) {
+      onProgress?.("Preparando as evidências para o Coach...");
+      await yieldForPaint();
+    }
+  }
+  return buildAIStrategicSnapshotFromTopics({ now, rollingWindow, planningTopics, topics });
 }
 
 function strategicAdvisorModel() {
@@ -5829,22 +5871,30 @@ async function requestAICoachAnalysis(mode, question = "") {
   const performanceTrace = createFocusPerformanceTrace(`ai-coach-${mode}`);
   aiCoachUIState.busy = true;
   aiCoachUIState.selectedReviewId = "";
-  aiCoachUIState.busyLabel = mode === "progress-check" ? "Analisando sua evolução..." : mode === "cycle-review" ? "Analisando seu ciclo..." : "Respondendo sua pergunta...";
+  aiCoachUIState.busyLabel = mode === "question" ? "Preparando o contexto da sua pergunta..." : mode === "cycle-review" ? "Preparando o contexto do seu ciclo..." : "Preparando o contexto da sua evolução...";
   aiCoachUIState.lastError = "";
   aiCoachUIState.saveWarning = "";
   if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
   try {
-    await measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction());
-    if (!window.AIStrategicSnapshot?.buildStrategicSnapshot) {
+    await measureFocusPerformance(performanceTrace, "paint before snapshot", () => yieldForPaint({ frames: 2 }));
+    const snapshotEngine = measureFocusPerformance(performanceTrace, "preparation before snapshot", () => window.AIStrategicSnapshot);
+    if (!snapshotEngine?.buildStrategicSnapshot) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_ENGINE_MISSING");
       return;
     }
-    const snapshot = measureFocusPerformance(performanceTrace, "AI snapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
+    const snapshot = await measureFocusPerformance(performanceTrace, "buildCurrentAIStrategicSnapshot", () => buildCurrentAIStrategicSnapshotAsync({
+      now: new Date().toISOString(),
+      performanceTrace,
+      onProgress: (message) => {
+        aiCoachUIState.busyLabel = message;
+        renderAICoachSection();
+      },
+    }));
     if (!snapshot) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_UNAVAILABLE");
       return;
     }
-    const providerSnapshot = window.AIStrategicSnapshot.compactForProvider?.(snapshot) || snapshot;
+    const providerSnapshot = measureFocusPerformance(performanceTrace, "compactForProvider", () => snapshotEngine.compactForProvider?.(snapshot) || snapshot);
     if (!window.AIStrategicCoachClient) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_COACH_CLIENT_MISSING");
       return;
@@ -5861,19 +5911,25 @@ async function requestAICoachAnalysis(mode, question = "") {
         || null
       : null;
     const previousCheckpoint = aiCoachRecordCheckpoint(latest);
-    const delta = measureFocusPerformance(performanceTrace, "Coach delta", () => window.AICoachDelta?.compare?.({ previousCheckpoint, currentSnapshot: snapshot, now: snapshot.generatedAt }) || null);
-    const context = {
+    const delta = measureFocusPerformance(performanceTrace, "AICoachDelta.compare", () => window.AICoachDelta?.compare?.({ previousCheckpoint, currentSnapshot: snapshot, now: snapshot.generatedAt }) || null);
+    const context = measureFocusPerformance(performanceTrace, "Coach context", () => ({
       previousCoachReview: latest ? window.AICoachMemory?.compactCoachReviewForContext?.(latest) : null,
       previousCoachCheckpoint: previousCheckpoint,
       deltaSinceLastCoachReview: delta,
       previousCycleReview: previousCycleReview ? window.AICoachMemory?.compactCoachReviewForContext?.(previousCycleReview) : null,
       previousCycleSnapshot: previousCycleReview ? aiCoachRecordCheckpoint(previousCycleReview) : null,
-    };
-    const result = await measureFocusPerformance(performanceTrace, "Coach provider", () => mode === "question"
-      ? window.AIStrategicCoachClient.ask(providerSnapshot, question, context)
-      : mode === "cycle-review"
-        ? window.AIStrategicCoachClient.analyzeCycle(providerSnapshot, context)
-        : window.AIStrategicCoachClient.checkProgress(providerSnapshot, context));
+    }));
+    const providerPromise = measureFocusPerformance(performanceTrace, "Coach provider", () => {
+      markFocusPerformance(performanceTrace, "timeToProviderRequest");
+      return mode === "question"
+        ? window.AIStrategicCoachClient.ask(providerSnapshot, question, context)
+        : mode === "cycle-review"
+          ? window.AIStrategicCoachClient.analyzeCycle(providerSnapshot, context)
+          : window.AIStrategicCoachClient.checkProgress(providerSnapshot, context);
+    });
+    aiCoachUIState.busyLabel = "Consultando o Coach...";
+    renderAICoachSection({ delta });
+    const result = await providerPromise;
     const response = { ...result, mode, question: mode === "question" ? question : "", delta, saveWarning: "" };
     aiCoachUIState.lastResponse = response;
     aiCoachUIState.busyLabel = "Salvando análise...";
@@ -6055,9 +6111,13 @@ function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {
     reportFocusPerformance(performanceTrace);
     return;
   }
-  const run = () => {
+  const run = async () => {
     if (renderVersion !== strategicAdvisorRenderVersion || els.strategicAdvisorModal?.hidden) return;
-    const snapshot = measureFocusPerformance(performanceTrace, "buildCurrentAIStrategicSnapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
+    const snapshot = await measureFocusPerformance(performanceTrace, "buildCurrentAIStrategicSnapshot", () => buildCurrentAIStrategicSnapshotAsync({
+      now: new Date().toISOString(),
+      performanceTrace,
+    }));
+    if (renderVersion !== strategicAdvisorRenderVersion || els.strategicAdvisorModal?.hidden) return;
     const delta = measureFocusPerformance(performanceTrace, "AICoachDelta.compare", () => window.AICoachDelta?.compare?.({ previousCheckpoint: aiCoachRecordCheckpoint(last), currentSnapshot: snapshot, now: snapshot?.generatedAt || new Date().toISOString() }) || null);
     const coach = els.strategicAdvisorModal.querySelector("[data-ai-coach-content]");
     if (coach && renderVersion === strategicAdvisorRenderVersion) {
@@ -17565,6 +17625,7 @@ async function startMeuCronogramaApp() {
 
 window.startMeuCronogramaApp = startMeuCronogramaApp;
 window.buildCurrentAIStrategicSnapshot = buildCurrentAIStrategicSnapshot;
+window.buildCurrentAIStrategicSnapshotAsync = buildCurrentAIStrategicSnapshotAsync;
 if (window.authGate?.isAuthenticated?.()) {
   startMeuCronogramaApp();
 } else {

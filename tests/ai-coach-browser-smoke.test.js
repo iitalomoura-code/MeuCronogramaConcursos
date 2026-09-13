@@ -18,7 +18,7 @@ const moduleFiles = [
   "js/ai-coach-memory.js",
 ];
 
-const appPosition = index.indexOf("app.js?v=20260913-advisor-open-performance");
+const appPosition = index.indexOf("app.js?v=20260913-ai-coach-preparation-performance");
 let previousPosition = -1;
 for (const file of moduleFiles) {
   const position = index.indexOf(file);
@@ -56,7 +56,7 @@ const engineSnapshot = browser.AIStrategicSnapshot.buildStrategicSnapshot({
 assert.ok(engineSnapshot && engineSnapshot.signature, "um planejamento válido deve gerar snapshot serializável");
 
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
-const adapterStart = app.indexOf("function buildCurrentAIStrategicSnapshot");
+const adapterStart = app.indexOf("function aiStrategicSnapshotTopic");
 const adapterEnd = app.indexOf("function strategicAdvisorModel", adapterStart);
 const adapterSource = app.slice(adapterStart, adapterEnd);
 const adapterRuntime = {
@@ -65,6 +65,7 @@ const adapterRuntime = {
   state: { cycleHistory: [], planningBase: { materias: [{ materia: "Português", assuntos: [{ assunto: "Pontuação" }] }] }, generatedBlocks: [], reviews: [] },
   scheduleConfig: () => ({ concurso: "Concurso", cargo: "Analista", banca: "FGV", horasSemana: 10 }),
   strategicPlanningTopics: () => [{ materia: "Português", assunto: "Pontuação", diagnosis: {}, strategic: {}, errorSignals: {}, initialProfile: {} }],
+  strategicPlanningTopicsForModal: async () => [{ materia: "Português", assunto: "Pontuação", diagnosis: {}, strategic: {}, errorSignals: {}, initialProfile: {} }],
   aiStrategicRankMap: () => new Map([[0, 1]]),
   previousStrategicAdvisorSnapshot: () => null,
   adaptivePerformanceForTopic: () => [],
@@ -75,12 +76,23 @@ const adapterRuntime = {
   weeklyBlockKey: () => "block",
   topicMatches: () => false,
   previousStrategicAdvisorTopics: () => [],
+  measureFocusPerformance: (_trace, _label, work) => work(),
+  yieldForPaint: async () => {},
 };
 vm.createContext(adapterRuntime);
-vm.runInContext(`${adapterSource}; globalThis.build = buildCurrentAIStrategicSnapshot;`, adapterRuntime);
+vm.runInContext(`${adapterSource}; globalThis.build = buildCurrentAIStrategicSnapshot; globalThis.buildAsync = buildCurrentAIStrategicSnapshotAsync;`, adapterRuntime);
 assert.equal(adapterRuntime.build({ now: "2026-09-12T00:00:00.000Z" }).built, true, "ciclo atual sem ciclo anterior deve gerar snapshot");
 adapterRuntime.state.cycleHistory = [{ savedAt: "2026-09-05T00:00:00.000Z" }];
 assert.equal(adapterRuntime.build({ now: "2026-09-12T00:00:00.000Z" }).built, true, "histórico de planejamento não impede o snapshot");
 assert.deepEqual(adapterRuntime.state.reviews, [], "a primeira análise não exige review anterior do Coach");
 
-console.log("OK - módulos do AI Coach carregam na ordem do navegador e o snapshot local permanece disponível.");
+(async () => {
+  const now = "2026-09-12T00:00:00.000Z";
+  const syncSnapshot = adapterRuntime.build({ now });
+  const asyncSnapshot = await adapterRuntime.buildAsync({ now });
+  assert.equal(JSON.stringify(asyncSnapshot), JSON.stringify(syncSnapshot), "snapshot cooperativo precisa preservar exatamente o contrato do snapshot síncrono");
+  console.log("OK - módulos do AI Coach carregam na ordem do navegador e o snapshot local permanece disponível.");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
