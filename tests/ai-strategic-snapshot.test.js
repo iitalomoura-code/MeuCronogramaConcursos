@@ -79,6 +79,21 @@ assert.ok(["developing", "fragile"].includes(snapshot.readiness.exam.state), "Ri
 assert.equal(snapshot.readiness.topics.length, snapshot.topics.length);
 assert.equal(snapshot.readiness.subjects.length, snapshot.subjects.length);
 assert.equal(snapshot.topics[0].readiness.state !== undefined, true);
+
+const oversizedInput = structuredClone(input);
+oversizedInput.topics = Array.from({ length: 100 }, (_, index) => ({
+  ...currentTopics[index % currentTopics.length],
+  topic: `Tema ${index}: ${"detalhamento ".repeat(1500)}`,
+  diagnosis: { ...currentTopics[index % currentTopics.length].diagnosis, reasons: Array.from({ length: 8 }, () => "motivo ".repeat(500)) },
+}));
+const oversizedSnapshot = snapshotEngine.buildStrategicSnapshot(oversizedInput);
+const compactProviderSnapshot = snapshotEngine.compactForProvider(oversizedSnapshot);
+assert.deepEqual(oversizedInput.topics[0].topic, `Tema 0: ${"detalhamento ".repeat(1500)}`, "Compactar para o provider não pode mutar a entrada.");
+assert.ok(Buffer.byteLength(JSON.stringify(compactProviderSnapshot)) < 500 * 1024, "A projeção enviada ao provider deve permanecer abaixo do limite do gateway.");
+assert.equal(compactProviderSnapshot.topics.length, oversizedSnapshot.topics.length, "Todos os tópicos continuam representados para o Coach.");
+assert.equal(compactProviderSnapshot.topics[0].currentEvidence.questions, oversizedSnapshot.topics[0].currentEvidence.questions, "A evidência factual essencial é preservada.");
+assert.equal(compactProviderSnapshot.outputSchema, undefined, "O schema já é enviado separadamente pelo backend e não deve duplicar tokens.");
+assert.equal(compactProviderSnapshot.signature.value, snapshotEngine.compactForProvider(oversizedSnapshot).signature.value, "A projeção compacta é determinística.");
 assert.equal(snapshot.outputSchema.priorities[0].engineRank, null);
 assert.equal(snapshot.outputSchema.priorities[0].aiSuggestedImportance, null);
 assert.deepEqual(snapshot.evidenceAuthority.order, ["current factual evidence", "permanent knowledge base", "legacy history fallback", "initial self-assessment"]);

@@ -459,6 +459,8 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
   return async function handleCoachRequest(request) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
     if (request.method !== "POST") return errorResponse(405, "AI_INVALID_SNAPSHOT");
+    // This is intentionally before body parsing so gateway, body, and provider failures remain distinguishable.
+    safeStageLog(logger, { stage: "request-received", mode: "unknown", snapshotBytes: null, clock });
     const authorization = request.headers.get("authorization") || "";
     const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
     if (!tokenMatch) return errorResponse(401, "AI_AUTH_REQUIRED");
@@ -475,7 +477,6 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     const diagnosticMode = DIAGNOSTIC_MODES.includes(body?.mode) ? body.mode : null;
     if (diagnosticMode) {
       const stageDetails = { mode: diagnosticMode, snapshotBytes: 0, clock };
-      safeStageLog(logger, { stage: "request-received", ...stageDetails });
       if (!authClient?.auth?.getUser) return errorResponse(500, "AI_CONFIG_MISSING");
       let authResult;
       try {
@@ -508,7 +509,6 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     const currentSnapshot = currentSnapshotFromRequest(body);
     const snapshotBytes = snapshotByteSize(currentSnapshot);
     const stageDetails = { mode: requestOptions.mode, snapshotBytes, clock };
-    safeStageLog(logger, { stage: "request-received", ...stageDetails });
     if (!authClient?.auth?.getUser) return errorResponse(500, "AI_CONFIG_MISSING");
     let authResult;
     try {

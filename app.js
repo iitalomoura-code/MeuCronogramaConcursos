@@ -5706,6 +5706,7 @@ async function requestAICoachAnalysis(mode, question = "") {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_UNAVAILABLE");
       return;
     }
+    const providerSnapshot = window.AIStrategicSnapshot.compactForProvider?.(snapshot) || snapshot;
     if (!window.AIStrategicCoachClient) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_COACH_CLIENT_MISSING");
       return;
@@ -5731,10 +5732,10 @@ async function requestAICoachAnalysis(mode, question = "") {
       previousCycleSnapshot: previousCycleReview ? aiCoachRecordCheckpoint(previousCycleReview) : null,
     };
     const result = await measureFocusPerformance(performanceTrace, "Coach provider", () => mode === "question"
-      ? window.AIStrategicCoachClient.ask(snapshot, question, context)
+      ? window.AIStrategicCoachClient.ask(providerSnapshot, question, context)
       : mode === "cycle-review"
-        ? window.AIStrategicCoachClient.analyzeCycle(snapshot, context)
-        : window.AIStrategicCoachClient.checkProgress(snapshot, context));
+        ? window.AIStrategicCoachClient.analyzeCycle(providerSnapshot, context)
+        : window.AIStrategicCoachClient.checkProgress(providerSnapshot, context));
     const response = { ...result, mode, question: mode === "question" ? question : "", delta, saveWarning: "" };
     aiCoachUIState.lastResponse = response;
     aiCoachUIState.busyLabel = "Salvando análise...";

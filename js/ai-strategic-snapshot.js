@@ -446,6 +446,45 @@
     return (result >>> 0).toString(16).padStart(8, "0");
   }
 
+  const PROVIDER_TEXT_LIMIT = 240;
+  const PROVIDER_LIST_LIMIT = 4;
+
+  function compactProviderValue(value, key = "") {
+    if (typeof value === "string") return value.length > PROVIDER_TEXT_LIMIT ? `${value.slice(0, PROVIDER_TEXT_LIMIT - 3)}...` : value;
+    if (Array.isArray(value)) {
+      const keepAll = key === "topics" || key === "subjects" || key === "plannedDistribution" || key === "executionDistribution";
+      const items = keepAll ? value : value.slice(0, PROVIDER_LIST_LIMIT);
+      return items.map((item) => compactProviderValue(item));
+    }
+    if (!value || typeof value !== "object") return value;
+    return Object.keys(value).reduce((result, entryKey) => {
+      if (value[entryKey] !== undefined) result[entryKey] = compactProviderValue(value[entryKey], entryKey);
+      return result;
+    }, {});
+  }
+
+  // The provider receives a compact projection only. The full strategic snapshot
+  // remains local for history, deltas, and auditing.
+  function compactForProvider(snapshot = {}) {
+    const compact = compactProviderValue(snapshot);
+    compact.instructions = { version: snapshot.instructions?.version ?? VERSION };
+    delete compact.outputSchema;
+    compact.subjects = (compact.subjects || []).map(({ topics, ...subject }) => subject);
+    if (compact.readiness && typeof compact.readiness === "object") {
+      compact.readiness = { ...compact.readiness, subjects: [], topics: [] };
+    }
+    compact.topics = (compact.topics || []).map((topic) => ({
+      ...topic,
+      currentEvidence: topic.currentEvidence ? { ...topic.currentEvidence, interventions: undefined, reviewResults: undefined } : topic.currentEvidence,
+    }));
+    compact.uncertainties = (compact.uncertainties || []).slice(0, 30);
+    const signaturePayload = { ...compact, generatedAt: undefined, signature: undefined };
+    return {
+      ...compact,
+      signature: { algorithm: "fnv1a-32", value: hash(stableStringify(signaturePayload)) },
+    };
+  }
+
   const AI_READ_INSTRUCTIONS = Object.freeze({
     version: VERSION,
     authority: ["current factual evidence", "permanent knowledge base", "legacy history fallback", "initial self-assessment"],
@@ -586,7 +625,7 @@
     };
   }
 
-  const api = { VERSION, AI_READ_INSTRUCTIONS, AI_OUTPUT_SCHEMA, buildStrategicSnapshot, numberOrNull, stableStringify, signatureFor: (snapshot) => hash(stableStringify({ ...snapshot, generatedAt: undefined, signature: undefined })) };
+  const api = { VERSION, AI_READ_INSTRUCTIONS, AI_OUTPUT_SCHEMA, buildStrategicSnapshot, compactForProvider, numberOrNull, stableStringify, signatureFor: (snapshot) => hash(stableStringify({ ...snapshot, generatedAt: undefined, signature: undefined })) };
   global.AIStrategicSnapshot = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

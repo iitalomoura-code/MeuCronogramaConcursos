@@ -13,7 +13,7 @@ assert.ok(markup.includes('role="status" aria-live="polite"') && markup.includes
 const request = section("async function requestAICoachAnalysis", "function registerStrategicAdvisorSnapshot");
 assert.ok(request.includes("if (aiCoachUIState.busy) return;"), "Um segundo toque não pode iniciar uma segunda consulta.");
 assert.ok(request.includes('mode === "progress-check" ? "Analisando sua evolução..."'), "Progress-check precisa confirmar o clique imediatamente.");
-assert.ok(request.includes("window.AIStrategicCoachClient.checkProgress(snapshot, context)"), "Progress-check deve usar checkProgress uma única vez.");
+assert.ok(request.includes("window.AIStrategicCoachClient.checkProgress(providerSnapshot, context)"), "Progress-check deve usar uma única projeção compacta para o provider.");
 assert.ok(request.indexOf("aiCoachUIState.busy = true") < request.indexOf("yieldForInteraction"), "O estado ocupado deve ser aplicado antes de trabalho pesado.");
 assert.ok(request.indexOf("yieldForInteraction") < request.indexOf("buildCurrentAIStrategicSnapshot"), "A interface deve pintar antes de montar o snapshot.");
 assert.ok(request.includes("AI_SNAPSHOT_ENGINE_MISSING") && request.includes("AI_SNAPSHOT_UNAVAILABLE") && request.includes("AI_COACH_CLIENT_MISSING"), "As dependências locais precisam falhar com diagnósticos distintos antes do provider.");

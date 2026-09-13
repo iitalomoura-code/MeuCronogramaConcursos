@@ -186,10 +186,10 @@ test("valida contrato, registra etapas seguras, chama Responses API com schema e
   ]);
   assert.deepEqual(logs[0], {
     stage: "request-received",
-    mode: "progress-check",
+    mode: "unknown",
     model: "gpt-5.6-terra",
     timestamp: "2026-09-12T00:00:00.000Z",
-    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+    snapshotBytes: null,
   });
   assert.equal(logs.at(-1).status, 200);
   assert.equal(logs.at(-1).responseOk, true);
