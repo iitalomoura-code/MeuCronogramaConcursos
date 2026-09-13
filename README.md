@@ -80,3 +80,27 @@ Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abe
 - `meuCronogramaUltimoBackup`: data do último backup exportado, sem conteúdo do planejamento.
 
 Projeto preparado para publicação no GitHub Pages.
+
+## Deploy da Edge Function do AI Coach
+
+Alterações em `supabase/functions/ai-strategic-coach/**` ou na configuração
+`supabase/config.toml`, quando enviadas para `main`, acionam o workflow
+`Deploy AI Coach Edge Function`. Ele roda `npm test`, publica somente a função
+`ai-strategic-coach` no projeto Supabase configurado e confirma que o endpoint
+responde ao preflight `OPTIONS` com os headers CORS esperados. Esse smoke test
+não usa JWT e não chama a OpenAI.
+
+Antes do primeiro deploy automático, configure no GitHub em `Settings > Secrets
+and variables > Actions` o secret `SUPABASE_ACCESS_TOKEN`. O token não deve ser
+incluído em arquivos, logs ou variáveis do frontend. As credenciais e secrets da
+função já existentes no Supabase são preservados pelo deploy.
+
+Em uma emergência, o deploy manual equivalente é:
+
+```sh
+supabase functions deploy ai-strategic-coach --project-ref gupctlwkjffhntmeimug
+```
+
+Cada execução bem-sucedida registra no resumo do GitHub Actions a função, o
+project ref, o commit e o horário UTC implantados. Esse é o registro canônico
+para identificar qual commit está em produção.

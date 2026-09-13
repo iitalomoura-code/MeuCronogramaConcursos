@@ -1,0 +1,80 @@
+name: Deploy AI Coach Edge Function
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/ai-strategic-coach/**"
+      - "supabase/config.toml"
+      - ".github/workflows/deploy-ai-coach.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ai-strategic-coach
+  cancel-in-progress: true
+
+env:
+  SUPABASE_PROJECT_REF: gupctlwkjffhntmeimug
+
+jobs:
+  test-and-deploy:
+    name: Test and deploy AI Coach
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run tests
+        run: npm test
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.43.5
+
+      - name: Deploy ai-strategic-coach
+        run: supabase functions deploy ai-strategic-coach --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Verify Edge Function reachability
+        env:
+          FUNCTION_URL: https://gupctlwkjffhntmeimug.supabase.co/functions/v1/ai-strategic-coach
+        run: |
+          headers_file="$(mktemp)"
+          status="$(curl --silent --show-error --output /dev/null --dump-header "$headers_file" --write-out '%{http_code}' --request OPTIONS \
+            --header 'Origin: https://iitalomoura-code.github.io' \
+            --header 'Access-Control-Request-Method: POST' \
+            --header 'Access-Control-Request-Headers: authorization,apikey,content-type' \
+            "$FUNCTION_URL")"
+
+          test "$status" = "204"
+          grep --ignore-case --quiet '^access-control-allow-origin:' "$headers_file"
+          grep --ignore-case --quiet '^access-control-allow-methods:.*POST' "$headers_file"
+          grep --ignore-case --quiet '^access-control-allow-headers:.*authorization' "$headers_file"
+
+      - name: Record deployed version
+        run: |
+          deployed_at="$(date --utc +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "::notice title=AI Coach deployed::function=ai-strategic-coach project=$SUPABASE_PROJECT_REF commit=$GITHUB_SHA deployed_at=$deployed_at"
+          {
+            echo "## AI Coach Edge Function deployed"
+            echo
+            echo "- Function: \`ai-strategic-coach\`"
+            echo "- Project ref: \`$SUPABASE_PROJECT_REF\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Deployed at (UTC): \`$deployed_at\`"
+            echo "- Smoke test: \`OPTIONS 204\` with CORS headers"
+          } >> "$GITHUB_STEP_SUMMARY"
