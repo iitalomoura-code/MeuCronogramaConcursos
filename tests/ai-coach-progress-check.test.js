@@ -16,6 +16,7 @@ assert.ok(request.includes('mode === "progress-check" ? "Analisando sua evoluç�
 assert.ok(request.includes("window.AIStrategicCoachClient.checkProgress(snapshot, context)"), "Progress-check deve usar checkProgress uma única vez.");
 assert.ok(request.indexOf("aiCoachUIState.busy = true") < request.indexOf("yieldForInteraction"), "O estado ocupado deve ser aplicado antes de trabalho pesado.");
 assert.ok(request.indexOf("yieldForInteraction") < request.indexOf("buildCurrentAIStrategicSnapshot"), "A interface deve pintar antes de montar o snapshot.");
+assert.ok(request.includes("AI_SNAPSHOT_ENGINE_MISSING") && request.includes("AI_SNAPSHOT_UNAVAILABLE") && request.includes("AI_COACH_CLIENT_MISSING"), "As dependências locais precisam falhar com diagnósticos distintos antes do provider.");
 assert.ok(request.includes("aiCoachUIState.lastResponse = response"), "A resposta deve atualizar o estado visível do Coach.");
 assert.ok(request.includes("renderAICoachSection({ delta })") && request.includes("scrollAICoachResultIntoView()"), "O resultado precisa atualizar apenas o Coach e ser revelado dentro do modal.");
 assert.ok(!request.includes("switchTab(") && !request.includes("closeStrategicAdvisorModal("), "Progress-check não pode trocar de aba ou fechar o Orientador.");

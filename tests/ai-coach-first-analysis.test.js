@@ -23,6 +23,7 @@ const runtime = {
   aiCoachUIState: { reviews: [], busy: false, busyLabel: "", lastError: "", saveWarning: "", lastResponse: null },
   els: { strategicAdvisorModal: null },
   window: {
+    AIStrategicSnapshot: { buildStrategicSnapshot: () => ({}) },
     AIStrategicCoachClient: {
       checkProgress: async (_snapshot, context) => {
         calls += 1;
@@ -48,6 +49,7 @@ const runtime = {
   scrollAICoachResultIntoView: () => {},
   showToast: () => {},
   aiCoachErrorMessage: () => "Não foi possível concluir a análise agora.",
+  aiCoachPreparationFailure: () => "Não foi possível preparar os dados para a análise. Atualize a página e tente novamente.",
 };
 vm.createContext(runtime);
 vm.runInContext(`${requestSource}; globalThis.requestAICoachAnalysis = requestAICoachAnalysis;`, runtime);

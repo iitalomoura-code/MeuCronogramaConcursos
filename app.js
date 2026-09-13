@@ -5662,6 +5662,11 @@ function aiCoachErrorMessage(error) {
   return message || "Não foi possível concluir a análise agora.";
 }
 
+function aiCoachPreparationFailure(code) {
+  console.warn(`[${code}] Não foi possível preparar a análise do AI Coach.`);
+  return "Não foi possível preparar os dados para a análise. Atualize a página e tente novamente.";
+}
+
 async function loadAICoachHistory() {
   if (aiCoachUIState.loading || aiCoachUIState.loaded || !window.AICoachMemory?.listReviews) return;
   aiCoachUIState.loading = true;
@@ -5692,9 +5697,17 @@ async function requestAICoachAnalysis(mode, question = "") {
   if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
   try {
     await measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction());
+    if (!window.AIStrategicSnapshot?.buildStrategicSnapshot) {
+      aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_ENGINE_MISSING");
+      return;
+    }
     const snapshot = measureFocusPerformance(performanceTrace, "AI snapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
-    if (!snapshot || !window.AIStrategicCoachClient) {
-      aiCoachUIState.lastError = "O orientador estratégico está indisponível no momento.";
+    if (!snapshot) {
+      aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_UNAVAILABLE");
+      return;
+    }
+    if (!window.AIStrategicCoachClient) {
+      aiCoachUIState.lastError = aiCoachPreparationFailure("AI_COACH_CLIENT_MISSING");
       return;
     }
     if (cycleTarget && !window.AICoachCycleTarget?.matchesSnapshot?.(cycleTarget, snapshot)) {

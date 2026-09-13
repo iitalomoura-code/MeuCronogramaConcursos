@@ -39,8 +39,8 @@ assert.ok(app.includes("bundle.planSnapshots"), "O importador deve usar planSnap
 assert.ok(cloud.includes("function loadCloudKnowledgeBase") && cloud.includes("function saveCloudKnowledgeBase"), "A base permanente deve usar a mesma autenticação da nuvem, em armazenamento independente.");
 assert.ok(app.includes("function knowledgeBaseStorageKey") && app.includes("function bootstrapKnowledgeBase"), "A base permanente deve manter cache isolado por usuário e bootstrap não bloqueante.");
 assert.ok(index.includes("js/knowledge-base.js?v=20260912-live-ingestion"), "O motor puro da base permanente deve carregar antes do aplicativo.");
-assert.ok(index.includes("js/diagnostic-confidence.js?v=20260912-ai-contract-integrity") && index.includes("js/ai-strategic-snapshot.js?v=20260912-ai-contract-integrity"), "O contrato de leitura da IA deve carregar como módulo explícito antes do aplicativo.");
-assert.ok(index.includes("js/readiness.js?v=20260912-readiness"), "Readiness deve carregar como módulo local antes do contrato do snapshot.");
+assert.ok(index.includes("js/diagnostic-confidence.js?v=20260912-ai-coach-local-smoke") && index.includes("js/ai-strategic-snapshot.js?v=20260912-ai-coach-local-smoke"), "O contrato de leitura da IA deve carregar como módulo explícito antes do aplicativo.");
+assert.ok(index.includes("js/readiness.js?v=20260912-ai-coach-local-smoke"), "Readiness deve carregar como módulo local antes do contrato do snapshot.");
 assert.ok(app.includes("function buildCurrentAIStrategicSnapshot") && app.includes("window.buildCurrentAIStrategicSnapshot"), "O aplicativo deve expor somente o adaptador estratégico explícito, sem serializar o state bruto.");
 assert.ok(app.includes("function previousStrategicAdvisorTopics") && app.includes("previousTopics: previousStrategicAdvisorTopics({ referenceAt: previousCycleReferenceAt })"), "O adaptador deve fornecer o último estado estratégico registrado por tópico.");
 assert.ok(app.includes("const currentRanks = aiStrategicRankMap(planningTopics)") && app.includes("rank: currentRanks.get(index)"), "A comparação deve receber ranking estratégico atual e anterior.");
