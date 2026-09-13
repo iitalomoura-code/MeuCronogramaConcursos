@@ -211,8 +211,12 @@ let masteryDiagnosisCache = new Map();
 let errorAnalysisRevision = 0;
 let learningDiagnosisModelCache = null;
 let learningDiagnosisModelRevision = -1;
+let learningDiagnosisModelBuildPromise = null;
+let learningDiagnosisModelBuildRevision = -1;
 let strategicAdvisorModelCache = null;
 let strategicAdvisorModelRevision = -1;
+let strategicAdvisorModelBuildPromise = null;
+let strategicAdvisorModelBuildRevision = -1;
 let aiCoachUIState = {
   reviews: [],
   selectedReviewId: "",
@@ -277,10 +281,11 @@ function measureFocusPerformance(trace, label, work) {
   return result;
 }
 
-function reportFocusPerformance(trace) {
+function reportFocusPerformance(trace, phase = "") {
   if (!trace?.enabled) return;
   const total = Math.round((focusPerformanceNow() - trace.startedAt) * 10) / 10;
-  console.info(`[perf:${trace.name}]`, [...trace.steps, { label: "total", ms: total }].map((step) => `${step.label}: ${step.ms}ms`).join(" | "));
+  const suffix = phase ? `:${phase}` : "";
+  console.info(`[perf:${trace.name}${suffix}]`, [...trace.steps, { label: "total", ms: total }].map((step) => `${step.label}: ${step.ms}ms`).join(" | "));
 }
 
 function invalidateDerivedStudyCaches() {
@@ -290,8 +295,12 @@ function invalidateDerivedStudyCaches() {
   masteryDiagnosisCache.clear();
   learningDiagnosisModelCache = null;
   learningDiagnosisModelRevision = -1;
+  learningDiagnosisModelBuildPromise = null;
+  learningDiagnosisModelBuildRevision = -1;
   strategicAdvisorModelCache = null;
   strategicAdvisorModelRevision = -1;
+  strategicAdvisorModelBuildPromise = null;
+  strategicAdvisorModelBuildRevision = -1;
   errorAnalysisRevision += 1;
   window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
@@ -5260,83 +5269,140 @@ function learningDiagnosisTopics() {
   return [...unique.values()];
 }
 
+function learningDiagnosisTopic(topic) {
+  const subject = subjectPlanningData(topic.materia);
+  const diagnosis = masteryDiagnosisForTarget({
+    materia: topic.materia,
+    assunto: topic.assunto,
+    subarea: topic.subarea,
+    prioridade: priorityScore(subject),
+  });
+  const initialProfile = initialDiagnosisInfluence(topic.materia, topic.assunto, topic.subarea);
+  return {
+    ...topic,
+    assuntoOriginal: topic.assunto,
+    assunto: themeTitle(topic.assunto),
+    diagnosis,
+    initialProfile,
+    estimatedKnowledge: window.InitialDiagnosisEngine?.estimatedLevel?.({
+      initialLevel: initialProfile.level,
+      evidence: initialDiagnosisEvidence(topic.materia, topic.assunto, topic.subarea),
+      diagnosis,
+    }),
+    errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
+    intervention: learningInterventionFor(topic.materia, topic.assunto),
+    // A recência específica do alvo evita atribuir contato de outro assunto da matéria.
+    daysWithoutContact: diagnosis.daysWithoutContact ?? daysSinceLastSubjectContact(topic.materia),
+  };
+}
+
+function buildLearningDiagnosisModel(topics) {
+  return window.LearningDiagnosisView?.build?.({ topics }) || { topics: [], subjects: [], counts: {}, priorities: [], errorPatterns: [], responses: [] };
+}
+
 function learningDiagnosisModel() {
   if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
-  const topics = learningDiagnosisTopics().map((topic) => {
-    const subject = subjectPlanningData(topic.materia);
-    const diagnosis = masteryDiagnosisForTarget({
-      materia: topic.materia,
-      assunto: topic.assunto,
-      subarea: topic.subarea,
-      prioridade: priorityScore(subject),
-    });
-    const initialProfile = initialDiagnosisInfluence(topic.materia, topic.assunto, topic.subarea);
-    return {
-      ...topic,
-      assuntoOriginal: topic.assunto,
-      assunto: themeTitle(topic.assunto),
-      diagnosis,
-      initialProfile,
-      estimatedKnowledge: window.InitialDiagnosisEngine?.estimatedLevel?.({
-        initialLevel: initialProfile.level,
-        evidence: initialDiagnosisEvidence(topic.materia, topic.assunto, topic.subarea),
-        diagnosis,
-      }),
-      errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
-      intervention: learningInterventionFor(topic.materia, topic.assunto),
-      // A recência específica do alvo evita atribuir contato de outro assunto da matéria.
-      daysWithoutContact: diagnosis.daysWithoutContact ?? daysSinceLastSubjectContact(topic.materia),
-    };
-  });
-  learningDiagnosisModelCache = window.LearningDiagnosisView?.build?.({ topics }) || { topics: [], subjects: [], counts: {}, priorities: [], errorPatterns: [], responses: [] };
+  const topics = learningDiagnosisTopics().map(learningDiagnosisTopic);
+  learningDiagnosisModelCache = buildLearningDiagnosisModel(topics);
   learningDiagnosisModelRevision = errorAnalysisRevision;
   return learningDiagnosisModelCache;
 }
 
-function strategicPlanningTopics() {
+async function learningDiagnosisModelForModal({ onProgress = null } = {}) {
+  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
+  if (learningDiagnosisModelBuildPromise && learningDiagnosisModelBuildRevision === errorAnalysisRevision) return learningDiagnosisModelBuildPromise;
+  const revision = errorAnalysisRevision;
+  learningDiagnosisModelBuildRevision = revision;
+  learningDiagnosisModelBuildPromise = (async () => {
+    const sourceTopics = learningDiagnosisTopics();
+    const topics = [];
+    for (let index = 0; index < sourceTopics.length; index += 1) {
+      topics.push(learningDiagnosisTopic(sourceTopics[index]));
+      if ((index + 1) % 8 === 0 && index + 1 < sourceTopics.length) {
+        onProgress?.("Organizando seu diagnóstico...");
+        await yieldForPaint();
+      }
+    }
+    const model = buildLearningDiagnosisModel(topics);
+    if (revision === errorAnalysisRevision) {
+      learningDiagnosisModelCache = model;
+      learningDiagnosisModelRevision = revision;
+    }
+    return model;
+  })().finally(() => {
+    if (learningDiagnosisModelBuildRevision === revision) {
+      learningDiagnosisModelBuildPromise = null;
+      learningDiagnosisModelBuildRevision = -1;
+    }
+  });
+  return learningDiagnosisModelBuildPromise;
+}
+
+function strategicPlanningTopic(topic, rowsByKey) {
+  const subject = subjectPlanningData(topic.materia);
+  const diagnosis = topic.diagnosis || {};
+  const topicUnit = canonicalProgramUnit({
+    materia: topic.materia,
+    subarea: topic.subarea || "",
+    assunto: topic.assuntoOriginal || topic.assunto,
+    titulo: topic.assuntoOriginal || topic.assunto,
+  });
+  const programUnit = rowsByKey.get(programUnitKey(topicUnit)) || topicUnit;
+  const strategic = strategicPriorityForTarget({
+    materia: topic.materia,
+    assunto: topic.assuntoOriginal || topic.assunto,
+    subarea: topic.subarea,
+    subject,
+    diagnosis,
+    errorSignals: topic.errorSignals,
+    intervention: topic.intervention,
+    initialProfile: topic.initialProfile,
+    historyInheritance: diagnosis.historyInheritance,
+    daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
+  });
+  const entry = {
+    ...topic,
+    programUnit,
+    subject,
+    historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({
+      ...topic,
+      materia: topic.materia,
+      titulo: programUnit.titulo || topic.titulo || "",
+      assunto: topic.assuntoOriginal || topic.assunto,
+      descricao: programUnit.descricao || topic.descricao || "",
+      conteudosOriginais: programUnit.conteudosOriginais || topic.conteudosOriginais || [],
+      subarea: topic.subarea,
+    }),
+    strategic,
+  };
+  return { ...entry, advisorCategory: window.StrategicAdvisor?.categoryFor?.(entry) || "" };
+}
+
+function strategicPlanningRowsByKey() {
   const rowsByKey = new Map(state.rows.map((row) => {
     const unit = canonicalProgramUnit(row);
     return [programUnitKey(unit), unit];
   }));
-  return learningDiagnosisModel().topics.map((topic) => {
-    const subject = subjectPlanningData(topic.materia);
-    const diagnosis = topic.diagnosis || {};
-    const topicUnit = canonicalProgramUnit({
-      materia: topic.materia,
-      subarea: topic.subarea || "",
-      assunto: topic.assuntoOriginal || topic.assunto,
-      titulo: topic.assuntoOriginal || topic.assunto,
-    });
-    const programUnit = rowsByKey.get(programUnitKey(topicUnit)) || topicUnit;
-    const strategic = strategicPriorityForTarget({
-      materia: topic.materia,
-      assunto: topic.assuntoOriginal || topic.assunto,
-      subarea: topic.subarea,
-      subject,
-      diagnosis,
-      errorSignals: topic.errorSignals,
-      intervention: topic.intervention,
-      initialProfile: topic.initialProfile,
-      historyInheritance: diagnosis.historyInheritance,
-      daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
-    });
-    const entry = {
-      ...topic,
-      programUnit,
-      subject,
-      historyInheritance: diagnosis.historyInheritance || historyInheritanceForTarget({
-        ...topic,
-        materia: topic.materia,
-        titulo: programUnit.titulo || topic.titulo || "",
-        assunto: topic.assuntoOriginal || topic.assunto,
-        descricao: programUnit.descricao || topic.descricao || "",
-        conteudosOriginais: programUnit.conteudosOriginais || topic.conteudosOriginais || [],
-        subarea: topic.subarea,
-      }),
-      strategic,
-    };
-    return { ...entry, advisorCategory: window.StrategicAdvisor?.categoryFor?.(entry) || "" };
-  });
+  return rowsByKey;
+}
+
+function strategicPlanningTopics() {
+  const rowsByKey = strategicPlanningRowsByKey();
+  return learningDiagnosisModel().topics.map((topic) => strategicPlanningTopic(topic, rowsByKey));
+}
+
+async function strategicPlanningTopicsForModal({ onProgress = null } = {}) {
+  const rowsByKey = strategicPlanningRowsByKey();
+  const diagnosisModel = await learningDiagnosisModelForModal({ onProgress });
+  const topics = [];
+  for (let index = 0; index < diagnosisModel.topics.length; index += 1) {
+    topics.push(strategicPlanningTopic(diagnosisModel.topics[index], rowsByKey));
+    if ((index + 1) % 8 === 0 && index + 1 < diagnosisModel.topics.length) {
+      onProgress?.("Organizando prioridades e pontos de atenção...");
+      await yieldForPaint();
+    }
+  }
+  return topics;
 }
 
 function aiStrategicTopicIdentity(topic = {}) {
@@ -5538,6 +5604,28 @@ function strategicAdvisorModel() {
   strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] };
   strategicAdvisorModelRevision = errorAnalysisRevision;
   return strategicAdvisorModelCache;
+}
+
+async function strategicAdvisorModelForModal({ performanceTrace = null, onProgress = null } = {}) {
+  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
+  if (strategicAdvisorModelBuildPromise && strategicAdvisorModelBuildRevision === errorAnalysisRevision) return strategicAdvisorModelBuildPromise;
+  const revision = errorAnalysisRevision;
+  strategicAdvisorModelBuildRevision = revision;
+  strategicAdvisorModelBuildPromise = (async () => {
+    const topics = await measureFocusPerformance(performanceTrace, "strategicPlanningTopics", () => strategicPlanningTopicsForModal({ onProgress }));
+    const model = measureFocusPerformance(performanceTrace, "strategicAdvisorModel build", () => window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] });
+    if (revision === errorAnalysisRevision) {
+      strategicAdvisorModelCache = model;
+      strategicAdvisorModelRevision = revision;
+    }
+    return model;
+  })().finally(() => {
+    if (strategicAdvisorModelBuildRevision === revision) {
+      strategicAdvisorModelBuildPromise = null;
+      strategicAdvisorModelBuildRevision = -1;
+    }
+  });
+  return strategicAdvisorModelBuildPromise;
 }
 
 function strategicAdvisorItems(items = []) {
@@ -5900,7 +5988,7 @@ function startStrategicPlanSession(index) {
 }
 
 function strategicAdvisorShellMarkup() {
-  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle" aria-busy="true"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p>Carregando sua análise estratégica...</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body"><div class="strategic-advisor-loading" role="status"><i data-lucide="loader-circle" aria-hidden="true"></i><strong>Carregando sua análise estratégica...</strong><span>Organizando prioridades, avanços e pontos de atenção.</span></div></div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button></footer></section>`;
+  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle" aria-busy="true"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3><p data-strategic-advisor-header-status>Carregando sua análise estratégica...</p></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body"><div class="strategic-advisor-loading" role="status" data-strategic-advisor-loading><i data-lucide="loader-circle" aria-hidden="true"></i><strong data-strategic-advisor-progress>Carregando sua análise estratégica...</strong><span data-strategic-advisor-progress-detail>Organizando prioridades, avanços e pontos de atenção.</span></div></div><footer data-strategic-advisor-footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button></footer></section>`;
 }
 
 function strategicAdvisorExecutiveMarkup(advisor = {}) {
@@ -5918,12 +6006,43 @@ function strategicAdvisorExecutiveMarkup(advisor = {}) {
 }
 
 function strategicAdvisorDialogMarkup({ advisor, history, evolutionMarkup, coachMarkup }) {
+  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${strategicAdvisorBodyMarkup({ advisor, history, evolutionMarkup, coachMarkup })}</div>${strategicAdvisorFooterMarkup()}</section>`;
+}
+
+function strategicAdvisorBodyMarkup({ advisor, history, evolutionMarkup, coachMarkup }) {
   const section = (title, items) => items.length ? `<section><h4>${title}</h4><ul>${strategicAdvisorItems(items)}</ul></section>` : "";
   const mixedSubjectNames = new Set((advisor.mixedSubjects || []).map((item) => item.materia));
   const modalPriorities = (advisor.priorities || []).filter((item) => !mixedSubjectNames.has(item.materia));
   const comparison = history.comparison || {};
   const details = `${evolutionMarkup}${section("Situações mistas", advisor.mixedSubjects || [])}${section("Prioridades agora", modalPriorities)}${section("Onde reduzir carga", advisor.reduceLoad)}${section("Mudanças de prioridade", comparison.independentPriorityChanges || [])}${section("Pontos para observar", advisor.watch)}${section("Conteúdos em construção", advisor.building)}${section("Precisam de diagnóstico", advisor.insufficientEvidence)}${section("Principais gargalos", advisor.bottlenecks)}${section("Sinais positivos", advisor.positiveSignals)}`;
-  return `<button class="strategic-advisor-backdrop" type="button" data-close-strategic-advisor aria-label="Fechar análise"></button><section class="strategic-advisor-dialog" role="dialog" aria-modal="true" aria-labelledby="strategicAdvisorTitle"><header><div><span class="section-kicker">Orientador estratégico</span><h3 id="strategicAdvisorTitle">Seu momento atual</h3></div><button class="icon-button" type="button" data-close-strategic-advisor aria-label="Fechar análise"><i data-lucide="x"></i></button></header><div class="strategic-advisor-dialog-body">${strategicAdvisorExecutiveMarkup(advisor)}<details class="strategic-advisor-details"><summary>Ver diagnóstico detalhado do sistema</summary><div class="strategic-advisor-details-content"><p class="strategic-advisor-system-note">Esta leitura é calculada pelo motor do sistema a partir dos seus dados de estudo. Não é uma resposta da IA.</p>${details}</div></details>${coachMarkup}</div><footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer></section>`;
+  return `${strategicAdvisorExecutiveMarkup(advisor)}<details class="strategic-advisor-details"><summary>Ver diagnóstico detalhado do sistema</summary><div class="strategic-advisor-details-content"><p class="strategic-advisor-system-note">Esta leitura é calculada pelo motor do sistema a partir dos seus dados de estudo. Não é uma resposta da IA.</p>${details}</div></details>${coachMarkup}`;
+}
+
+function strategicAdvisorFooterMarkup() {
+  return `<footer data-strategic-advisor-footer><button class="ghost-button" type="button" data-close-strategic-advisor>Fechar</button><button class="ghost-button" type="button" data-register-strategic-advisor>Registrar análise atual</button><button class="text-action" type="button" data-open-learning-diagnosis>Ver no Diagnóstico</button></footer>`;
+}
+
+function setStrategicAdvisorLoadingProgress(message, detail = "") {
+  const modal = els.strategicAdvisorModal;
+  if (!modal || modal.hidden) return;
+  const progress = modal.querySelector("[data-strategic-advisor-progress]");
+  const progressDetail = modal.querySelector("[data-strategic-advisor-progress-detail]");
+  const headerStatus = modal.querySelector("[data-strategic-advisor-header-status]");
+  if (progress) progress.textContent = message;
+  if (progressDetail && detail) progressDetail.textContent = detail;
+  if (headerStatus) headerStatus.textContent = message;
+}
+
+function renderStrategicAdvisorPersistedCoachPreview(performanceTrace) {
+  if (!aiCoachUIState.reviews.length || !els.strategicAdvisorModal || els.strategicAdvisorModal.hidden) return;
+  const body = els.strategicAdvisorModal.querySelector(".strategic-advisor-dialog-body");
+  const loading = body?.querySelector("[data-strategic-advisor-loading]");
+  if (!body || !loading) return;
+  const coachMarkup = measureFocusPerformance(performanceTrace, "AI Coach markup", () => aiCoachMarkup({
+    deltaLoading: Boolean(aiCoachUIState.reviews[0] && !aiCoachUIState.lastResponse),
+  }));
+  measureFocusPerformance(performanceTrace, "DOM replacement", () => loading.insertAdjacentHTML("afterend", coachMarkup));
+  measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(body));
 }
 
 function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {
@@ -5938,12 +6057,12 @@ function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {
   }
   const run = () => {
     if (renderVersion !== strategicAdvisorRenderVersion || els.strategicAdvisorModal?.hidden) return;
-    const snapshot = measureFocusPerformance(performanceTrace, "AI snapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
-    const delta = measureFocusPerformance(performanceTrace, "Coach delta", () => window.AICoachDelta?.compare?.({ previousCheckpoint: aiCoachRecordCheckpoint(last), currentSnapshot: snapshot, now: snapshot?.generatedAt || new Date().toISOString() }) || null);
+    const snapshot = measureFocusPerformance(performanceTrace, "buildCurrentAIStrategicSnapshot", () => buildCurrentAIStrategicSnapshot({ now: new Date().toISOString() }));
+    const delta = measureFocusPerformance(performanceTrace, "AICoachDelta.compare", () => window.AICoachDelta?.compare?.({ previousCheckpoint: aiCoachRecordCheckpoint(last), currentSnapshot: snapshot, now: snapshot?.generatedAt || new Date().toISOString() }) || null);
     const coach = els.strategicAdvisorModal.querySelector("[data-ai-coach-content]");
     if (coach && renderVersion === strategicAdvisorRenderVersion) {
       measureFocusPerformance(performanceTrace, "AI Coach markup", () => { coach.outerHTML = aiCoachMarkup({ delta }); });
-      measureFocusPerformance(performanceTrace, "render icons", () => renderLucideIcons(els.strategicAdvisorModal));
+      measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(coach.parentElement));
     }
     reportFocusPerformance(performanceTrace);
   };
@@ -5951,17 +6070,35 @@ function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {
   else window.setTimeout(run, 180);
 }
 
-function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
+async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
   if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
-  const advisor = measureFocusPerformance(performanceTrace, "strategic advisor model", () => strategicAdvisorModel());
+  setStrategicAdvisorLoadingProgress("Organizando seu diagnóstico...", "Reunindo evidências e prioridades sem mudar seu planejamento.");
+  await yieldForPaint();
+  const advisor = await strategicAdvisorModelForModal({
+    performanceTrace,
+    onProgress: (message) => setStrategicAdvisorLoadingProgress(message),
+  });
+  if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
+  const body = els.strategicAdvisorModal.querySelector(".strategic-advisor-dialog-body");
+  if (body) {
+    measureFocusPerformance(performanceTrace, "DOM replacement", () => {
+      body.innerHTML = `${strategicAdvisorExecutiveMarkup(advisor)}<div class="strategic-advisor-loading strategic-advisor-loading-compact" role="status"><i data-lucide="loader-circle" aria-hidden="true"></i><strong>Comparando com análises anteriores...</strong><span>Preparando a leitura detalhada e o histórico do Coach.</span></div>`;
+    });
+    measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(body));
+  }
+  await yieldForPaint();
+  if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
   const history = measureFocusPerformance(performanceTrace, "strategic advisor history", () => strategicAdvisorHistoryState());
   const evolution = measureFocusPerformance(performanceTrace, "strategic advisor evolution", () => strategicAdvisorEvolutionMarkup(history));
   const coachMarkup = measureFocusPerformance(performanceTrace, "AI Coach markup", () => aiCoachMarkup({ deltaLoading: Boolean(aiCoachUIState.reviews[0] && !aiCoachUIState.lastResponse) }));
-  const markup = measureFocusPerformance(performanceTrace, "advisor dialog markup", () => strategicAdvisorDialogMarkup({ advisor, history, evolutionMarkup: evolution, coachMarkup }));
-  measureFocusPerformance(performanceTrace, "render advisor content", () => { els.strategicAdvisorModal.innerHTML = markup; });
+  const markup = measureFocusPerformance(performanceTrace, "advisor dialog markup", () => strategicAdvisorBodyMarkup({ advisor, history, evolutionMarkup: evolution, coachMarkup }));
+  measureFocusPerformance(performanceTrace, "DOM replacement", () => { if (body) body.innerHTML = markup; });
+  const footer = els.strategicAdvisorModal.querySelector("[data-strategic-advisor-footer]");
+  measureFocusPerformance(performanceTrace, "DOM replacement", () => { if (footer) footer.outerHTML = strategicAdvisorFooterMarkup(); });
   const dialog = els.strategicAdvisorModal.querySelector(".strategic-advisor-dialog");
   if (dialog) dialog.setAttribute("aria-busy", "false");
-  measureFocusPerformance(performanceTrace, "render icons", () => renderLucideIcons(els.strategicAdvisorModal));
+  measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(els.strategicAdvisorModal));
+  reportFocusPerformance(performanceTrace, "local");
   scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace);
 }
 
@@ -5975,10 +6112,11 @@ function openStrategicAdvisorModal(trigger = null) {
     measureFocusPerformance(performanceTrace, "render advisor shell", () => { els.strategicAdvisorModal.innerHTML = strategicAdvisorShellMarkup(); });
     document.body.classList.add("strategic-advisor-open");
     els.strategicAdvisorModal.hidden = false;
-    measureFocusPerformance(performanceTrace, "render icons", () => renderLucideIcons(els.strategicAdvisorModal));
+    measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(els.strategicAdvisorModal));
+    renderStrategicAdvisorPersistedCoachPreview(performanceTrace);
     els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
   }
-  void measureFocusPerformance(performanceTrace, "yield to browser", () => yieldForInteraction()).then(() => renderStrategicAdvisorContent(renderVersion, performanceTrace));
+  void measureFocusPerformance(performanceTrace, "paint before model", () => yieldForPaint({ frames: 2 })).then(() => renderStrategicAdvisorContent(renderVersion, performanceTrace));
 }
 
 function closeStrategicAdvisorModal() {
@@ -14656,6 +14794,26 @@ function yieldForInteraction() {
     const finish = () => window.setTimeout(resolve, 0);
     if (document.visibilityState === "visible" && typeof requestAnimationFrame === "function") requestAnimationFrame(finish);
     else finish();
+  });
+}
+
+function yieldForPaint({ frames = 1 } = {}) {
+  return new Promise((resolve) => {
+    const finish = () => window.setTimeout(resolve, 0);
+    if (document.visibilityState !== "visible" || typeof requestAnimationFrame !== "function") {
+      finish();
+      return;
+    }
+    let remainingFrames = Math.max(1, Math.floor(Number(frames) || 1));
+    const nextFrame = () => requestAnimationFrame(() => {
+      remainingFrames -= 1;
+      if (remainingFrames > 0) {
+        nextFrame();
+        return;
+      }
+      finish();
+    });
+    nextFrame();
   });
 }
 
