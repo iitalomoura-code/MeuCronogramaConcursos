@@ -45,6 +45,13 @@ se a evidência atual contradizer a revisão anterior, atualize a conclusão.
 Para perguntas sobre evolução, priorize deltaSinceLastCoachReview e o snapshot atual.
 Não limite consultas a uma por ciclo. Em question, preencha answerToQuestion;
 em progress-check, preencha sinceLastReview; em cycle-review, preencha cycleEvaluation.
+Não transforme a resposta em enumeração de estados dos tópicos: o motor já os classifica.
+Use esses fatos para sintetizar trade-offs, evolução, retorno esperado do tempo e decisões estratégicas.
+Prefira explicar o que concentrar, manter ou não priorizar agora e por quê.
+Em progress-check, priorize mudanças desde a última análise, a efetividade da estratégia anterior
+e a principal mudança de ação. Na primeira análise, crie um baseline com no máximo três decisões.
+Em cycle-review, compare execução real com a estratégia anterior e diga se deve manter, reduzir ou trocar a abordagem.
+Em question, responda primeiro à pergunta e use o snapshot apenas como sustentação.
 Nos demais campos específicos, use null.`;
 
 const nullableText = { type: ["string", "null"] };
