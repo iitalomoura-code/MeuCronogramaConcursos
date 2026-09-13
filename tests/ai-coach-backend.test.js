@@ -80,8 +80,8 @@ function providerResponse(status = 200, value = review()) {
   return new Response(JSON.stringify({ output_text: JSON.stringify(value) }), { status });
 }
 
-function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000, logger = () => {} } = {}) {
-  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs, logger });
+function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000, logger = () => {}, clock = () => new Date("2026-09-12T00:00:00.000Z") } = {}) {
+  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs, logger, clock });
 }
 
 test("exige Authorization e diferencia autenticação de autorização", async () => {
@@ -89,10 +89,10 @@ test("exige Authorization e diferencia autenticação de autorização", async (
   assert.equal(missing.status, 401);
   assert.equal((await missing.json()).error.code, "AI_AUTH_REQUIRED");
 
-  const invalid = await backend.createCoachHandler({ authClient: authClient("", new Error("invalid jwt")), env: { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "key" } })(request());
+  const invalid = await backend.createCoachHandler({ authClient: authClient("", new Error("invalid jwt")), env: { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "key" }, logger: () => {} })(request());
   assert.equal(invalid.status, 401);
 
-  const throwingAuth = await backend.createCoachHandler({ authClient: { auth: { getUser: async () => { throw new Error("auth unavailable"); } } }, env: { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "key" } })(request());
+  const throwingAuth = await backend.createCoachHandler({ authClient: { auth: { getUser: async () => { throw new Error("auth unavailable"); } } }, env: { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "key" }, logger: () => {} })(request());
   assert.equal(throwingAuth.status, 401);
 
   const denied = await handler({ userId: "other-user" })(request());
@@ -100,9 +100,10 @@ test("exige Authorization e diferencia autenticação de autorização", async (
   assert.equal((await denied.json()).error.code, "AI_ACCESS_DENIED");
 });
 
-test("valida contrato, chama Responses API com schema e devolve metadata segura", async () => {
+test("valida contrato, registra etapas seguras, chama Responses API com schema e devolve metadata segura", async () => {
   let providerRequest;
-  const response = await handler({ providerFetch: async (url, options) => {
+  const logs = [];
+  const response = await handler({ logger: (event) => logs.push(event), providerFetch: async (url, options) => {
     providerRequest = { url, options };
     return providerResponse();
   } })(request());
@@ -124,6 +125,24 @@ test("valida contrato, chama Responses API com schema e devolve metadata segura"
   assert.deepEqual(providerInput.currentSnapshot, snapshot);
   assert.equal(payload.meta.mode, "progress-check");
   assert.equal(payload.meta.questionIncluded, false);
+  assert.deepEqual(logs.map((event) => event.stage), [
+    "request-received",
+    "auth-ok",
+    "allowed-user-ok",
+    "openai-key-present",
+    "provider-call-start",
+    "openai-fetch-start",
+    "openai-fetch-response",
+  ]);
+  assert.deepEqual(logs[0], {
+    stage: "request-received",
+    mode: "progress-check",
+    model: "gpt-5.6-terra",
+    timestamp: "2026-09-12T00:00:00.000Z",
+    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+  });
+  assert.equal(logs.at(-1).status, 200);
+  assert.equal(logs.at(-1).responseOk, true);
 });
 
 test("aceita progress-check sob demanda e pergunta com continuidade, sem depender do ciclo", async () => {
@@ -206,7 +225,7 @@ test("rejeita versão, snapshot e payload grande sem expor detalhes internos", a
 });
 
 test("diferencia falhas HTTP, rede, parse e schema do provider com logs seguros", async () => {
-  const missingKey = await handler({ env: { AI_ALLOWED_USER_ID: "allowed-user" } })(request());
+  const missingKey = await handler({ env: { AI_ALLOWED_USER_ID: "allowed-user" }, logger: () => {} })(request());
   assert.equal(missingKey.status, 500);
   assert.equal((await missingKey.json()).error.code, "AI_CONFIG_MISSING");
 
@@ -222,7 +241,7 @@ test("diferencia falhas HTTP, rede, parse e schema do provider com logs seguros"
   const providerFailure = await handler({ logger: (event) => logs.push(event), providerFetch: async () => new Response(JSON.stringify({ error: { code: "model_not_found", type: "invalid_request_error", message: "Modelo indisponível" } }), { status: 400 }) })(request());
   assert.equal(providerFailure.status, 502);
   assert.equal((await providerFailure.json()).error.code, "AI_PROVIDER_HTTP_ERROR");
-  assert.deepEqual(logs[0], {
+  assert.deepEqual(logs.find((event) => event.stage === "openai-http"), {
     service: "ai-strategic-coach",
     stage: "openai-http",
     status: 400,
@@ -246,7 +265,7 @@ test("diferencia falhas HTTP, rede, parse e schema do provider com logs seguros"
   const unreadable = await handler({ logger: (event) => parseLogs.push(event), providerFetch: async () => new Response("not json", { status: 200 }) })(request());
   assert.equal(unreadable.status, 502);
   assert.equal((await unreadable.json()).error.code, "AI_PROVIDER_INVALID_RESPONSE");
-  assert.deepEqual(parseLogs[0], {
+  assert.deepEqual(parseLogs.find((event) => event.stage === "provider-parse"), {
     service: "ai-strategic-coach",
     stage: "provider-parse",
     status: 200,
@@ -263,10 +282,33 @@ test("diferencia falhas HTTP, rede, parse e schema do provider com logs seguros"
   const invalidResponse = await handler({ logger: (event) => schemaLogs.push(event), providerFetch: async () => providerResponse(200, { periodDiagnosis: {} }) })(request());
   assert.equal(invalidResponse.status, 502);
   assert.equal((await invalidResponse.json()).error.code, "AI_PROVIDER_SCHEMA_MISMATCH");
-  assert.equal(schemaLogs[0].stage, "provider-schema-validation");
-  assert.equal(schemaLogs[0].hasAnswerToQuestion, false);
-  assert.equal(schemaLogs[0].hasSinceLastReview, false);
-  assert.equal(schemaLogs[0].hasCycleEvaluation, false);
+  const schemaLog = schemaLogs.find((event) => event.stage === "provider-schema-validation");
+  assert.equal(schemaLog.stage, "provider-schema-validation");
+  assert.equal(schemaLog.hasAnswerToQuestion, false);
+  assert.equal(schemaLog.hasSinceLastReview, false);
+  assert.equal(schemaLog.hasCycleEvaluation, false);
+});
+
+test("registra o disparo do timeout interno antes de responder 504", async () => {
+  const logs = [];
+  const timeout = await handler({ logger: (event) => logs.push(event), timeoutMs: 5, providerFetch: () => new Promise(() => {}) })(request());
+  assert.equal(timeout.status, 504);
+  assert.deepEqual(logs.map((event) => event.stage), [
+    "request-received",
+    "auth-ok",
+    "allowed-user-ok",
+    "openai-key-present",
+    "provider-call-start",
+    "openai-fetch-start",
+    "openai-timeout-triggered",
+  ]);
+  assert.deepEqual(logs.at(-1), {
+    stage: "openai-timeout-triggered",
+    mode: "progress-check",
+    model: "gpt-5.6-terra",
+    timestamp: "2026-09-12T00:00:00.000Z",
+    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+  });
 });
 
 test("aplica rate limit best-effort por usuário", async () => {

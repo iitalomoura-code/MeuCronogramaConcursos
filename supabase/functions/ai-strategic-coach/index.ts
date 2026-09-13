@@ -2,7 +2,9 @@ const AI_COACH_MODEL = "gpt-5.6-terra";
 const SUPPORTED_CONTRACT_VERSION = 1;
 const DEFAULT_COACH_MODE = "progress-check";
 const MAX_SNAPSHOT_BYTES = 500 * 1024;
-const PROVIDER_TIMEOUT_MS = 40_000;
+// Keep this below the Edge runtime's external limit so a diagnostic timeout
+// becomes an explicit, observable 504 instead of a gateway-level 503.
+const PROVIDER_TIMEOUT_MS = 20_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const COACH_MODES = ["cycle-review", "progress-check", "question"];
@@ -260,6 +262,21 @@ function safeProviderLog(logger, event) {
   }
 }
 
+function safeStageLog(logger, { stage, mode, snapshotBytes, clock, ...details }) {
+  try {
+    logger({
+      stage,
+      mode,
+      model: AI_COACH_MODEL,
+      timestamp: clock().toISOString(),
+      snapshotBytes,
+      ...details,
+    });
+  } catch {
+    // Diagnostics must never interfere with the Coach response.
+  }
+}
+
 function snapshotByteSize(snapshot) {
   return new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
 }
@@ -279,12 +296,13 @@ async function readProviderError(response) {
   return response.json().catch(() => null);
 }
 
-async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS, requestOptions = {}, logger = console.log }) {
+async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS, requestOptions = {}, logger = console.log, clock = () => new Date() }) {
   const controller = new AbortController();
   let timeoutId;
   const mode = requestOptions.mode || DEFAULT_COACH_MODE;
   const snapshotBytes = snapshotByteSize(snapshot);
   try {
+    safeStageLog(logger, { stage: "openai-fetch-start", mode, snapshotBytes, clock });
     const request = providerFetch("https://api.openai.com/v1/responses", {
       method: "POST",
       signal: controller.signal,
@@ -308,9 +326,25 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
         store: false,
       }),
     });
-    const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => { controller.abort(); const error = new Error("provider timeout"); error.name = "AI_PROVIDER_TIMEOUT"; reject(error); }, timeoutMs); });
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        safeStageLog(logger, { stage: "openai-timeout-triggered", mode, snapshotBytes, clock });
+        controller.abort();
+        const error = new Error("provider timeout");
+        error.name = "AI_PROVIDER_TIMEOUT";
+        reject(error);
+      }, timeoutMs);
+    });
     const response = await Promise.race([request, timeout]);
     if (!response) throw Object.assign(new Error("provider unavailable"), { name: "AI_PROVIDER_NETWORK" });
+    safeStageLog(logger, {
+      stage: "openai-fetch-response",
+      mode,
+      snapshotBytes,
+      clock,
+      status: response.status,
+      responseOk: response.ok,
+    });
     if (!response.ok) {
       const payload = await readProviderError(response);
       const providerError = payload?.error;
@@ -382,6 +416,10 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     if (!validateSnapshotRequest(body)) return errorResponse(422, "AI_INVALID_SNAPSHOT");
     const requestOptions = coachRequestOptions(body);
     if (!requestOptions) return errorResponse(422, invalidQuestion(body) ? "AI_INVALID_QUESTION" : "AI_INVALID_SNAPSHOT");
+    const currentSnapshot = currentSnapshotFromRequest(body);
+    const snapshotBytes = snapshotByteSize(currentSnapshot);
+    const stageDetails = { mode: requestOptions.mode, snapshotBytes, clock };
+    safeStageLog(logger, { stage: "request-received", ...stageDetails });
     if (!authClient?.auth?.getUser) return errorResponse(500, "AI_CONFIG_MISSING");
     let authResult;
     try {
@@ -391,16 +429,20 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     }
     const { data, error } = authResult || {};
     if (error || !data?.user?.id) return errorResponse(401, "AI_AUTH_REQUIRED");
+    safeStageLog(logger, { stage: "auth-ok", ...stageDetails });
     const authenticatedUserId = data.user.id;
     const allowedUserId = getEnv("AI_ALLOWED_USER_ID", env);
     if (!allowedUserId) return errorResponse(500, "AI_CONFIG_MISSING");
     if (authenticatedUserId !== allowedUserId) return errorResponse(403, "AI_ACCESS_DENIED");
+    safeStageLog(logger, { stage: "allowed-user-ok", ...stageDetails });
     if (!rateLimiter.allow(authenticatedUserId)) return errorResponse(429, "AI_RATE_LIMITED");
     const apiKey = getEnv("OPENAI_API_KEY", env);
     if (!apiKey) return errorResponse(500, "AI_CONFIG_MISSING");
+    safeStageLog(logger, { stage: "openai-key-present", ...stageDetails });
     let review;
     try {
-      review = await callProvider({ snapshot: currentSnapshotFromRequest(body), apiKey, providerFetch, timeoutMs, requestOptions, logger });
+      safeStageLog(logger, { stage: "provider-call-start", ...stageDetails });
+      review = await callProvider({ snapshot: currentSnapshot, apiKey, providerFetch, timeoutMs, requestOptions, logger, clock });
     } catch (providerError) {
       if (providerError?.name === "AI_PROVIDER_TIMEOUT") return errorResponse(504, "AI_PROVIDER_TIMEOUT");
       if (providerError?.name === "AI_PROVIDER_INVALID_RESPONSE") return errorResponse(502, "AI_PROVIDER_INVALID_RESPONSE");
