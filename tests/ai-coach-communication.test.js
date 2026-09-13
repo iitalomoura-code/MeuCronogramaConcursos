@@ -2,9 +2,11 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const vm = require("node:vm");
 
 const app = fs.readFileSync("app.js", "utf8");
 const instructions = fs.readFileSync("supabase/functions/ai-strategic-coach/index.ts", "utf8");
+const styles = fs.readFileSync("styles.css", "utf8");
 const responseMarkup = app.slice(app.indexOf("function aiCoachResponseMarkup"), app.indexOf("function aiCoachMarkup"));
 const questionMarkup = responseMarkup.slice(responseMarkup.indexOf('if (mode === "question"'), responseMarkup.indexOf("let modeContent"));
 const confidenceMarkup = app.slice(app.indexOf("function aiCoachConfidenceLabel"), app.indexOf("function hasMeaningfulAICoachDelta"));
@@ -14,6 +16,8 @@ assert.ok(instructions.includes("Não escreva como relatório técnico, dashboar
 assert.ok(instructions.includes("nunca exponha termos como delta, rank, override, snapshot"), "o Coach deve traduzir o jargão interno");
 assert.ok(instructions.includes("Também não escreva unknown, autoridade estratégica") && instructions.includes("nunca os apresente como linguagem final ao aluno"), "o Coach deve proibir explicitamente jargão de implementação na resposta final");
 assert.ok(instructions.includes('prefira "Eu manteria..."') && instructions.includes("Evite construções impessoais, burocráticas ou linguagem de backend"), "o Coach deve manter uma voz conversacional e direta");
+assert.ok(instructions.includes("Não entregue apenas uma ordem: explique a decisão") && instructions.includes("2 a 4 parágrafos curtos"), "a resposta principal deve explicar a decisão em narrativa curta");
+assert.ok(instructions.includes("menor rank") && instructions.includes("Nunca escreva"), "o Coach deve bloquear variações do jargão de prioridade");
 assert.ok(instructions.includes("Assuma uma posição quando os dados permitirem"), "o Coach deve recomendar uma ação explícita");
 assert.ok(instructions.includes("Se não houver novos estudos ou mudança relevante, seja conciso"), "progress-check sem mudança deve ser conciso");
 assert.ok(instructions.includes("primeira análise, crie um baseline em linguagem natural, sem fingir evolução anterior"), "a primeira análise deve criar baseline sem inventar evolução");
@@ -25,6 +29,15 @@ assert.ok(questionMarkup.includes("answer.recommendation?.length ? answer.recomm
 assert.ok(!questionMarkup.includes('section("Prioridades"') && !questionMarkup.includes("Conclusão principal"), "o modo question não pode repetir prioridades ou resumo genérico ao lado da resposta direta");
 assert.ok(confidenceMarkup.includes('high: "Confiança da análise: alta"') && confidenceMarkup.includes('medium: "Confiança da análise: média"') && confidenceMarkup.includes('low: "Confiança da análise: baixa"'), "a confiança do Coach deve ser traduzida para português claro");
 assert.ok(!responseMarkup.includes("escapeHtml(review.periodDiagnosis?.confidence"), "a interface não pode exibir high, medium ou low crus");
+assert.ok(app.includes("function sanitizeAICoachText") && responseMarkup.includes("aiCoachNarrativeMarkup(directAnswer)"), "a interface deve sanitizar e apresentar a resposta principal como narrativa");
+const sanitizerSource = app.slice(app.indexOf("function sanitizeAICoachText"), app.indexOf("function aiCoachText"));
+const sanitizeAICoachText = vm.runInNewContext(`(${sanitizerSource})`);
+const sanitized = sanitizeAICoachText("unknown; menor rank; rank estratégico; snapshot; override");
+assert.ok(!/\bunknown\b|\brank\b|\bsnapshot\b|\boverride\b/i.test(sanitized), "jargão interno não pode chegar cru à resposta renderizada");
+assert.ok(sanitized.includes("pouca informação") && sanitized.includes("prioridade atual"), "o jargão deve ser traduzido para linguagem comum");
+assert.ok(styles.includes(".ai-coach-direct-answer p") && styles.includes("line-height: 1.55"), "a resposta principal deve suportar parágrafos curtos e conectados");
+assert.ok(styles.includes(".ai-coach-question-result .ai-coach-result-heading") && styles.includes("white-space: normal"), "a confiança deve ocupar uma linha própria no mobile");
+assert.ok(styles.includes("word-break: normal") && styles.includes("overflow-wrap: normal"), "a confiança não pode quebrar palavra por palavra");
 assert.ok(responseMarkup.includes('mode === "cycle-review"') && responseMarkup.includes("review.sinceLastReview"), "progress-check e cycle-review devem preservar suas leituras próprias");
 
 console.log("OK - o AI Coach usa voz conversacional, recomenda de forma explícita e evita relatório sem mudança.");

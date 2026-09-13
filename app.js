@@ -5753,9 +5753,38 @@ function aiCoachDaysSince(dateValue) {
   return Math.max(0, Math.floor((Date.now() - time) / 86400000));
 }
 
+function sanitizeAICoachText(value) {
+  return String(value ?? "")
+    .replace(/\bmenor\s+rank(?:\s+estrat[eé]gico)?\b/gi, "prioridade menor neste momento")
+    .replace(/\brank\s+estrat[eé]gico\b/gi, "prioridade atual")
+    .replace(/\b(?:tópicos?|temas?|assuntos?)\s+unknown\b/gi, "assuntos sobre os quais ainda há pouca informação")
+    .replace(/\bunknown\s+(?:topics?|themes?|subjects?|assuntos?|temas?)\b/gi, "assuntos sobre os quais ainda há pouca informação")
+    .replace(/\bunknown\b/gi, "assunto sobre o qual ainda há pouca informação")
+    .replace(/\bsem\s+evid[eê]ncia\s+atual\b/gi, "ainda sem informação suficiente para orientar uma mudança")
+    .replace(/\bevid[eê]ncia\s+atual\b/gi, "informação disponível neste momento")
+    .replace(/\bstrategic\s+score\b/gi, "prioridade atual")
+    .replace(/\btemporal\s+alignment\b/gi, "comparação confiável")
+    .replace(/\bconfidence\s+engine\b/gi, "confiança da análise")
+    .replace(/\blearningState\b/g, "estado de aprendizagem")
+    .replace(/\bevidenceStage\b/g, "nível de informação")
+    .replace(/\bsnapshot\b/gi, "dados desta análise")
+    .replace(/\boverride\b/gi, "mudança sugerida")
+    .replace(/\brank\b/gi, "prioridade");
+}
+
+function aiCoachText(value) {
+  return escapeHtml(sanitizeAICoachText(value));
+}
+
+function aiCoachNarrativeMarkup(value) {
+  const paragraphs = String(value ?? "").split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
+  const values = paragraphs.length ? paragraphs : [String(value ?? "").trim()].filter(Boolean);
+  return values.map((paragraph) => `<p>${aiCoachText(paragraph).replace(/\n/g, "<br />")}</p>`).join("");
+}
+
 function aiCoachListMarkup(items = [], { limit = 6 } = {}) {
   const values = (Array.isArray(items) ? items : []).slice(0, limit).map((item) => typeof item === "string" ? item : item?.text || item?.title || item?.recommendation || "").filter(Boolean);
-  return values.length ? `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
+  return values.length ? `<ul>${values.map((item) => `<li>${aiCoachText(item)}</li>`).join("")}</ul>` : "";
 }
 
 function aiCoachConfidenceLabel(confidence) {
@@ -5800,20 +5829,20 @@ function aiCoachResponseMarkup(response = null) {
     const foundations = answer.supportingFacts?.length || answer.interpretation?.length || review.facts?.length || review.interpretation?.length || review.bottlenecks?.length || review.uncertainties?.length || review.strategicNotes?.length
       ? `<details class="ai-coach-foundations"><summary>Ver fundamentos da análise</summary><div>${section("Fatos considerados", answer.supportingFacts)}${section("Leitura do Coach", answer.interpretation)}${section("Outros fatos considerados", review.facts)}${section("Interpretação complementar", review.interpretation)}${section("Pontos de atenção", review.bottlenecks)}${section("Incertezas", review.uncertainties)}${section("Notas", review.strategicNotes)}</div></details>`
       : "";
-    return `<div class="ai-coach-result ai-coach-question-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Resposta do Coach</span><h4>${escapeHtml(directAnswer)}</h4></div>${confidence ? `<span class="ai-coach-confidence">${escapeHtml(confidence)}</span>` : ""}</div>${section("O que eu faria agora", recommendation)}${section("O que eu evitaria agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
+    return `<div class="ai-coach-result ai-coach-question-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Resposta do Coach</span><div class="ai-coach-direct-answer">${aiCoachNarrativeMarkup(directAnswer)}</div></div>${confidence ? `<span class="ai-coach-confidence">${aiCoachText(confidence)}</span>` : ""}</div>${section("O que eu faria agora", recommendation)}${section("O que eu evitaria agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${aiCoachText(response.saveWarning)}</p>` : ""}</div>`;
   }
   let modeContent = "";
   if (mode === "cycle-review" && review.cycleEvaluation) {
     const evaluation = review.cycleEvaluation;
-    modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Revisão do ciclo</span><p>${escapeHtml(evaluation.executionSummary || "")}</p>${section("Efetividade da estratégia", [evaluation.strategyEffectiveness])}${section("O que funcionou", evaluation.whatWorked)}${section("O que mudar", evaluation.whatDidNotWork)}${section("Manter", evaluation.interventionsToKeep)}${section("Ajustar", evaluation.interventionsToChange)}${section("Comparação", [evaluation.comparisonWithPreviousCycle])}</div>`;
+    modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Revisão do ciclo</span><p>${aiCoachText(evaluation.executionSummary || "")}</p>${section("Efetividade da estratégia", [evaluation.strategyEffectiveness])}${section("O que funcionou", evaluation.whatWorked)}${section("O que mudar", evaluation.whatDidNotWork)}${section("Manter", evaluation.interventionsToKeep)}${section("Ajustar", evaluation.interventionsToChange)}${section("Comparação", [evaluation.comparisonWithPreviousCycle])}</div>`;
   } else if (review.sinceLastReview) {
     const progress = review.sinceLastReview;
-    modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Desde a última análise</span><p>${escapeHtml(progress.summary || "")}</p>${section("Avanços", progress.advances)}${section("Quedas", progress.declines)}${section("Novos riscos", progress.newRisks)}${section("Riscos resolvidos", progress.resolvedRisks)}${section("Áreas importantes sem mudança", progress.unchangedImportantAreas)}</div>`;
+    modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Desde a última análise</span><p>${aiCoachText(progress.summary || "")}</p>${section("Avanços", progress.advances)}${section("Quedas", progress.declines)}${section("Novos riscos", progress.newRisks)}${section("Riscos resolvidos", progress.resolvedRisks)}${section("Áreas importantes sem mudança", progress.unchangedImportantAreas)}</div>`;
   }
   const foundations = review.facts?.length || review.interpretation?.length || review.strategicNotes?.length || review.bottlenecks?.length || review.uncertainties?.length
     ? `<details class="ai-coach-foundations"><summary>Ver fundamentos da análise</summary><div>${section("Fatos considerados", review.facts)}${section("Interpretação", review.interpretation)}${section("Pontos de atenção", review.bottlenecks)}${section("Incertezas", review.uncertainties)}${section("Notas estratégicas", review.strategicNotes)}</div></details>`
     : "";
-  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${escapeHtml(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div>${confidence ? `<span class="ai-coach-confidence">${escapeHtml(confidence)}</span>` : ""}</div>${section("O que eu faria agora", review.recommendation)}${modeContent}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
+  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${aiCoachText(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div>${confidence ? `<span class="ai-coach-confidence">${aiCoachText(confidence)}</span>` : ""}</div>${section("O que eu faria agora", review.recommendation)}${modeContent}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${aiCoachText(response.saveWarning)}</p>` : ""}</div>`;
 }
 
 function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {

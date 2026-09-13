@@ -13380,7 +13380,17 @@ textarea:focus {
 .ai-coach-question-box button { justify-self: start; }
 .ai-coach-result { display: grid; gap: 12px; padding-top: 4px; border-top: 1px solid var(--divider); }
 .ai-coach-result-heading h4 { max-width: none; line-height: 1.35; }
-.ai-coach-confidence { color: var(--muted); font-size: 11px; text-transform: capitalize; }
+.ai-coach-direct-answer { display: grid; gap: 8px; margin-top: 5px; }
+.ai-coach-direct-answer p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.55; }
+.ai-coach-confidence {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
 .ai-coach-answer { display: grid; gap: 10px; padding: 12px; border-left: 2px solid var(--primary); background: var(--card); }
 .ai-coach-answer p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.5; }
 .ai-coach-result-group { display: grid; gap: 6px; }
@@ -13409,6 +13419,15 @@ textarea:focus {
   .ai-coach-delta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ai-coach-actions { display: grid; grid-template-columns: 1fr; }
   .ai-coach-actions button { width: 100%; justify-content: center; }
+  .ai-coach-question-result .ai-coach-result-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .ai-coach-question-result .ai-coach-confidence {
+    width: 100%;
+    white-space: normal;
+  }
 }
 
 /* Registro de erros: rápido no modo foco, detalhado apenas quando fizer sentido. */
