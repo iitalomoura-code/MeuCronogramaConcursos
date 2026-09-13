@@ -5628,8 +5628,18 @@ function aiCoachListMarkup(items = [], { limit = 6 } = {}) {
   return values.length ? `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
 }
 
+function hasMeaningfulAICoachDelta(delta = null) {
+  if (!delta) return false;
+  const numericChanges = [delta.newSessions, delta.newQuestions, delta.newCorrect, delta.studyMinutes]
+    .some((value) => typeof value === "number" && Number.isFinite(value) && value !== 0);
+  const strategicChanges = [delta.readinessChanges, delta.confidenceChanges, delta.subjectChanges, delta.topicChanges, delta.priorityChanges]
+    .some((items) => Array.isArray(items) && items.length > 0);
+  return numericChanges || strategicChanges;
+}
+
 function aiCoachDeltaMarkup(delta = null) {
   if (!delta) return `<p class="ai-coach-first-note">Você ainda não fez uma análise com o Coach. Faça uma leitura inicial para criar seu primeiro ponto de comparação.</p>`;
+  if (!hasMeaningfulAICoachDelta(delta)) return "";
   const metric = (label, value, suffix = "") => value === null || value === undefined ? "" : `<div><strong>${value > 0 ? "+" : ""}${escapeHtml(value)}${suffix}</strong><span>${label}</span></div>`;
   return `<div class="ai-coach-delta-facts"><span>Desde a última análise</span><div class="ai-coach-delta-grid">${metric("sessões", delta.newSessions)}${metric("questões", delta.newQuestions)}${metric("acertos", delta.newCorrect)}${metric("minutos de estudo", delta.studyMinutes)}${delta.readinessChanges?.length ? metric("mudanças de prontidão", delta.readinessChanges.length) : ""}${delta.confidenceChanges?.length ? metric("mudanças de confiança", delta.confidenceChanges.length) : ""}</div></div>`;
 }
@@ -5657,7 +5667,7 @@ function aiCoachResponseMarkup(response = null) {
   const foundations = review.facts?.length || review.interpretation?.length || review.strategicNotes?.length || review.bottlenecks?.length || review.uncertainties?.length
     ? `<details class="ai-coach-foundations"><summary>Ver fundamentos da análise</summary><div>${section("Fatos considerados", review.facts)}${section("Interpretação", review.interpretation)}${section("Pontos de atenção", review.bottlenecks)}${section("Incertezas", review.uncertainties)}${section("Notas estratégicas", review.strategicNotes)}</div></details>`
     : "";
-  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${escapeHtml(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div><span class="ai-coach-confidence">${escapeHtml(review.periodDiagnosis?.confidence || "")}</span></div>${modeContent}${section("O que fazer agora", review.recommendation)}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
+  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${escapeHtml(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div><span class="ai-coach-confidence">${escapeHtml(review.periodDiagnosis?.confidence || "")}</span></div>${section("O que eu faria agora", review.recommendation)}${modeContent}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
 }
 
 function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
