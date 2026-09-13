@@ -4,6 +4,7 @@
   const TABLE = "ai_coach_reviews";
   const MAX_HISTORY = 10;
   const text = (value = "") => String(value ?? "").trim();
+  const selectFields = "id,user_id,study_context_id,mode,question,snapshot_signature,ai_read_contract_version,created_at,review_json,meta_json,checkpoint_json,previous_review_id,previous_cycle_review_id,cycle_id,cycle_reference_at,model,status";
 
   function reviewBody(record = {}) { return record.review_json || record.reviewJson || record.review || {}; }
   function checkpointBody(record = {}) { return record.checkpoint_json || record.checkpointJson || record.checkpoint || null; }
@@ -37,11 +38,19 @@
     };
   }
 
-  function buildPersistencePayload({ response = {}, snapshot = {}, mode, question = null, previousReview = null, previousCycleReview = null } = {}) {
+  function isForStudyContext(record = {}, studyContextId = "") {
+    const context = text(studyContextId);
+    return Boolean(context && text(record?.study_context_id ?? record?.studyContextId) === context);
+  }
+
+  function buildPersistencePayload({ response = {}, snapshot = {}, mode, question = null, studyContextId = "", previousReview = null, previousCycleReview = null } = {}) {
+    const context = text(studyContextId);
+    if (!context) throw new Error("O contexto de estudo do Coach é obrigatório.");
     const link = cycleLink(snapshot, mode);
     const checkpoint = global.AICoachCheckpoint?.fromSnapshot?.(snapshot) || null;
     return {
       user_id: null,
+      study_context_id: context,
       mode,
       question: mode === "question" ? question : null,
       snapshot_signature: text(response.meta?.snapshotSignature || snapshot.signature?.value || snapshot.signature) || null,
@@ -50,8 +59,8 @@
       review_json: response.review || response,
       meta_json: response.meta || {},
       checkpoint_json: checkpoint,
-      previous_review_id: previousReview?.id || null,
-      previous_cycle_review_id: previousCycleReview?.id || null,
+      previous_review_id: isForStudyContext(previousReview, context) ? previousReview.id || null : null,
+      previous_cycle_review_id: isForStudyContext(previousCycleReview, context) ? previousCycleReview.id || null : null,
       cycle_id: link.cycleId,
       cycle_reference_at: link.cycleReferenceAt,
       model: response.meta?.model || null,
@@ -68,27 +77,29 @@
     return userId;
   }
 
-  async function listReviews({ limit = MAX_HISTORY } = {}) {
+  async function listReviews({ studyContextId = "", limit = MAX_HISTORY } = {}) {
     if (!global.supabaseClient) return [];
+    const context = text(studyContextId);
+    if (!context) return [];
     const userId = await currentUserId();
     const { data, error } = await global.supabaseClient.from(TABLE)
-      .select("id,user_id,mode,question,snapshot_signature,ai_read_contract_version,created_at,review_json,meta_json,checkpoint_json,previous_review_id,previous_cycle_review_id,cycle_id,cycle_reference_at,model,status")
-      .eq("user_id", userId).order("created_at", { ascending: false }).limit(Math.min(MAX_HISTORY, Math.max(1, Number(limit) || MAX_HISTORY)));
+      .select(selectFields)
+      .eq("user_id", userId).eq("study_context_id", context).order("created_at", { ascending: false }).limit(Math.min(MAX_HISTORY, Math.max(1, Number(limit) || MAX_HISTORY)));
     if (error) throw error;
     return Array.isArray(data) ? data : [];
   }
 
-  async function saveReview({ response, snapshot, mode, question = null, previousReview = null, previousCycleReview = null } = {}) {
+  async function saveReview({ response, snapshot, mode, question = null, studyContextId = "", previousReview = null, previousCycleReview = null } = {}) {
     if (!global.supabaseClient) throw new Error("Histórico do Coach indisponível.");
     const userId = await currentUserId();
-    const payload = buildPersistencePayload({ response, snapshot, mode, question, previousReview, previousCycleReview });
+    const payload = buildPersistencePayload({ response, snapshot, mode, question, studyContextId, previousReview, previousCycleReview });
     payload.user_id = userId;
-    const { data, error } = await global.supabaseClient.from(TABLE).insert(payload).select("id,user_id,mode,question,snapshot_signature,ai_read_contract_version,created_at,review_json,meta_json,checkpoint_json,previous_review_id,previous_cycle_review_id,cycle_id,cycle_reference_at,model,status").single();
+    const { data, error } = await global.supabaseClient.from(TABLE).insert(payload).select(selectFields).single();
     if (error) throw error;
     return data;
   }
 
-  const api = { TABLE, MAX_HISTORY, reviewBody, checkpointBody, createdAt, compactCoachReviewForContext, buildPersistencePayload, listReviews, saveReview };
+  const api = { TABLE, MAX_HISTORY, reviewBody, checkpointBody, createdAt, compactCoachReviewForContext, isForStudyContext, buildPersistencePayload, listReviews, saveReview };
   global.AICoachMemory = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

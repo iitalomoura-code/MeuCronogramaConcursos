@@ -227,6 +227,7 @@ let learningInterventionCache = new Map();
 let adaptiveReviewCache = new Map();
 let aiCoachUIState = {
   reviews: [],
+  studyContextId: "",
   selectedReviewId: "",
   loading: false,
   loaded: false,
@@ -236,6 +237,7 @@ let aiCoachUIState = {
   lastError: "",
   saveWarning: "",
 };
+let aiCoachContextRevision = 0;
 let strategicAdvisorRenderVersion = 0;
 let learningDiagnosisView = { subject: "all", attentionOnly: false, status: "", expandedSubjects: new Set() };
 let errorNotebookView = { subject: "all", topic: "all", type: "all", period: "all", editingId: "" };
@@ -445,6 +447,35 @@ function invalidateDerivedStudyCaches() {
   historyInheritanceCache.clear();
   continueDerivedStateRevision += 1;
   window.StudyDerivedState?.invalidate?.();
+}
+
+// Reviews and checkpoints describe a concrete plan, unlike the permanent
+// knowledge base. A plan ID is stable through edits and changes on plan swap.
+function aiCoachStudyContextId() {
+  return String(state.currentPlanId || state.activeStudyPlanId || "").trim();
+}
+
+function resetAICoachContext() {
+  const studyContextId = aiCoachStudyContextId();
+  if (aiCoachUIState.studyContextId === studyContextId) return false;
+  aiCoachContextRevision += 1;
+  aiCoachUIState.reviews = [];
+  aiCoachUIState.studyContextId = studyContextId;
+  aiCoachUIState.selectedReviewId = "";
+  aiCoachUIState.loading = false;
+  aiCoachUIState.loaded = false;
+  aiCoachUIState.busy = false;
+  aiCoachUIState.busyLabel = "";
+  aiCoachUIState.lastResponse = null;
+  aiCoachUIState.lastError = "";
+  aiCoachUIState.saveWarning = "";
+  return true;
+}
+
+function aiCoachContextIsCurrent(studyContextId, revision) {
+  return aiCoachStudyContextId() === studyContextId
+    && aiCoachContextRevision === revision
+    && aiCoachUIState.studyContextId === studyContextId;
 }
 
 const els = {
@@ -5926,6 +5957,7 @@ function getAICoachReviewableCycle() {
   return window.AICoachCycleTarget?.getReviewableCycle?.({
     cycleHistory: state.cycleHistory,
     reviews: aiCoachUIState.reviews,
+    studyContextId: aiCoachStudyContextId(),
   }) || null;
 }
 
@@ -6038,7 +6070,7 @@ function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
   const history = aiCoachUIState.reviews.slice(0, 5);
   const selectedRecord = aiCoachUIState.selectedReviewId ? aiCoachUIState.reviews.find((record) => aiCoachRecordId(record) === aiCoachUIState.selectedReviewId) || null : null;
   const viewingHistory = Boolean(selectedRecord);
-  const status = aiCoachUIState.busy ? aiCoachUIState.busyLabel || "Analisando sua estratégia..." : aiCoachUIState.lastError ? aiCoachUIState.lastError : aiCoachUIState.loading ? "Carregando histórico do Coach..." : last ? `Última análise: ${age === 0 ? "hoje" : `há ${age} dia${age === 1 ? "" : "s"}`}` : "Você ainda não fez uma análise com o Coach.";
+  const status = aiCoachUIState.busy ? aiCoachUIState.busyLabel || "Analisando sua estratégia..." : aiCoachUIState.lastError ? aiCoachUIState.lastError : aiCoachUIState.loading ? "Carregando histórico do Coach..." : last ? `Última análise: ${age === 0 ? "hoje" : `há ${age} dia${age === 1 ? "" : "s"}`}` : "Este cronograma ainda não possui análises do Coach.";
   const historyMarkup = history.length ? `<div class="ai-coach-history"><h5>Histórico recente</h5>${history.map(aiCoachHistoryItemMarkup).join("")}</div>` : "";
   const cycleDisabled = !getAICoachReviewableCycle() || aiCoachUIState.busy;
   const activeResponse = viewingHistory ? aiCoachHistoricalResponse(selectedRecord) : aiCoachUIState.lastResponse;
@@ -6078,13 +6110,17 @@ function aiCoachPreparationFailure(code) {
 }
 
 async function loadAICoachHistory() {
-  if (aiCoachUIState.loading || aiCoachUIState.loaded || !window.AICoachMemory?.listReviews) return;
+  const studyContextId = aiCoachStudyContextId();
+  if (!studyContextId || aiCoachUIState.loading || aiCoachUIState.loaded || !window.AICoachMemory?.listReviews) return;
+  const contextRevision = aiCoachContextRevision;
   aiCoachUIState.loading = true;
   try {
-    aiCoachUIState.reviews = await window.AICoachMemory.listReviews({ limit: 10 });
+    const reviews = await window.AICoachMemory.listReviews({ studyContextId, limit: 10 });
+    if (aiCoachContextIsCurrent(studyContextId, contextRevision)) aiCoachUIState.reviews = reviews;
   } catch (error) {
-    console.warn("Não foi possível carregar o histórico do Coach.", error);
+    if (aiCoachContextIsCurrent(studyContextId, contextRevision)) console.warn("Não foi possível carregar o histórico do Coach.", error);
   } finally {
+    if (!aiCoachContextIsCurrent(studyContextId, contextRevision)) return;
     aiCoachUIState.loading = false;
     aiCoachUIState.loaded = true;
     if (els.strategicAdvisorModal && !els.strategicAdvisorModal.hidden) openStrategicAdvisorModal(els.strategicAdvisorModal._trigger);
@@ -6093,6 +6129,14 @@ async function loadAICoachHistory() {
 
 async function requestAICoachAnalysis(mode, question = "") {
   if (aiCoachUIState.busy) return;
+  const studyContextId = aiCoachStudyContextId();
+  if (!studyContextId) {
+    aiCoachUIState.lastError = "Abra um cronograma para consultar o Coach.";
+    if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
+    return;
+  }
+  const contextRevision = aiCoachContextRevision;
+  const contextIsCurrent = () => aiCoachContextIsCurrent(studyContextId, contextRevision);
   const cycleTarget = mode === "cycle-review" ? getAICoachReviewableCycle() : null;
   if (mode === "cycle-review" && !cycleTarget) {
     aiCoachUIState.lastError = "Nenhum ciclo fechado está disponível para uma nova análise.";
@@ -6108,6 +6152,7 @@ async function requestAICoachAnalysis(mode, question = "") {
   if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
   try {
     await measureFocusPerformance(performanceTrace, "paint before snapshot", () => yieldForPaint({ frames: 2 }));
+    if (!contextIsCurrent()) return;
     const snapshotEngine = measureFocusPerformance(performanceTrace, "preparation before snapshot", () => window.AIStrategicSnapshot);
     if (!snapshotEngine?.buildStrategicSnapshot) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_ENGINE_MISSING");
@@ -6117,10 +6162,12 @@ async function requestAICoachAnalysis(mode, question = "") {
       now: new Date().toISOString(),
       performanceTrace,
       onProgress: (message) => {
+        if (!contextIsCurrent()) return;
         aiCoachUIState.busyLabel = message;
         renderAICoachSection();
       },
     }));
+    if (!contextIsCurrent()) return;
     if (!snapshot) {
       aiCoachUIState.lastError = aiCoachPreparationFailure("AI_SNAPSHOT_UNAVAILABLE");
       return;
@@ -6134,11 +6181,12 @@ async function requestAICoachAnalysis(mode, question = "") {
       aiCoachUIState.lastError = "O ciclo fechado disponível não corresponde ao estado estratégico atual.";
       return;
     }
-    const latest = aiCoachUIState.reviews[0] || null;
+    const reviews = aiCoachUIState.reviews.filter((record) => window.AICoachMemory?.isForStudyContext?.(record, studyContextId));
+    const latest = reviews[0] || null;
     const previousCycleReview = mode === "cycle-review"
-      ? aiCoachUIState.reviews.find((record) => record.mode === "cycle-review"
+      ? reviews.find((record) => record.mode === "cycle-review"
         && record.id !== latest?.id
-        && window.AICoachCycleTarget?.hasReviewFor?.(cycleTarget.previousRecord, [record]))
+        && window.AICoachCycleTarget?.hasReviewFor?.(cycleTarget.previousRecord, [record], { studyContextId }))
         || null
       : null;
     const previousCheckpoint = aiCoachRecordCheckpoint(latest);
@@ -6149,6 +6197,7 @@ async function requestAICoachAnalysis(mode, question = "") {
       deltaSinceLastCoachReview: delta,
       previousCycleReview: previousCycleReview ? window.AICoachMemory?.compactCoachReviewForContext?.(previousCycleReview) : null,
       previousCycleSnapshot: previousCycleReview ? aiCoachRecordCheckpoint(previousCycleReview) : null,
+      studyContextId,
     }));
     const providerPromise = measureFocusPerformance(performanceTrace, "Coach provider", () => {
       markFocusPerformance(performanceTrace, "timeToProviderRequest");
@@ -6162,22 +6211,28 @@ async function requestAICoachAnalysis(mode, question = "") {
     renderAICoachSection({ delta });
     const result = await providerPromise;
     const response = { ...result, mode, question: mode === "question" ? question : "", delta, saveWarning: "" };
-    aiCoachUIState.lastResponse = response;
-    aiCoachUIState.busyLabel = "Salvando análise...";
-    renderAICoachSection({ delta });
-    scrollAICoachResultIntoView();
+    if (contextIsCurrent()) {
+      aiCoachUIState.lastResponse = response;
+      aiCoachUIState.busyLabel = "Salvando análise...";
+      renderAICoachSection({ delta });
+      scrollAICoachResultIntoView();
+    }
     try {
-      const saved = await measureFocusPerformance(performanceTrace, "save Coach review", () => window.AICoachMemory.saveReview({ response: result, snapshot, mode, question: mode === "question" ? question : null, previousReview: latest, previousCycleReview }));
-      aiCoachUIState.reviews = [saved, ...aiCoachUIState.reviews.filter((record) => record.id !== saved.id)].slice(0, 10);
-      showToast("Análise do Coach salva no histórico.");
+      const saved = await measureFocusPerformance(performanceTrace, "save Coach review", () => window.AICoachMemory.saveReview({ response: result, snapshot, mode, question: mode === "question" ? question : null, studyContextId, previousReview: latest, previousCycleReview }));
+      if (contextIsCurrent()) {
+        aiCoachUIState.reviews = [saved, ...aiCoachUIState.reviews.filter((record) => record.id !== saved.id)].slice(0, 10);
+        showToast("Análise do Coach salva no histórico.");
+      }
     } catch (saveError) {
+      if (!contextIsCurrent()) return;
       response.saveWarning = "Análise concluída, mas não foi possível salvar no histórico.";
       aiCoachUIState.lastResponse = response;
       console.warn("Falha ao salvar análise do Coach.", saveError);
     }
   } catch (error) {
-    aiCoachUIState.lastError = aiCoachErrorMessage(error);
+    if (contextIsCurrent()) aiCoachUIState.lastError = aiCoachErrorMessage(error);
   } finally {
+    if (!contextIsCurrent()) return;
     aiCoachUIState.busy = false;
     aiCoachUIState.busyLabel = "";
     if (!renderAICoachSection()) openStrategicAdvisorModal(els.strategicAdvisorModal?._trigger);
@@ -14765,6 +14820,7 @@ function resetPlanningAccess() {
 
 function applyAppSnapshot(saved = {}) {
   invalidateDerivedStudyCaches();
+  resetAICoachContext();
   isRestoring = true;
   let repairedCycleEntries = 0;
   let repairedReviewEntries = 0;

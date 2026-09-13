@@ -61,9 +61,10 @@ releitura completa do histórico; `cycle-review` pode comparar os dois
 snapshots de ciclo. A última consulta do Coach nunca substitui
 `previousCycleSnapshot`.
 
-O dedupe do cliente considera `snapshotSignature`, modo e pergunta
-normalizada. Assim, análises iguais de `cycle-review`/`reanalyze-now` podem
-ser compartilhadas, enquanto perguntas diferentes continuam independentes.
+O dedupe do cliente considera `studyContextId`, `snapshotSignature`, modo e
+pergunta normalizada. Assim, análises iguais de `cycle-review`/`reanalyze-now`
+podem ser compartilhadas dentro do mesmo cronograma, enquanto perguntas e
+cronogramas diferentes continuam independentes.
 Não existe regra de uma consulta por ciclo; permanece apenas o rate limit
 técnico por usuário.
 
@@ -111,6 +112,25 @@ O Orientador oferece `Analisar ciclo`, `Ver minha evolução` e `Perguntar ao
 Coach`. A consulta de ciclo usa o review oficial de ciclo anterior quando
 disponível; as outras consultas usam o último review independentemente do
 ciclo. O histórico inicial carrega apenas os dez registros mais recentes.
+
+Cada review, checkpoint e referência anterior pertence ao `study_context_id`,
+que reutiliza o ID estável do planejamento ativo. Ao trocar de cronograma, a
+interface descarta imediatamente a memória em cache e carrega apenas os
+reviews daquele plano. Registros anteriores à coluna, que permanecem com
+`study_context_id` nulo, são legados preservados e nunca são associados por
+suposição a um cronograma novo. A Base Permanente continua separada: ela pode
+fornecer conhecimento equivalente, mas não sessões, execução de ciclo ou
+memória estratégica de outro concurso.
+
+Para aplicar a migration em produção, com a CLI autenticada e vinculada ao
+projeto correto, execute:
+
+```bash
+supabase db push --include-all
+```
+
+Em seguida, confirme que a coluna e os índices existem em `ai_coach_reviews`.
+O workflow de Edge Function não aplica migrations de banco automaticamente.
 
 O snapshot atual permanece a fonte de verdade. Reviews anteriores são apenas
 contexto estratégico compacto. Se a resposta chegar mas o salvamento falhar,

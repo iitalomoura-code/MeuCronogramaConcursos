@@ -19,6 +19,7 @@ assert.equal(helperContext.helpers.aiCoachRecordDate(null), "", "data nula deve 
 const requestSource = section("async function requestAICoachAnalysis", "function registerStrategicAdvisorSnapshot");
 let calls = 0;
 let receivedContext;
+let savedContext;
 const runtime = {
   aiCoachUIState: { reviews: [], busy: false, busyLabel: "", lastError: "", saveWarning: "", lastResponse: null },
   els: { strategicAdvisorModal: null },
@@ -35,10 +36,14 @@ const runtime = {
     AICoachDelta: { compare: () => null },
     AICoachMemory: {
       compactCoachReviewForContext: () => null,
-      saveReview: async () => ({ id: "first-review" }),
+      isForStudyContext: () => true,
+      saveReview: async (options) => { savedContext = options.studyContextId; return { id: "first-review", study_context_id: options.studyContextId }; },
     },
   },
   getAICoachReviewableCycle: () => null,
+  aiCoachStudyContextId: () => "plan-receita",
+  aiCoachContextRevision: 0,
+  aiCoachContextIsCurrent: () => true,
   createFocusPerformanceTrace: () => ({}),
   measureFocusPerformance: (_trace, _label, work) => work(),
   markFocusPerformance: () => {},
@@ -61,6 +66,8 @@ vm.runInContext(`${requestSource}; globalThis.requestAICoachAnalysis = requestAI
   assert.equal(receivedContext.previousCoachReview, null);
   assert.equal(receivedContext.previousCoachCheckpoint, null);
   assert.equal(receivedContext.deltaSinceLastCoachReview, null);
+  assert.equal(receivedContext.studyContextId, "plan-receita");
+  assert.equal(savedContext, "plan-receita");
   assert.equal(runtime.aiCoachUIState.lastResponse.review.periodDiagnosis.summary, "Leitura inicial", "o resultado inicial precisa ser exibível");
   assert.equal(runtime.aiCoachUIState.lastError, "", "a primeira análise não pode gerar erro");
   console.log("OK - primeira análise do Coach aceita ausência de histórico e cria o primeiro checkpoint.");

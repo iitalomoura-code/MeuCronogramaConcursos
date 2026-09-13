@@ -160,6 +160,32 @@ test("expõe ciclo, progress-check e ask, encaminha contexto e deduplica por mod
   }
 });
 
+test("não deduplica a mesma análise entre cronogramas", async () => {
+  const originalFetch = global.fetch;
+  const originalConfig = global.supabaseConfiguration;
+  const originalClient = global.supabaseClient;
+  const calls = [];
+  global.supabaseConfiguration = { url: "https://example.supabase.co", publishableKey: "publishable-key" };
+  global.supabaseClient = { auth: { getSession: async () => ({ data: { session: { access_token: "user-token" } }, error: null }) } };
+  global.fetch = async (_url, options) => {
+    const sent = JSON.parse(options.body);
+    calls.push(sent);
+    return new Response(JSON.stringify({ ...responseBody, meta: { ...responseBody.meta, snapshotSignature: sent.snapshotSignature } }), { status: 200 });
+  };
+  try {
+    const sameSnapshot = { aiReadContractVersion: 1, signature: { value: "shared-signature" } };
+    await client.checkProgress(sameSnapshot, { studyContextId: "plan-tce" });
+    await client.checkProgress(sameSnapshot, { studyContextId: "plan-receita" });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].studyContextId, "plan-tce");
+    assert.equal(calls[1].studyContextId, "plan-receita");
+  } finally {
+    global.fetch = originalFetch;
+    global.supabaseConfiguration = originalConfig;
+    global.supabaseClient = originalClient;
+  }
+});
+
 test("valida pergunta não vazia e com limite de tamanho", async () => {
   const invalidSnapshot = { aiReadContractVersion: 1, signature: { value: "invalid-question-signature" } };
   await assert.rejects(() => client.ask(invalidSnapshot, "   "), (error) => error.code === "AI_INVALID_QUESTION" && error.status === 422);

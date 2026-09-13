@@ -27,17 +27,19 @@
     return Boolean(cycle.closedAt || cycle.finalizedAt || cycle.status === "closed" || record?.closedAt || record?.finalizedAt);
   }
 
-  function hasReviewFor(record = {}, reviews = []) {
+  function hasReviewFor(record = {}, reviews = [], { studyContextId = "" } = {}) {
     const cycleId = cycleIdFor(record);
     const referenceAt = referenceAtFor(record);
+    const context = text(studyContextId);
     return (Array.isArray(reviews) ? reviews : []).some((review) => {
       if (review?.mode !== "cycle-review") return false;
+      if (context && text(review?.study_context_id ?? review?.studyContextId) !== context) return false;
       if (cycleId) return text(review.cycle_id) === cycleId;
       return Boolean(referenceAt && dateIso(review.cycle_reference_at) === referenceAt);
     });
   }
 
-  function getReviewableCycle({ cycleHistory = [], reviews = [] } = {}) {
+  function getReviewableCycle({ cycleHistory = [], reviews = [], studyContextId = "" } = {}) {
     const closed = (Array.isArray(cycleHistory) ? cycleHistory : [])
       .map((record, index) => ({ record, index, cycle: cycleFor(record), referenceAt: referenceAtFor(record) }))
       .filter((entry) => isClosed(entry.record) && entry.record?.weeklyStudyCycle && entry.referenceAt)
@@ -45,7 +47,7 @@
     if (!closed.length) return null;
 
     const latestClosed = closed[closed.length - 1];
-    const target = [...closed].reverse().find((entry) => !hasReviewFor(entry.record, reviews));
+    const target = [...closed].reverse().find((entry) => !hasReviewFor(entry.record, reviews, { studyContextId }));
     // O snapshot atual compara somente contra o ciclo fechado mais recente.
     // Ciclos anteriores continuam no historico, mas nao sao alvos seguros aqui.
     if (!target || target !== latestClosed) return null;

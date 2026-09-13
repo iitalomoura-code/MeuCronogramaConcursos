@@ -78,11 +78,12 @@
       deltaSinceLastCoachReview: options.deltaSinceLastCoachReview || null,
       previousCycleSnapshot: options.previousCycleSnapshot || null,
       previousCycleReview: options.previousCycleReview || null,
+      studyContextId: String(options.studyContextId || "").trim() || null,
     };
   }
 
   function requestKey(signature, options) {
-    return `${signature}\u0000${options.mode}\u0000${normalizeQuestion(options.question)}`;
+    return `${options.studyContextId || ""}\u0000${signature}\u0000${options.mode}\u0000${normalizeQuestion(options.question)}`;
   }
 
   async function send(snapshot, options) {
@@ -103,6 +104,7 @@
           aiReadContractVersion: snapshot.aiReadContractVersion,
           snapshotSignature: signature,
           requestId: requestKey(signature, options),
+          ...(options.studyContextId ? { studyContextId: options.studyContextId } : {}),
           mode: options.mode,
           ...(options.question ? { question: options.question } : {}),
           ...(options.previousCoachReview ? { previousCoachReview: options.previousCoachReview } : {}),

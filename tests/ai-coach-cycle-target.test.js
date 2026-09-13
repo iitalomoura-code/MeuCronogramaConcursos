@@ -40,13 +40,15 @@ const payload = Memory.buildPersistencePayload({
   response: { meta: { snapshotSignature: "snapshot-cycle-2", contractVersion: 1 }, review: {} },
   snapshot: targetSnapshot,
   mode: "cycle-review",
+  studyContextId: "plan-receita",
 });
 assert.equal(payload.cycle_id, "cycle-2");
 assert.equal(payload.cycle_reference_at, "2026-09-12T00:00:00.000Z");
+assert.equal(target.hasReviewFor(latest, [{ mode: "cycle-review", cycle_id: "cycle-2", study_context_id: "plan-tce" }], { studyContextId: "plan-receita" }), false, "cycle_id idêntico em outro cronograma não pode bloquear a análise atual");
 assert.ok(index.includes("ai-coach-cycle-target.js"));
 assert.ok(app.includes("function getAICoachReviewableCycle"));
 assert.ok(app.includes("const cycleTarget = mode === \"cycle-review\" ? getAICoachReviewableCycle() : null;"));
 assert.ok(app.includes("matchesSnapshot?.(cycleTarget, snapshot)"));
-assert.ok(app.includes("hasReviewFor?.(cycleTarget.previousRecord, [record])"));
+assert.ok(app.includes("hasReviewFor?.(cycleTarget.previousRecord, [record], { studyContextId })"));
 
 console.log("OK - ciclo alvo do AI Coach e unico, representavel pelo snapshot e persistido com a mesma referencia.");
