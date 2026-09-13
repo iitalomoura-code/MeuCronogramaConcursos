@@ -219,6 +219,12 @@ let strategicAdvisorModelBuildPromise = null;
 let strategicAdvisorModelBuildRevision = -1;
 let strategicPlanningTopicsCache = null;
 let strategicPlanningTopicsRevision = -1;
+let strategicPlanningHistoryIndex = null;
+let strategicPlanningHistoryIndexSource = null;
+let initialDiagnosisEvidenceCache = new Map();
+let initialDiagnosisInfluenceCache = new Map();
+let learningInterventionCache = new Map();
+let adaptiveReviewCache = new Map();
 let aiCoachUIState = {
   reviews: [],
   selectedReviewId: "",
@@ -264,12 +270,124 @@ function focusPerformanceEnabled() {
   return window.__MEU_CRONOGRAMA_FOCUS_PERF__ === true || host === "localhost" || host === "127.0.0.1";
 }
 
+function strategicPerformanceEnabled() {
+  if (window.__strategicPerfEnabled === true) return true;
+  try {
+    return window.localStorage?.getItem("meuCronogramaStrategicPerf") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function focusPerformanceNow() {
   return typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
 }
 
 function createFocusPerformanceTrace(name) {
-  return { name, enabled: focusPerformanceEnabled(), startedAt: focusPerformanceNow(), steps: [] };
+  const strategicEnabled = name === "advisor-open" && strategicPerformanceEnabled();
+  const trace = {
+    name,
+    enabled: focusPerformanceEnabled() || strategicEnabled,
+    startedAt: focusPerformanceNow(),
+    steps: [],
+    strategic: strategicEnabled ? {
+      startedAt: focusPerformanceNow(),
+      topicCount: 0,
+      stages: {},
+      functions: {},
+      marks: [],
+      longTasks: [],
+      lastYieldAt: focusPerformanceNow(),
+      maxBlockedIntervalMs: 0,
+      activeStage: "",
+    } : null,
+  };
+  if (trace.strategic && typeof PerformanceObserver === "function") {
+    try {
+      trace.strategic.longTaskObserver = new PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => trace.strategic.longTasks.push({
+          durationMs: Math.round(entry.duration * 10) / 10,
+          stage: trace.strategic.activeStage || "unknown",
+        }));
+      });
+      trace.strategic.longTaskObserver.observe({ entryTypes: ["longtask"] });
+    } catch {
+      // Alguns navegadores não expõem longtask; o profiling continua sem ele.
+    }
+  }
+  return trace;
+}
+
+function strategicPerfTargetLabel(target = {}) {
+  return [target.materia || "", target.subarea || "", target.assunto || target.titulo || ""].filter(Boolean).join(" · ");
+}
+
+function strategicPerfRecord(trace, collection, label, startedAt, target = null, { cacheHit = false } = {}) {
+  const strategic = trace?.strategic;
+  if (!strategic) return;
+  const duration = Math.round((focusPerformanceNow() - startedAt) * 10) / 10;
+  const values = strategic[collection];
+  const item = values[label] || { calls: 0, totalMs: 0, maxMs: 0, cacheHits: 0, targets: new Map() };
+  item.calls += 1;
+  item.totalMs += duration;
+  item.maxMs = Math.max(item.maxMs, duration);
+  if (cacheHit) item.cacheHits += 1;
+  const targetLabel = strategicPerfTargetLabel(target || {});
+  if (targetLabel) item.targets.set(targetLabel, (item.targets.get(targetLabel) || 0) + 1);
+  values[label] = item;
+}
+
+function strategicPerfMeasure(trace, label, work, target = null, options = {}) {
+  const startedAt = focusPerformanceNow();
+  const finish = () => strategicPerfRecord(trace, "functions", label, startedAt, target, options);
+  const result = work();
+  if (result?.then) return result.finally(finish);
+  finish();
+  return result;
+}
+
+function strategicPerfMark(trace, label) {
+  const strategic = trace?.strategic;
+  if (!strategic) return;
+  const at = Math.round((focusPerformanceNow() - strategic.startedAt) * 10) / 10;
+  strategic.marks.push({ label, at });
+  try { performance.mark(label); } catch {}
+}
+
+async function strategicPerfYield(trace, options = {}) {
+  const strategic = trace?.strategic;
+  if (strategic) {
+    strategic.maxBlockedIntervalMs = Math.max(strategic.maxBlockedIntervalMs, focusPerformanceNow() - strategic.lastYieldAt);
+    strategic.lastYieldAt = focusPerformanceNow();
+  }
+  await yieldForPaint(options);
+  if (strategic) strategic.lastYieldAt = focusPerformanceNow();
+}
+
+function strategicPerfSummary(trace) {
+  const strategic = trace?.strategic;
+  if (!strategic) return null;
+  const summarize = (values) => Object.fromEntries(Object.entries(values).map(([label, item]) => [label, {
+    calls: item.calls,
+    totalMs: Math.round(item.totalMs * 10) / 10,
+    avgMs: item.calls ? Math.round((item.totalMs / item.calls) * 10) / 10 : 0,
+    maxMs: item.maxMs,
+    cacheHits: item.cacheHits,
+    repeatedTargets: [...item.targets.entries()].filter(([, calls]) => calls > 1).map(([target, calls]) => ({ target, calls })),
+  }]));
+  return {
+    totalMs: Math.round((focusPerformanceNow() - strategic.startedAt) * 10) / 10,
+    topicCount: strategic.topicCount,
+    stages: summarize(strategic.stages),
+    functions: summarize(strategic.functions),
+    marks: [...strategic.marks],
+    maxBlockedIntervalMs: Math.round(strategic.maxBlockedIntervalMs * 10) / 10,
+    longTasks: {
+      count: strategic.longTasks.length,
+      maxMs: Math.max(0, ...strategic.longTasks.map((item) => item.durationMs)),
+      entries: [...strategic.longTasks],
+    },
+  };
 }
 
 function measureFocusPerformance(trace, label, work) {
@@ -277,6 +395,7 @@ function measureFocusPerformance(trace, label, work) {
   const result = work();
   const record = () => {
     if (trace?.enabled) trace.steps.push({ label, ms: Math.round((focusPerformanceNow() - startedAt) * 10) / 10 });
+    strategicPerfRecord(trace, "stages", label, startedAt);
   };
   if (result?.then) return result.finally(record);
   record();
@@ -289,6 +408,10 @@ function markFocusPerformance(trace, label) {
 }
 
 function reportFocusPerformance(trace, phase = "") {
+  if (trace?.strategic) {
+    window.__strategicPerf = strategicPerfSummary(trace);
+    if (phase === "local") trace.strategic.longTaskObserver?.disconnect?.();
+  }
   if (!trace?.enabled) return;
   const total = Math.round((focusPerformanceNow() - trace.startedAt) * 10) / 10;
   const suffix = phase ? `:${phase}` : "";
@@ -310,6 +433,12 @@ function invalidateDerivedStudyCaches() {
   strategicAdvisorModelBuildRevision = -1;
   strategicPlanningTopicsCache = null;
   strategicPlanningTopicsRevision = -1;
+  strategicPlanningHistoryIndex = null;
+  strategicPlanningHistoryIndexSource = null;
+  initialDiagnosisEvidenceCache.clear();
+  initialDiagnosisInfluenceCache.clear();
+  learningInterventionCache.clear();
+  adaptiveReviewCache.clear();
   errorAnalysisRevision += 1;
   window.ErrorAnalysis?.invalidate?.();
   predictiveEvolutionSnapshot = null;
@@ -4652,8 +4781,17 @@ function updateInitialDiagnosisSubjectNotice(row) {
   notice.textContent = `Nível estimado agora: ${level} · aguardando evidências do estudo`;
 }
 
-function initialDiagnosisEvidence(materia = "", assunto = "", subarea = "") {
-  const entries = assunto ? adaptivePerformanceForTopic(materia, assunto) : adaptivePerformanceForSubject(materia);
+function initialDiagnosisCacheKey(materia = "", assunto = "", subarea = "") {
+  return [normalizeForMatch(materia), normalizeForMatch(assunto), normalizeForMatch(subarea)].join("::");
+}
+
+function initialDiagnosisEvidence(materia = "", assunto = "", subarea = "", { performanceTrace = null } = {}) {
+  const key = initialDiagnosisCacheKey(materia, assunto, subarea);
+  if (initialDiagnosisEvidenceCache.has(key)) {
+    return strategicPerfMeasure(performanceTrace, "initialDiagnosisEvidence", () => initialDiagnosisEvidenceCache.get(key), { materia, assunto, subarea }, { cacheHit: true });
+  }
+  return strategicPerfMeasure(performanceTrace, "initialDiagnosisEvidence", () => {
+    const entries = assunto ? adaptivePerformanceForTopic(materia, assunto) : adaptivePerformanceForSubject(materia);
   const unique = new Map();
   entries.forEach((entry) => {
     const key = [normalizeForMatch(entry.assunto), entryDateValue(entry), entry.questoes, entry.acertos, entry.tempoEstudado, entry.status].join("|");
@@ -4661,22 +4799,33 @@ function initialDiagnosisEvidence(materia = "", assunto = "", subarea = "") {
   });
   const records = [...unique.values()];
   const relatedReviews = (state.reviews || []).filter((review) => topicMatches(review, materia, assunto, subarea));
-  return {
+    const result = {
     questions: records.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0),
     sessions: records.filter((entry) => entryDateValue(entry) || Number(entry.tempoEstudado) > 0 || Number(entry.questoes) > 0).length,
     reviews: relatedReviews.filter((review) => normalizeReviewStatus(review.status) === "Concluída").length,
     hours: records.reduce((sum, entry) => sum + (Number(entry.tempoEstudado) || 0), 0),
     reinforcements: relatedReviews.filter((review) => isAdaptiveReview(review) || review.intensidade === "prioritaria").length,
   };
+    initialDiagnosisEvidenceCache.set(key, result);
+    return result;
+  }, { materia, assunto, subarea });
 }
 
-function initialDiagnosisInfluence(materia = "", assunto = "", subarea = "") {
-  const record = initialDiagnosisRecordFor(materia);
-  const level = record?.initialKnowledgeLevel || "unknown";
-  const influence = window.InitialDiagnosisEngine?.influenceFor(level, initialDiagnosisEvidence(materia, assunto, subarea)) || {
-    level: "unknown", label: "Não sei avaliar", confidence: 0, remainingWeight: 0, adjustment: 0, active: false, historyIsPrimary: false,
-  };
-  return { ...influence, record };
+function initialDiagnosisInfluence(materia = "", assunto = "", subarea = "", { performanceTrace = null, evidence = null } = {}) {
+  const key = initialDiagnosisCacheKey(materia, assunto, subarea);
+  if (initialDiagnosisInfluenceCache.has(key)) {
+    return strategicPerfMeasure(performanceTrace, "initialDiagnosisInfluence", () => initialDiagnosisInfluenceCache.get(key), { materia, assunto, subarea }, { cacheHit: true });
+  }
+  return strategicPerfMeasure(performanceTrace, "initialDiagnosisInfluence", () => {
+    const record = initialDiagnosisRecordFor(materia);
+    const level = record?.initialKnowledgeLevel || "unknown";
+    const influence = window.InitialDiagnosisEngine?.influenceFor(level, evidence || initialDiagnosisEvidence(materia, assunto, subarea, { performanceTrace })) || {
+      level: "unknown", label: "Não sei avaliar", confidence: 0, remainingWeight: 0, adjustment: 0, active: false, historyIsPrimary: false,
+    };
+    const result = { ...influence, record };
+    initialDiagnosisInfluenceCache.set(key, result);
+    return result;
+  }, { materia, assunto, subarea });
 }
 
 function initialDiagnosisReason(materia = "", assunto = "", subarea = "") {
@@ -4789,11 +4938,11 @@ function historyInheritanceSubjectMarkup(summary = {}, index = 0) {
   return `<div class="history-inheritance-summary"><strong>${heading}</strong><span>${summary.matchedTopics} de ${summary.totalTopics} temas com evidência anterior${breakdown ? ` · ${breakdown}` : ""}</span><small>${escapeHtml(sourceLabel)}</small><button class="text-action" type="button" data-toggle-history-subject="${index}" aria-expanded="false" aria-controls="${detailId}">Ver temas reconhecidos</button><div id="${detailId}" class="history-inheritance-details" hidden><p>Este histórico é uma referência inicial. O nível atual será confirmado conforme você registrar novas questões neste planejamento.</p><ul>${summary.topics.map(historyInheritanceTopicDetailMarkup).join("")}</ul></div>${summary.profileMismatch ? `<small class="history-inheritance-mismatch">Seu histórico anterior indica contato com alguns temas desta matéria. Vamos manter sua avaliação e confirmar essa diferença com questões.</small>` : ""}</div>`;
 }
 
-function legacyHistoryInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
+function legacyHistoryInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "", currentEvidence = null, initialProfile = null, performanceTrace = null } = {}) {
   const engine = window.HistoryInheritance;
   if (!engine?.derive || !materia || !(titulo || assunto)) return { level: "none", label: "Sem base", confidence: 0, confidenceLabel: "low", matchConfidence: "low", origin: "none", recommendation: "Teoria e questões", sources: [], reasons: [] };
-  const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
-  const profile = initialDiagnosisInfluence(materia, assunto, subarea);
+  const evidence = currentEvidence || initialDiagnosisEvidence(materia, assunto, subarea, { performanceTrace });
+  const profile = initialProfile || initialDiagnosisInfluence(materia, assunto, subarea, { performanceTrace, evidence });
   return engine.derive({
     target: { materia, titulo, assunto, descricao, conteudosOriginais, subarea },
     sources: historyInheritanceSources,
@@ -4802,16 +4951,17 @@ function legacyHistoryInheritanceForTarget({ materia = "", titulo = "", assunto 
   });
 }
 
-function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "" } = {}) {
-  const evidence = initialDiagnosisEvidence(materia, assunto, subarea);
-  const profile = initialDiagnosisInfluence(materia, assunto, subarea);
+function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", descricao = "", conteudosOriginais = [], subarea = "", currentEvidence = null, initialProfile = null, performanceTrace = null } = {}) {
+  const evidence = currentEvidence || initialDiagnosisEvidence(materia, assunto, subarea, { performanceTrace });
+  const profile = initialProfile || initialDiagnosisInfluence(materia, assunto, subarea, { performanceTrace, evidence });
   const knowledgeSignature = knowledgeBaseState && typeof knowledgeBaseStructureSignature === "function"
     ? knowledgeBaseStructureSignature(knowledgeBaseState)
     : "";
   const signature = [materia, titulo, assunto, descricao, JSON.stringify(conteudosOriginais || []), subarea, state.currentPlanId, historyInheritanceSourcesKey, historyInheritanceSources.length, knowledgeSignature, evidence.questions, evidence.sessions, evidence.hours, profile.level]
     .map((value) => normalizeForMatch(String(value ?? ""))).join("|");
-  if (historyInheritanceCache.has(signature)) return historyInheritanceCache.get(signature);
-  const legacy = legacyHistoryInheritanceForTarget({ materia, titulo, assunto, descricao, conteudosOriginais, subarea });
+  if (historyInheritanceCache.has(signature)) return strategicPerfMeasure(performanceTrace, "historyInheritanceForTarget", () => historyInheritanceCache.get(signature), { materia, assunto, subarea }, { cacheHit: true });
+  return strategicPerfMeasure(performanceTrace, "historyInheritanceForTarget", () => {
+  const legacy = legacyHistoryInheritanceForTarget({ materia, titulo, assunto, descricao, conteudosOriginais, subarea, currentEvidence: evidence, initialProfile: profile, performanceTrace });
   const inherited = window.KnowledgeDiagnosis?.derive?.({
     base: knowledgeBaseState,
     topic: { planId: state.currentPlanId, materia, titulo, assunto, descricao, conteudosOriginais, subarea },
@@ -4823,6 +4973,7 @@ function historyInheritanceForTarget({ materia = "", titulo = "", assunto = "", 
   }) || legacy;
   historyInheritanceCache.set(signature, inherited);
   return inherited;
+  }, { materia, assunto, subarea });
 }
 
 function renderInitialDiagnosis() {
@@ -4943,6 +5094,22 @@ function adaptiveHistoryEntries() {
   return adaptiveHistoryCache;
 }
 
+function strategicPlanningPerformanceIndex() {
+  const entries = adaptiveHistoryEntries();
+  if (strategicPlanningHistoryIndex && strategicPlanningHistoryIndexSource === entries) return strategicPlanningHistoryIndex;
+  strategicPlanningHistoryIndexSource = entries;
+  strategicPlanningHistoryIndex = window.StrategicPlanningIndex?.create?.({
+    entries,
+    normalize: normalizeForMatch,
+    matches: topicMatches,
+  }) || {
+    forSubject: (materia) => entries.filter((entry) => topicMatches(entry, materia)),
+    forTopic: (materia, assunto) => entries.filter((entry) => topicMatches(entry, materia, assunto)),
+    stats: { sourceScans: 0, subjectLookups: 0, topicFilters: 0, topicCandidateScans: 0, topicCacheHits: 0 },
+  };
+  return strategicPlanningHistoryIndex;
+}
+
 function topicMatches(entry = {}, materia = "", assunto = "") {
   if (normalizeForMatch(entry.materia || "") !== normalizeForMatch(materia || "")) return false;
   if (!assunto) return true;
@@ -4990,7 +5157,7 @@ function reviewAttentionFor(materia = "", assunto = "") {
 }
 
 function adaptivePerformanceForSubject(materia = "") {
-  return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia));
+  return strategicPlanningPerformanceIndex().forSubject(materia);
 }
 
 function isAdaptiveReview(record = {}) {
@@ -5029,27 +5196,40 @@ function normalizeAdaptiveReviewRecord(record = {}) {
 
 function adaptiveReviewFor(materia = "", assunto = "") {
   ensureReviewsArray();
+  const cacheKey = `${normalizeForMatch(materia)}::${normalizeForMatch(assunto)}`;
+  if (adaptiveReviewCache.has(cacheKey)) return adaptiveReviewCache.get(cacheKey);
   const records = state.reviews
     .filter((record) => isAdaptiveReview(record) && !["Concluída", "Cancelada"].includes(record.status) && topicMatches(record, materia, assunto))
     .map((record) => ({ ...record, statusInfo: reviewStatusInfo(record) }))
     .sort((a, b) => new Date(b.atualizadaEm || b.criadaEm || 0) - new Date(a.atualizadaEm || a.criadaEm || 0));
   const record = records[0] || null;
   const engine = window.AdaptiveReviewEngine;
-  return {
+  const result = {
     record,
     records,
     impact: record && engine ? engine.priorityImpact(record.intensidade) : 0,
   };
+  adaptiveReviewCache.set(cacheKey, result);
+  return result;
 }
 
-function learningInterventionFor(materia = "", assunto = "") {
+function learningInterventionFor(materia = "", assunto = "", { performanceTrace = null } = {}) {
+  const cacheKey = `${normalizeForMatch(materia)}::${normalizeForMatch(assunto)}`;
+  if (learningInterventionCache.has(cacheKey)) return strategicPerfMeasure(performanceTrace, "learningInterventionFor", () => learningInterventionCache.get(cacheKey), { materia, assunto }, { cacheHit: true });
+  return strategicPerfMeasure(performanceTrace, "learningInterventionFor", () => {
   const fromReviews = (state.reviews || [])
     .filter((record) => isAdaptiveReview(record) && record.intervencao && topicMatches(record, materia, assunto))
     .sort((a, b) => new Date(b.intervencao?.updatedAt || b.atualizadaEm || b.criadaEm || 0) - new Date(a.intervencao?.updatedAt || a.atualizadaEm || a.criadaEm || 0))[0]?.intervencao || null;
-  if (fromReviews) return fromReviews;
-  return state.generatedBlocks
+  if (fromReviews) {
+    learningInterventionCache.set(cacheKey, fromReviews);
+    return fromReviews;
+  }
+  const result = state.generatedBlocks
     .filter((block) => block.intervencao && topicMatches(block, materia, assunto))
     .sort((a, b) => new Date(b.intervencao?.updatedAt || b.atualizadoEm || 0) - new Date(a.intervencao?.updatedAt || a.atualizadoEm || 0))[0]?.intervencao || null;
+  learningInterventionCache.set(cacheKey, result);
+  return result;
+  }, { materia, assunto });
 }
 
 function learningInterventionInsights() {
@@ -5072,8 +5252,8 @@ function errorAnalysisSnapshot() {
   }) || null;
 }
 
-function errorSignalsForTarget(materia = "", assunto = "", subarea = "") {
-  return window.ErrorAnalysis?.signalsFor?.(errorAnalysisSnapshot(), materia, assunto, subarea) || { available: false };
+function errorSignalsForTarget(materia = "", assunto = "", subarea = "", { performanceTrace = null } = {}) {
+  return strategicPerfMeasure(performanceTrace, "errorSignalsForTarget", () => window.ErrorAnalysis?.signalsFor?.(errorAnalysisSnapshot(), materia, assunto, subarea) || { available: false }, { materia, assunto, subarea });
 }
 
 function errorAnalysisInsights() {
@@ -5093,7 +5273,7 @@ function errorAnalysisInsights() {
 }
 
 function adaptivePerformanceForTopic(materia = "", assunto = "") {
-  return adaptiveHistoryEntries().filter((entry) => topicMatches(entry, materia, assunto));
+  return strategicPlanningPerformanceIndex().forTopic(materia, assunto);
 }
 
 function uniqueDiagnosticEntries(entries = []) {
@@ -5111,13 +5291,14 @@ function macroTopicFor(materia = "", assunto = "") {
   return match?.[0] || "";
 }
 
-function masteryDiagnosisForTarget(target = {}) {
+function masteryDiagnosisForTarget(target = {}, { performanceTrace = null } = {}) {
   const engine = window.MasteryDiagnosis;
   const materia = target.materia || "";
   const assunto = target.assunto || "";
   const subarea = target.subarea || "";
   const cacheKey = [programUnitKey({ materia, subarea, assunto }), Number(target.prioridadeBase ?? target.prioridade) || ""].join("::");
-  if (masteryDiagnosisCache.has(cacheKey)) return masteryDiagnosisCache.get(cacheKey);
+  if (masteryDiagnosisCache.has(cacheKey)) return strategicPerfMeasure(performanceTrace, "masteryDiagnosisForTarget", () => masteryDiagnosisCache.get(cacheKey), { materia, assunto, subarea }, { cacheHit: true });
+  return strategicPerfMeasure(performanceTrace, "masteryDiagnosisForTarget", () => {
   const subjectEntries = uniqueDiagnosticEntries(adaptivePerformanceForSubject(materia));
   const topicEntries = assunto ? uniqueDiagnosticEntries(adaptivePerformanceForTopic(materia, assunto)) : [];
   const questionCount = (entries) => entries.reduce((sum, entry) => sum + (Number(entry.questoes) || 0), 0);
@@ -5138,9 +5319,10 @@ function masteryDiagnosisForTarget(target = {}) {
   const completedReviews = (state.reviews || []).filter((record) => normalizeReviewStatus(record.status) === "Concluída" && topicMatches(record, materia, assunto)).length;
   const subject = subjectPlanningData(materia);
   const incidence = historicalIncidenceForTarget({ materia, assunto, subject });
-  const initial = initialDiagnosisInfluence(materia, assunto, subarea);
-  const historyInheritance = historyInheritanceForTarget({ ...target, materia, assunto, subarea });
-  const errorSignals = errorSignalsForTarget(materia, assunto, subarea);
+  const initialEvidence = initialDiagnosisEvidence(materia, assunto, subarea, { performanceTrace });
+  const initial = initialDiagnosisInfluence(materia, assunto, subarea, { performanceTrace, evidence: initialEvidence });
+  const historyInheritance = historyInheritanceForTarget({ ...target, materia, assunto, subarea, currentEvidence: initialEvidence, initialProfile: initial, performanceTrace });
+  const errorSignals = errorSignalsForTarget(materia, assunto, subarea, { performanceTrace });
   const phase = currentExamPhaseState().profile;
   const lastContact = selected.entries.map(entryContactDateValue).filter(Boolean).reduce((latest, value) => Math.max(latest, value), 0);
   const basePriority = Number(target.prioridadeBase ?? target.prioridade ?? priorityScore(subject)) || 0;
@@ -5156,6 +5338,7 @@ function masteryDiagnosisForTarget(target = {}) {
       action: { kind: "diagnostic", label: "Sessão diagnóstica", minutes: 30, questions: 10, text: "Faça 10 questões deste tema para melhorar o diagnóstico." },
       needsDiagnostic: true,
       entries: selected.entries,
+      initialEvidence,
       subjectContext,
       hasContact: Boolean(lastContact),
       historyInheritance,
@@ -5180,6 +5363,7 @@ function masteryDiagnosisForTarget(target = {}) {
     ...diagnosis,
     available: !isTopicDiagnosis || topicHasEvidence,
     entries: selected.entries,
+    initialEvidence,
     incidence,
     initial,
     historyInheritance,
@@ -5194,6 +5378,7 @@ function masteryDiagnosisForTarget(target = {}) {
   };
   masteryDiagnosisCache.set(cacheKey, result);
   return result;
+  }, { materia, assunto, subarea });
 }
 
 function adaptivePriorityAdjustment(target = {}) {
@@ -5278,15 +5463,15 @@ function learningDiagnosisTopics() {
   return [...unique.values()];
 }
 
-function learningDiagnosisTopic(topic) {
+function learningDiagnosisTopic(topic, performanceTrace = null) {
   const subject = subjectPlanningData(topic.materia);
   const diagnosis = masteryDiagnosisForTarget({
     materia: topic.materia,
     assunto: topic.assunto,
     subarea: topic.subarea,
     prioridade: priorityScore(subject),
-  });
-  const initialProfile = initialDiagnosisInfluence(topic.materia, topic.assunto, topic.subarea);
+  }, { performanceTrace });
+  const initialProfile = diagnosis.initial || initialDiagnosisInfluence(topic.materia, topic.assunto, topic.subarea, { performanceTrace, evidence: diagnosis.initialEvidence });
   return {
     ...topic,
     assuntoOriginal: topic.assunto,
@@ -5295,11 +5480,11 @@ function learningDiagnosisTopic(topic) {
     initialProfile,
     estimatedKnowledge: window.InitialDiagnosisEngine?.estimatedLevel?.({
       initialLevel: initialProfile.level,
-      evidence: initialDiagnosisEvidence(topic.materia, topic.assunto, topic.subarea),
+      evidence: diagnosis.initialEvidence || initialDiagnosisEvidence(topic.materia, topic.assunto, topic.subarea, { performanceTrace }),
       diagnosis,
     }),
-    errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea),
-    intervention: learningInterventionFor(topic.materia, topic.assunto),
+    errorSignals: diagnosis.errorSignals || errorSignalsForTarget(topic.materia, topic.assunto, topic.subarea, { performanceTrace }),
+    intervention: learningInterventionFor(topic.materia, topic.assunto, { performanceTrace }),
     // A recência específica do alvo evita atribuir contato de outro assunto da matéria.
     daysWithoutContact: diagnosis.daysWithoutContact ?? daysSinceLastSubjectContact(topic.materia),
   };
@@ -5317,7 +5502,7 @@ function learningDiagnosisModel() {
   return learningDiagnosisModelCache;
 }
 
-async function learningDiagnosisModelForModal({ onProgress = null } = {}) {
+async function learningDiagnosisModelForModal({ onProgress = null, performanceTrace = null } = {}) {
   if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
   if (learningDiagnosisModelBuildPromise && learningDiagnosisModelBuildRevision === errorAnalysisRevision) return learningDiagnosisModelBuildPromise;
   const revision = errorAnalysisRevision;
@@ -5326,10 +5511,11 @@ async function learningDiagnosisModelForModal({ onProgress = null } = {}) {
     const sourceTopics = learningDiagnosisTopics();
     const topics = [];
     for (let index = 0; index < sourceTopics.length; index += 1) {
-      topics.push(learningDiagnosisTopic(sourceTopics[index]));
+      topics.push(learningDiagnosisTopic(sourceTopics[index], performanceTrace));
+      if (performanceTrace?.strategic) performanceTrace.strategic.topicCount = sourceTopics.length;
       if ((index + 1) % 8 === 0 && index + 1 < sourceTopics.length) {
         onProgress?.("Organizando seu diagnóstico...");
-        await yieldForPaint();
+        await strategicPerfYield(performanceTrace);
       }
     }
     const model = buildLearningDiagnosisModel(topics);
@@ -5347,7 +5533,7 @@ async function learningDiagnosisModelForModal({ onProgress = null } = {}) {
   return learningDiagnosisModelBuildPromise;
 }
 
-function strategicPlanningTopic(topic, rowsByKey) {
+function strategicPlanningTopic(topic, rowsByKey, performanceTrace = null) {
   const subject = subjectPlanningData(topic.materia);
   const diagnosis = topic.diagnosis || {};
   const topicUnit = canonicalProgramUnit({
@@ -5357,7 +5543,7 @@ function strategicPlanningTopic(topic, rowsByKey) {
     titulo: topic.assuntoOriginal || topic.assunto,
   });
   const programUnit = rowsByKey.get(programUnitKey(topicUnit)) || topicUnit;
-  const strategic = strategicPriorityForTarget({
+  const strategic = strategicPerfMeasure(performanceTrace, "strategicPriorityForTarget", () => strategicPriorityForTarget({
     materia: topic.materia,
     assunto: topic.assuntoOriginal || topic.assunto,
     subarea: topic.subarea,
@@ -5368,7 +5554,7 @@ function strategicPlanningTopic(topic, rowsByKey) {
     initialProfile: topic.initialProfile,
     historyInheritance: diagnosis.historyInheritance,
     daysWithoutContact: diagnosis.daysWithoutContact ?? topic.daysWithoutContact,
-  });
+  }), { materia: topic.materia, assunto: topic.assuntoOriginal || topic.assunto, subarea: topic.subarea });
   const entry = {
     ...topic,
     programUnit,
@@ -5404,17 +5590,17 @@ function strategicPlanningTopics() {
   return topics;
 }
 
-async function strategicPlanningTopicsForModal({ onProgress = null } = {}) {
+async function strategicPlanningTopicsForModal({ onProgress = null, performanceTrace = null } = {}) {
   if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === errorAnalysisRevision) return strategicPlanningTopicsCache;
   const revision = errorAnalysisRevision;
   const rowsByKey = strategicPlanningRowsByKey();
-  const diagnosisModel = await learningDiagnosisModelForModal({ onProgress });
+  const diagnosisModel = await measureFocusPerformance(performanceTrace, "learningDiagnosisModel", () => learningDiagnosisModelForModal({ onProgress, performanceTrace }));
   const topics = [];
   for (let index = 0; index < diagnosisModel.topics.length; index += 1) {
-    topics.push(strategicPlanningTopic(diagnosisModel.topics[index], rowsByKey));
+    topics.push(strategicPlanningTopic(diagnosisModel.topics[index], rowsByKey, performanceTrace));
     if ((index + 1) % 8 === 0 && index + 1 < diagnosisModel.topics.length) {
       onProgress?.("Organizando prioridades e pontos de atenção...");
-      await yieldForPaint();
+      await strategicPerfYield(performanceTrace);
     }
   }
   if (revision === errorAnalysisRevision) {
@@ -5654,7 +5840,7 @@ async function strategicAdvisorModelForModal({ performanceTrace = null, onProgre
   const revision = errorAnalysisRevision;
   strategicAdvisorModelBuildRevision = revision;
   strategicAdvisorModelBuildPromise = (async () => {
-    const topics = await measureFocusPerformance(performanceTrace, "strategicPlanningTopics", () => strategicPlanningTopicsForModal({ onProgress }));
+    const topics = await measureFocusPerformance(performanceTrace, "strategicPlanningTopicsForModal", () => strategicPlanningTopicsForModal({ onProgress, performanceTrace }));
     const model = measureFocusPerformance(performanceTrace, "strategicAdvisorModel build", () => window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] });
     if (revision === errorAnalysisRevision) {
       strategicAdvisorModelCache = model;
@@ -6182,7 +6368,7 @@ function scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace) {
 async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
   if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
   setStrategicAdvisorLoadingProgress("Organizando seu diagnóstico...", "Reunindo evidências e prioridades sem mudar seu planejamento.");
-  await yieldForPaint();
+  await strategicPerfYield(performanceTrace);
   const advisor = await strategicAdvisorModelForModal({
     performanceTrace,
     onProgress: (message) => setStrategicAdvisorLoadingProgress(message),
@@ -6194,8 +6380,9 @@ async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
       body.innerHTML = `${strategicAdvisorExecutiveMarkup(advisor)}<div class="strategic-advisor-loading strategic-advisor-loading-compact" role="status"><i data-lucide="loader-circle" aria-hidden="true"></i><strong>Comparando com análises anteriores...</strong><span>Preparando a leitura detalhada e o histórico do Coach.</span></div>`;
     });
     measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(body));
+    strategicPerfMark(performanceTrace, "advisorExecutiveReady");
   }
-  await yieldForPaint();
+  await strategicPerfYield(performanceTrace);
   if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
   const history = measureFocusPerformance(performanceTrace, "strategic advisor history", () => strategicAdvisorHistoryState());
   const evolution = measureFocusPerformance(performanceTrace, "strategic advisor evolution", () => strategicAdvisorEvolutionMarkup(history));
@@ -6207,6 +6394,7 @@ async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
   const dialog = els.strategicAdvisorModal.querySelector(".strategic-advisor-dialog");
   if (dialog) dialog.setAttribute("aria-busy", "false");
   measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(els.strategicAdvisorModal));
+  strategicPerfMark(performanceTrace, "advisorFullModelReady");
   reportFocusPerformance(performanceTrace, "local");
   scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace);
 }
@@ -6214,6 +6402,7 @@ async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
 function openStrategicAdvisorModal(trigger = null) {
   if (!els.strategicAdvisorModal) return;
   const performanceTrace = createFocusPerformanceTrace("advisor-open");
+  strategicPerfMark(performanceTrace, "advisorOpenStart");
   const wasOpen = !els.strategicAdvisorModal.hidden;
   if (trigger) els.strategicAdvisorModal._trigger = trigger;
   const renderVersion = ++strategicAdvisorRenderVersion;
@@ -6225,7 +6414,10 @@ function openStrategicAdvisorModal(trigger = null) {
     renderStrategicAdvisorPersistedCoachPreview(performanceTrace);
     els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
   }
-  void measureFocusPerformance(performanceTrace, "paint before model", () => yieldForPaint({ frames: 2 })).then(() => renderStrategicAdvisorContent(renderVersion, performanceTrace));
+  void measureFocusPerformance(performanceTrace, "paint before model", () => strategicPerfYield(performanceTrace, { frames: 2 })).then(() => {
+    strategicPerfMark(performanceTrace, "advisorShellPainted");
+    return renderStrategicAdvisorContent(renderVersion, performanceTrace);
+  });
 }
 
 function closeStrategicAdvisorModal() {
