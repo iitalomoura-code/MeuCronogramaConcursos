@@ -5990,7 +5990,11 @@ function registerStrategicAdvisorSnapshot() {
 function strategicAdvisorCompactMarkup() {
   const advisor = strategicAdvisorModel();
   if (!advisor.summary?.length) return "";
-  const compactList = (label, items) => items.length ? `<div><span>${label}</span><strong>${items.map((item) => escapeHtml(item.title)).join(" · ")}</strong></div>` : "";
+  const compactList = (label, items = []) => {
+    if (!items.length) return "";
+    const titles = items.slice(0, 2).map((item) => escapeHtml(shortText(item.title, 72)));
+    return `<div><span>${label}</span><strong>${titles.join(" · ")}${items.length > titles.length ? " · ..." : ""}</strong></div>`;
+  };
   const comparison = strategicAdvisorHistoryState().comparison;
   const temporal = comparison ? `<small class="strategic-advisor-temporal">${escapeHtml(comparison.summary)}</small>` : "";
   return `<section class="strategic-advisor-card"><div class="strategic-advisor-heading"><div><span class="section-kicker">Orientador estratégico</span><h3>Seu momento atual</h3></div><i data-lucide="compass" aria-hidden="true"></i></div><p>${escapeHtml(advisor.summary.join(" "))}</p>${temporal}<div class="strategic-advisor-glance">${compactList("Priorize", advisor.priorities)}${compactList("Reduza", advisor.reduceLoad)}${compactList("Observe", advisor.watch)}</div><button class="text-action" type="button" data-open-strategic-advisor>Ver análise completa</button></section>`;

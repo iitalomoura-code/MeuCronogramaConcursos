@@ -12980,9 +12980,37 @@ textarea:focus {
 .continue-primary-column,
 .continue-context-column {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 28px;
   min-width: 0;
+}
+
+.continue-primary-column > *,
+.continue-context-column > * {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+
+.strategic-advisor-card {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.strategic-advisor-glance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.strategic-advisor-glance > div { min-width: 0; }
+
+.strategic-advisor-glance strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .continue-context-column .study-alerts {
@@ -13037,6 +13065,8 @@ textarea:focus {
 }
 
 @media (max-width: 700px) {
+  .strategic-advisor-glance { grid-template-columns: 1fr; gap: 12px; }
+  .strategic-advisor-glance > div + div { padding-top: 12px; border-top: 1px solid var(--divider); }
   .continue-context-column .study-alert-item { align-items: flex-start; }
   .continue-context-column .study-alert-actions { width: auto; }
   .continue-manual-override { align-items: flex-start; flex-direction: column; }
