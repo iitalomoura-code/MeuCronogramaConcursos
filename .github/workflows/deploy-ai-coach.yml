@@ -44,7 +44,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: 2.40.0
+          version: 2.117.0
 
       - name: Deploy ai-strategic-coach
         run: supabase functions deploy ai-strategic-coach --project-ref "$SUPABASE_PROJECT_REF"

@@ -12,7 +12,7 @@ assert.match(workflow, /supabase\/config\.toml/);
 assert.match(workflow, /concurrency:\s*[\s\S]*group: deploy-ai-strategic-coach/);
 assert.match(workflow, /SUPABASE_ACCESS_TOKEN: \$\{\{ secrets\.SUPABASE_ACCESS_TOKEN \}\}/);
 assert.match(workflow, /supabase\/setup-cli@v1/);
-assert.match(workflow, /version: 2\.40\.0/);
+assert.match(workflow, /version: 2\.117\.0/);
 assert.match(workflow, /supabase functions deploy ai-strategic-coach --project-ref/);
 assert.doesNotMatch(workflow, /functions deploy(?! ai-strategic-coach)/);
 assert.doesNotMatch(workflow, /--no-verify-jwt/);
