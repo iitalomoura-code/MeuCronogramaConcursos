@@ -18,6 +18,13 @@ assert.ok(instructions.includes("Também não escreva unknown, autoridade estrat
 assert.ok(instructions.includes('prefira "Eu manteria..."') && instructions.includes("Evite construções impessoais, burocráticas ou linguagem de backend"), "o Coach deve manter uma voz conversacional e direta");
 assert.ok(instructions.includes("Não entregue apenas uma ordem: explique a decisão") && instructions.includes("2 a 4 parágrafos curtos"), "a resposta principal deve explicar a decisão em narrativa curta");
 assert.ok(instructions.includes("menor rank") && instructions.includes("Nunca escreva"), "o Coach deve bloquear variações do jargão de prioridade");
+assert.ok(instructions.includes("Estou vendo X. Isso importa porque Y. Por isso, eu faria Z."), "o Coach deve conectar leitura, causa e recomendação");
+assert.ok(instructions.includes("Não aplique a mesma receita a todos os assuntos") && instructions.includes("erro recorrente"), "a ação deve variar conforme o tipo de problema observado");
+assert.ok(instructions.includes("principal trade-off") && instructions.includes("por que uma vem antes da outra agora"), "o Coach deve explicar a principal escolha entre prioridades");
+assert.ok(instructions.includes("qual resultado futuro faria você reconsiderar") && instructions.includes("condição curta de reavaliação"), "o Coach deve declarar como reavaliará a estratégia");
+assert.ok(instructions.includes("ainda não há motivo") && instructions.includes("antes de reavaliar"), "progress-check sem mudança deve orientar execução sem replanejar cedo");
+assert.ok(instructions.includes("qual hipótese prática deve ser testada"), "cycle-review deve interpretar a estratégia e testar a próxima hipótese");
+assert.ok(instructions.includes('Evite dizer "os dados indicam"') && instructions.includes('"o rank sugere"'), "a voz deve evitar fórmulas impessoais e técnicas");
 assert.ok(instructions.includes("Assuma uma posição quando os dados permitirem"), "o Coach deve recomendar uma ação explícita");
 assert.ok(instructions.includes("Se não houver novos estudos ou mudança relevante, seja conciso"), "progress-check sem mudança deve ser conciso");
 assert.ok(instructions.includes("primeira análise, crie um baseline em linguagem natural, sem fingir evolução anterior"), "a primeira análise deve criar baseline sem inventar evolução");
