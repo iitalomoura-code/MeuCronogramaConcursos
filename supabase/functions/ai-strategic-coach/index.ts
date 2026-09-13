@@ -249,23 +249,41 @@ function createRateLimiter({ limit = RATE_LIMIT_MAX, windowMs = RATE_LIMIT_WINDO
 
 function providerErrorCode(status) {
   if (status === 429) return { status: 429, code: "AI_RATE_LIMITED" };
-  return { status: 502, code: "AI_PROVIDER_ERROR" };
+  return { status: 502, code: "AI_PROVIDER_HTTP_ERROR" };
+}
+
+function safeProviderLog(logger, event) {
+  try {
+    logger({ service: "ai-strategic-coach", ...event });
+  } catch {
+    // Diagnostics must never interfere with the Coach response.
+  }
+}
+
+function snapshotByteSize(snapshot) {
+  return new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
 }
 
 async function readProviderReview(response) {
   const payload = await response.json().catch(() => null);
-  if (!payload) return null;
+  if (!payload) return { review: null, hasOutputText: false, hasOutput: false };
   if (typeof payload.output_text === "string") {
-    try { return JSON.parse(payload.output_text); } catch { return null; }
+    try { return { review: JSON.parse(payload.output_text), hasOutputText: true, hasOutput: Array.isArray(payload.output) }; } catch { return { review: null, hasOutputText: true, hasOutput: Array.isArray(payload.output) }; }
   }
   const text = payload.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
-  if (typeof text !== "string") return null;
-  try { return JSON.parse(text); } catch { return null; }
+  if (typeof text !== "string") return { review: null, hasOutputText: false, hasOutput: Array.isArray(payload.output) };
+  try { return { review: JSON.parse(text), hasOutputText: true, hasOutput: true }; } catch { return { review: null, hasOutputText: true, hasOutput: true }; }
 }
 
-async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS, requestOptions = {} }) {
+async function readProviderError(response) {
+  return response.json().catch(() => null);
+}
+
+async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVIDER_TIMEOUT_MS, requestOptions = {}, logger = console.log }) {
   const controller = new AbortController();
   let timeoutId;
+  const mode = requestOptions.mode || DEFAULT_COACH_MODE;
+  const snapshotBytes = snapshotByteSize(snapshot);
   try {
     const request = providerFetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -276,7 +294,7 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
         instructions: AI_COACH_INSTRUCTIONS,
         input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify({
           request: {
-            mode: requestOptions.mode || DEFAULT_COACH_MODE,
+            mode,
             question: requestOptions.question || null,
             previousCoachReview: requestOptions.previousCoachReview || null,
             previousCoachCheckpoint: requestOptions.previousCoachCheckpoint || null,
@@ -292,18 +310,58 @@ async function callProvider({ snapshot, apiKey, providerFetch, timeoutMs = PROVI
     });
     const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => { controller.abort(); const error = new Error("provider timeout"); error.name = "AI_PROVIDER_TIMEOUT"; reject(error); }, timeoutMs); });
     const response = await Promise.race([request, timeout]);
-    if (!response?.ok) throw Object.assign(new Error("provider error"), { name: "AI_PROVIDER_HTTP", status: response?.status });
-    return await readProviderReview(response);
+    if (!response) throw Object.assign(new Error("provider unavailable"), { name: "AI_PROVIDER_NETWORK" });
+    if (!response.ok) {
+      const payload = await readProviderError(response);
+      const providerError = payload?.error;
+      safeProviderLog(logger, {
+        stage: "openai-http",
+        status: response.status,
+        responseStatus: response.status,
+        model: AI_COACH_MODEL,
+        mode,
+        snapshotBytes,
+        responseOk: response.ok,
+        providerCode: providerError?.code || null,
+        providerType: providerError?.type || null,
+        providerMessage: typeof providerError?.message === "string" ? providerError.message.slice(0, 500) : null,
+      });
+      throw Object.assign(new Error("provider error"), { name: "AI_PROVIDER_HTTP", status: response.status });
+    }
+    const parsed = await readProviderReview(response);
+    if (!parsed.review) {
+      safeProviderLog(logger, {
+        stage: "provider-parse",
+        status: response.status,
+        responseStatus: response.status,
+        model: AI_COACH_MODEL,
+        mode,
+        snapshotBytes,
+        responseOk: response.ok,
+        hasOutputText: parsed.hasOutputText,
+        hasOutput: parsed.hasOutput,
+      });
+      throw Object.assign(new Error("provider response could not be read"), { name: "AI_PROVIDER_INVALID_RESPONSE" });
+    }
+    return parsed.review;
   } catch (error) {
     if (error?.name === "AI_PROVIDER_TIMEOUT" || error?.name === "AbortError") throw Object.assign(new Error("provider timeout"), { name: "AI_PROVIDER_TIMEOUT" });
     if (error?.name === "AI_PROVIDER_HTTP") throw error;
+    if (error?.name === "AI_PROVIDER_INVALID_RESPONSE") throw error;
+    safeProviderLog(logger, {
+      stage: "openai-network",
+      model: AI_COACH_MODEL,
+      mode,
+      snapshotBytes,
+      errorName: error?.name || null,
+    });
     throw Object.assign(new Error("provider unavailable"), { name: "AI_PROVIDER_NETWORK" });
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
-export function createCoachHandler({ authClient, providerFetch = fetch, env = null, rateLimiter = createRateLimiter(), clock = () => new Date(), timeoutMs = PROVIDER_TIMEOUT_MS } = {}) {
+export function createCoachHandler({ authClient, providerFetch = fetch, env = null, rateLimiter = createRateLimiter(), clock = () => new Date(), timeoutMs = PROVIDER_TIMEOUT_MS, logger = console.log } = {}) {
   return async function handleCoachRequest(request) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
     if (request.method !== "POST") return errorResponse(405, "AI_INVALID_SNAPSHOT");
@@ -342,16 +400,32 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
     if (!apiKey) return errorResponse(500, "AI_CONFIG_MISSING");
     let review;
     try {
-      review = await callProvider({ snapshot: currentSnapshotFromRequest(body), apiKey, providerFetch, timeoutMs, requestOptions });
+      review = await callProvider({ snapshot: currentSnapshotFromRequest(body), apiKey, providerFetch, timeoutMs, requestOptions, logger });
     } catch (providerError) {
       if (providerError?.name === "AI_PROVIDER_TIMEOUT") return errorResponse(504, "AI_PROVIDER_TIMEOUT");
-      if (providerError?.status === 429) return errorResponse(429, "AI_RATE_LIMITED");
-      return errorResponse(502, "AI_PROVIDER_ERROR");
+      if (providerError?.name === "AI_PROVIDER_INVALID_RESPONSE") return errorResponse(502, "AI_PROVIDER_INVALID_RESPONSE");
+      if (providerError?.name === "AI_PROVIDER_NETWORK") return errorResponse(502, "AI_PROVIDER_NETWORK_ERROR");
+      if (providerError?.name === "AI_PROVIDER_HTTP") {
+        const mapped = providerErrorCode(providerError.status);
+        return errorResponse(mapped.status, mapped.code);
+      }
+      return errorResponse(502, "AI_PROVIDER_NETWORK_ERROR");
     }
     if (!validateReview(review)
       || (requestOptions.mode === "question" && !review.answerToQuestion)
       || (requestOptions.mode === "progress-check" && !review.sinceLastReview)
-      || (requestOptions.mode === "cycle-review" && !review.cycleEvaluation)) return errorResponse(502, "AI_PROVIDER_ERROR");
+      || (requestOptions.mode === "cycle-review" && !review.cycleEvaluation)) {
+      safeProviderLog(logger, {
+        stage: "provider-schema-validation",
+        model: AI_COACH_MODEL,
+        mode: requestOptions.mode,
+        snapshotBytes: snapshotByteSize(currentSnapshotFromRequest(body)),
+        hasAnswerToQuestion: Boolean(review?.answerToQuestion),
+        hasSinceLastReview: Boolean(review?.sinceLastReview),
+        hasCycleEvaluation: Boolean(review?.cycleEvaluation),
+      });
+      return errorResponse(502, "AI_PROVIDER_SCHEMA_MISMATCH");
+    }
     return jsonResponse({
       review,
       meta: {

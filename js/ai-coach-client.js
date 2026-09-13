@@ -27,6 +27,10 @@
       AI_PROVIDER_TIMEOUT: "A análise demorou mais que o esperado. Tente novamente.",
       AI_FUNCTION_UNAVAILABLE: "A função do AI Coach não está disponível no momento. Tente novamente mais tarde.",
       AI_PROVIDER_ERROR: "O orientador estratégico está indisponível no momento.",
+      AI_PROVIDER_HTTP_ERROR: "O serviço de análise está indisponível no momento. Tente novamente mais tarde.",
+      AI_PROVIDER_NETWORK_ERROR: "Não foi possível alcançar o serviço de análise. Tente novamente.",
+      AI_PROVIDER_INVALID_RESPONSE: "A análise retornou em um formato inesperado. Tente novamente.",
+      AI_PROVIDER_SCHEMA_MISMATCH: "A análise retornou em um formato inesperado. Tente novamente.",
       AI_CONFIG_MISSING: "O orientador estratégico ainda não foi configurado.",
       AI_INVALID_REQUEST: "Não foi possível validar o pedido ao orientador estratégico.",
       AI_INVALID_QUESTION: "A pergunta precisa ser preenchida e ter no máximo 2.000 caracteres.",
@@ -110,7 +114,7 @@
         }),
       });
     } catch {
-      throw clientError("AI_PROVIDER_ERROR", translatedMessage("AI_PROVIDER_ERROR"), 502);
+      throw clientError("AI_PROVIDER_NETWORK_ERROR", translatedMessage("AI_PROVIDER_NETWORK_ERROR"), 502);
     }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -118,7 +122,7 @@
       throw clientError(code, translatedMessage(code), response.status);
     }
     if (!validateResponse(payload) || payload.meta.snapshotSignature !== signature) {
-      throw clientError("AI_PROVIDER_ERROR", translatedMessage("AI_PROVIDER_ERROR"), 502);
+      throw clientError("AI_PROVIDER_INVALID_RESPONSE", translatedMessage("AI_PROVIDER_INVALID_RESPONSE"), 502);
     }
     return { review: payload.review, meta: payload.meta };
   }

@@ -80,8 +80,8 @@ function providerResponse(status = 200, value = review()) {
   return new Response(JSON.stringify({ output_text: JSON.stringify(value) }), { status });
 }
 
-function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000 } = {}) {
-  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs });
+function handler({ userId = "allowed-user", env = { AI_ALLOWED_USER_ID: "allowed-user", OPENAI_API_KEY: "server-only-key" }, providerFetch = async () => providerResponse(), timeoutMs = 40_000, logger = () => {} } = {}) {
+  return backend.createCoachHandler({ authClient: authClient(userId), env, providerFetch, timeoutMs, logger });
 }
 
 test("exige Authorization e diferencia autenticação de autorização", async () => {
@@ -205,7 +205,7 @@ test("rejeita versão, snapshot e payload grande sem expor detalhes internos", a
   assert.equal((await large.json()).error.code, "AI_SNAPSHOT_TOO_LARGE");
 });
 
-test("mapeia configuração ausente, timeout, 429, provider 500 e resposta fora do schema", async () => {
+test("diferencia falhas HTTP, rede, parse e schema do provider com logs seguros", async () => {
   const missingKey = await handler({ env: { AI_ALLOWED_USER_ID: "allowed-user" } })(request());
   assert.equal(missingKey.status, 500);
   assert.equal((await missingKey.json()).error.code, "AI_CONFIG_MISSING");
@@ -218,12 +218,55 @@ test("mapeia configuração ausente, timeout, 429, provider 500 e resposta fora 
   assert.equal(limited.status, 429);
   assert.equal((await limited.json()).error.code, "AI_RATE_LIMITED");
 
-  const providerFailure = await handler({ providerFetch: async () => providerResponse(500) })(request());
+  const logs = [];
+  const providerFailure = await handler({ logger: (event) => logs.push(event), providerFetch: async () => new Response(JSON.stringify({ error: { code: "model_not_found", type: "invalid_request_error", message: "Modelo indisponível" } }), { status: 400 }) })(request());
   assert.equal(providerFailure.status, 502);
-  assert.equal((await providerFailure.json()).error.code, "AI_PROVIDER_ERROR");
+  assert.equal((await providerFailure.json()).error.code, "AI_PROVIDER_HTTP_ERROR");
+  assert.deepEqual(logs[0], {
+    service: "ai-strategic-coach",
+    stage: "openai-http",
+    status: 400,
+    responseStatus: 400,
+    model: "gpt-5.6-terra",
+    mode: "progress-check",
+    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+    responseOk: false,
+    providerCode: "model_not_found",
+    providerType: "invalid_request_error",
+    providerMessage: "Modelo indisponível",
+  });
+  assert.equal(JSON.stringify(logs).includes("server-only-key"), false);
+  assert.equal(JSON.stringify(logs).includes("snapshot-signature"), false);
 
-  const invalidResponse = await handler({ providerFetch: async () => providerResponse(200, { periodDiagnosis: {} }) })(request());
+  const network = await handler({ providerFetch: async () => { throw new TypeError("network failure"); } })(request());
+  assert.equal(network.status, 502);
+  assert.equal((await network.json()).error.code, "AI_PROVIDER_NETWORK_ERROR");
+
+  const parseLogs = [];
+  const unreadable = await handler({ logger: (event) => parseLogs.push(event), providerFetch: async () => new Response("not json", { status: 200 }) })(request());
+  assert.equal(unreadable.status, 502);
+  assert.equal((await unreadable.json()).error.code, "AI_PROVIDER_INVALID_RESPONSE");
+  assert.deepEqual(parseLogs[0], {
+    service: "ai-strategic-coach",
+    stage: "provider-parse",
+    status: 200,
+    responseStatus: 200,
+    model: "gpt-5.6-terra",
+    mode: "progress-check",
+    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+    responseOk: true,
+    hasOutputText: false,
+    hasOutput: false,
+  });
+
+  const schemaLogs = [];
+  const invalidResponse = await handler({ logger: (event) => schemaLogs.push(event), providerFetch: async () => providerResponse(200, { periodDiagnosis: {} }) })(request());
   assert.equal(invalidResponse.status, 502);
+  assert.equal((await invalidResponse.json()).error.code, "AI_PROVIDER_SCHEMA_MISMATCH");
+  assert.equal(schemaLogs[0].stage, "provider-schema-validation");
+  assert.equal(schemaLogs[0].hasAnswerToQuestion, false);
+  assert.equal(schemaLogs[0].hasSinceLastReview, false);
+  assert.equal(schemaLogs[0].hasCycleEvaluation, false);
 });
 
 test("aplica rate limit best-effort por usuário", async () => {

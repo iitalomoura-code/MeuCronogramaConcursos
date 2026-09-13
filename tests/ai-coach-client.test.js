@@ -75,7 +75,23 @@ test("transforma falha de rede em erro estável do provider", async () => {
   global.supabaseClient = { auth: { getSession: async () => ({ data: { session: { access_token: "user-token" } }, error: null }) } };
   global.fetch = async () => { throw new TypeError("network failure"); };
   try {
-    await assert.rejects(() => client.analyze({ signature: { value: "network-signature" } }), (error) => error.code === "AI_PROVIDER_ERROR" && error.status === 502);
+    await assert.rejects(() => client.analyze({ signature: { value: "network-signature" } }), (error) => error.code === "AI_PROVIDER_NETWORK_ERROR" && error.status === 502);
+  } finally {
+    global.fetch = originalFetch;
+    global.supabaseConfiguration = originalConfig;
+    global.supabaseClient = originalClient;
+  }
+});
+
+test("traduz os diagnósticos específicos do provider sem expor detalhes do backend", async () => {
+  const originalFetch = global.fetch;
+  const originalConfig = global.supabaseConfiguration;
+  const originalClient = global.supabaseClient;
+  global.supabaseConfiguration = { url: "https://example.supabase.co", publishableKey: "publishable-key" };
+  global.supabaseClient = { auth: { getSession: async () => ({ data: { session: { access_token: "user-token" } }, error: null }) } };
+  global.fetch = async () => new Response(JSON.stringify({ error: { code: "AI_PROVIDER_SCHEMA_MISMATCH", providerMessage: "hidden" } }), { status: 502 });
+  try {
+    await assert.rejects(() => client.analyze({ signature: { value: "schema-signature" } }), (error) => error.code === "AI_PROVIDER_SCHEMA_MISMATCH" && error.message.includes("formato inesperado") && !error.message.includes("hidden"));
   } finally {
     global.fetch = originalFetch;
     global.supabaseConfiguration = originalConfig;
