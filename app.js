@@ -5758,6 +5758,15 @@ function aiCoachListMarkup(items = [], { limit = 6 } = {}) {
   return values.length ? `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
 }
 
+function aiCoachConfidenceLabel(confidence) {
+  const labels = {
+    high: "Confiança da análise: alta",
+    medium: "Confiança da análise: média",
+    low: "Confiança da análise: baixa",
+  };
+  return labels[String(confidence || "").toLowerCase()] || "";
+}
+
 function hasMeaningfulAICoachDelta(delta = null) {
   if (!delta) return false;
   const numericChanges = [delta.newSessions, delta.newQuestions, delta.newCorrect, delta.studyMinutes]
@@ -5780,24 +5789,31 @@ function aiCoachResponseMarkup(response = null) {
   const mode = response.mode;
   const historicalRecord = response.historicalRecord || null;
   const section = (title, items) => items?.length ? `<div class="ai-coach-result-group"><h5>${title}</h5>${aiCoachListMarkup(items)}</div>` : "";
-  let modeContent = "";
+  const confidence = aiCoachConfidenceLabel(review.periodDiagnosis?.confidence);
+  const historicalContext = historicalRecord
+    ? `<div class="ai-coach-history-context"><span class="section-kicker">Análise salva</span><p>${escapeHtml(`${aiCoachRecordDateTimeLabel(historicalRecord)} · ${aiCoachReviewModeLabel(mode)}`)}</p>${response.question ? `<p class="ai-coach-history-question"><strong>Pergunta:</strong> ${escapeHtml(response.question)}</p>` : ""}<button class="text-action" type="button" data-ai-coach-show-current>Voltar para análise atual</button></div>`
+    : "";
   if (mode === "question" && review.answerToQuestion) {
     const answer = review.answerToQuestion;
-    modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Resposta</span><p>${escapeHtml(answer.directAnswer || "")}</p>${section("Por que o Coach concluiu isso", answer.supportingFacts)}${section("Interpretação", answer.interpretation)}${section("O que fazer", answer.recommendation)}</div>`;
-  } else if (mode === "cycle-review" && review.cycleEvaluation) {
+    const directAnswer = answer.directAnswer || review.periodDiagnosis?.summary || "Aqui está a leitura mais útil para este momento.";
+    const recommendation = answer.recommendation?.length ? answer.recommendation : review.recommendation;
+    const foundations = answer.supportingFacts?.length || answer.interpretation?.length || review.facts?.length || review.interpretation?.length || review.bottlenecks?.length || review.uncertainties?.length || review.strategicNotes?.length
+      ? `<details class="ai-coach-foundations"><summary>Ver fundamentos da análise</summary><div>${section("Fatos considerados", answer.supportingFacts)}${section("Leitura do Coach", answer.interpretation)}${section("Outros fatos considerados", review.facts)}${section("Interpretação complementar", review.interpretation)}${section("Pontos de atenção", review.bottlenecks)}${section("Incertezas", review.uncertainties)}${section("Notas", review.strategicNotes)}</div></details>`
+      : "";
+    return `<div class="ai-coach-result ai-coach-question-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Resposta do Coach</span><h4>${escapeHtml(directAnswer)}</h4></div>${confidence ? `<span class="ai-coach-confidence">${escapeHtml(confidence)}</span>` : ""}</div>${section("O que eu faria agora", recommendation)}${section("O que eu evitaria agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
+  }
+  let modeContent = "";
+  if (mode === "cycle-review" && review.cycleEvaluation) {
     const evaluation = review.cycleEvaluation;
     modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Revisão do ciclo</span><p>${escapeHtml(evaluation.executionSummary || "")}</p>${section("Efetividade da estratégia", [evaluation.strategyEffectiveness])}${section("O que funcionou", evaluation.whatWorked)}${section("O que mudar", evaluation.whatDidNotWork)}${section("Manter", evaluation.interventionsToKeep)}${section("Ajustar", evaluation.interventionsToChange)}${section("Comparação", [evaluation.comparisonWithPreviousCycle])}</div>`;
   } else if (review.sinceLastReview) {
     const progress = review.sinceLastReview;
     modeContent = `<div class="ai-coach-answer"><span class="section-kicker">Desde a última análise</span><p>${escapeHtml(progress.summary || "")}</p>${section("Avanços", progress.advances)}${section("Quedas", progress.declines)}${section("Novos riscos", progress.newRisks)}${section("Riscos resolvidos", progress.resolvedRisks)}${section("Áreas importantes sem mudança", progress.unchangedImportantAreas)}</div>`;
   }
-  const historicalContext = historicalRecord
-    ? `<div class="ai-coach-history-context"><span class="section-kicker">Análise salva</span><p>${escapeHtml(`${aiCoachRecordDateTimeLabel(historicalRecord)} · ${aiCoachReviewModeLabel(mode)}`)}</p>${response.question ? `<p class="ai-coach-history-question"><strong>Pergunta:</strong> ${escapeHtml(response.question)}</p>` : ""}<button class="text-action" type="button" data-ai-coach-show-current>Voltar para análise atual</button></div>`
-    : "";
   const foundations = review.facts?.length || review.interpretation?.length || review.strategicNotes?.length || review.bottlenecks?.length || review.uncertainties?.length
     ? `<details class="ai-coach-foundations"><summary>Ver fundamentos da análise</summary><div>${section("Fatos considerados", review.facts)}${section("Interpretação", review.interpretation)}${section("Pontos de atenção", review.bottlenecks)}${section("Incertezas", review.uncertainties)}${section("Notas estratégicas", review.strategicNotes)}</div></details>`
     : "";
-  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${escapeHtml(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div><span class="ai-coach-confidence">${escapeHtml(review.periodDiagnosis?.confidence || "")}</span></div>${section("O que eu faria agora", review.recommendation)}${modeContent}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
+  return `<div class="ai-coach-result">${historicalContext}<div class="ai-coach-result-heading"><div><span class="section-kicker">Conclusão principal</span><h4>${escapeHtml(review.periodDiagnosis?.summary || "Leitura estratégica atualizada")}</h4></div>${confidence ? `<span class="ai-coach-confidence">${escapeHtml(confidence)}</span>` : ""}</div>${section("O que eu faria agora", review.recommendation)}${modeContent}${section("Prioridades", review.priorities)}${section("O que não priorizar agora", review.avoidForNow)}${foundations}${response.saveWarning ? `<p class="ai-coach-save-warning">${escapeHtml(response.saveWarning)}</p>` : ""}</div>`;
 }
 
 function aiCoachMarkup({ delta = null, deltaLoading = false } = {}) {
