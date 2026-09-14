@@ -14570,8 +14570,7 @@ function scheduleCloudCacheWrite(record, snapshot = record?.data) {
   }
 }
 
-function restoreCloudCacheState() {
-  const cache = readCloudCache();
+function restoreCloudCacheState(cache = readCloudCache()) {
   if (!cache) return false;
   const trace = beginStartupHydration(cache.id);
   startupPerfMark(trace, "snapshotLoadStart");
@@ -14770,12 +14769,28 @@ async function initializeCloudPlanSource() {
     state.plans = records.map(cloudPlanMeta);
     const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
+    const matchingCache = readCloudCache(active.id);
     const currentCacheIsFresh = state.dataSource !== "cloud-unavailable"
       && state.currentPlanId === active.id
       && Number(state.cloudPlanVersion) === Number(active.version);
     if (currentCacheIsFresh) {
       // A cópia local já passou por applyAppSnapshot. Reidratar exatamente os
       // mesmos dados novamente era um segundo bloqueio completo no F5.
+      state.activeStudyPlanId = active.id;
+      state.currentPlanId = active.id;
+      state.cloudPlanVersion = active.version;
+      state.cloudPlanUpdatedAt = active.updatedAt;
+      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, active.id);
+      localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, active.id);
+      renderPlanSelect();
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
+      return true;
+    }
+    if (matchingCache && Number(matchingCache.version) === Number(active.version)) {
+      // Só restaure a cópia depois de confirmar a versão. Uma cópia antiga ou
+      // interrompida não pode levar o usuário de volta ao setup antes do
+      // planejamento atual chegar da nuvem.
+      restoreCloudCacheState(matchingCache);
       state.activeStudyPlanId = active.id;
       state.currentPlanId = active.id;
       state.cloudPlanVersion = active.version;
@@ -18160,9 +18175,13 @@ async function startMeuCronogramaApp() {
   renderHistory();
   // Restaura cache online ou snapshot local antes da consulta remota. Assim,
   // o F5 não exibe o setup vazio enquanto a nuvem confirma a versão atual.
-  const restoredFromCloudCache = restoreAppState({ cacheOnly: true });
-  const restoredImmediately = restoredFromCloudCache || restoreAppState({ preserveDataSource: true, preferCloudCache: false });
-  if (!restoredImmediately) {
+  const cloudAvailableAtStartup = cloudIsAvailable();
+  // A versão da cópia local é confirmada em initializeCloudPlanSource(). Antes
+  // disso, manter o shell evita montar um setup antigo e logo em seguida trocar
+  // toda a interface pelo planejamento atual.
+  const restoredFromCloudCache = cloudAvailableAtStartup ? false : restoreAppState({ cacheOnly: true });
+  const restoredImmediately = restoredFromCloudCache || (!cloudAvailableAtStartup && restoreAppState({ preserveDataSource: true, preferCloudCache: false }));
+  if (!restoredImmediately && !cloudAvailableAtStartup) {
     renderRows();
     updateContestSummary();
     activateTab("continuar");

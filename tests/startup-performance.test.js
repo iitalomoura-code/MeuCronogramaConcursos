@@ -19,6 +19,7 @@ assert.ok(startupPerf.includes("calls") && startupPerf.includes("avgMs") && star
 const cloudInit = section("async function initializeCloudPlanSource", "async function initializeNewPlanCloudSource");
 assert.ok(cloudInit.includes("currentCacheIsFresh") && cloudInit.includes("return true;"), "Uma cópia de nuvem na mesma versão deve encerrar a confirmação sem nova reidratação.");
 assert.ok(cloudInit.indexOf("currentCacheIsFresh") < cloudInit.indexOf("await loadCloudPlanIntoState"), "O teste da cópia fresca deve acontecer antes da leitura completa da nuvem.");
+assert.ok(cloudInit.includes("const matchingCache = readCloudCache(active.id)") && cloudInit.includes("restoreCloudCacheState(matchingCache)"), "A cópia local só pode ser restaurada depois de sua versão ser confirmada pela lista online.");
 
 const applySnapshot = section("function applyAppSnapshot", "function updateSaveStatus");
 assert.ok(!applySnapshot.includes("refreshStudyAlerts();"), "Alertas derivados não podem bloquear a aplicação do snapshot inicial.");
@@ -35,6 +36,7 @@ assert.ok(tabScheduler.indexOf("firstInteractive") < tabScheduler.indexOf("secon
 const appStart = section("async function startMeuCronogramaApp", "window.startMeuCronogramaApp");
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
 assert.ok(appStart.indexOf("presentStartupHydrationShell(startupTrace)") < appStart.indexOf("restoreAppState({ cacheOnly: true })") && appStart.indexOf("await yieldForPaint({ frames: 1 })") < appStart.indexOf("restoreAppState({ cacheOnly: true })"), "A tela Continuar precisa ser exibida e pintada antes de restaurar o planejamento.");
+assert.ok(appStart.includes("const cloudAvailableAtStartup = cloudIsAvailable()") && appStart.includes("!cloudAvailableAtStartup && restoreAppState"), "Uma cópia local não confirmada não deve abrir o setup antes do planejamento online.");
 assert.ok(index.includes('app.js?v=20260914-startup-shell'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
 const advisorHistory = section("function scheduleAICoachHistoryForAdvisor", "function openStrategicAdvisorModal");
 assert.ok(advisorHistory.includes("loadAICoachHistory") && advisorHistory.includes("requestIdleCallback"), "O histórico do Coach deve carregar apenas de forma ociosa após abrir o Orientador.");
