@@ -23,13 +23,16 @@ assert.ok(!applySnapshot.includes("refreshStudyAlerts();"), "Alertas derivados n
 assert.ok(app.includes("function scheduleStartupBackgroundWork") && app.includes('"refresh study alerts"'), "Alertas devem ser recalculados apenas no período ocioso posterior à primeira tela.");
 
 const startupShell = section("function renderStartupHydrationShell", "function scheduleStartupBackgroundWork");
+const immediateStartupShell = section("function presentStartupHydrationShell", "function scheduleStartupBackgroundWork");
 const deferredHydration = section("async function completeStartupHydration", "function scheduleActiveTabRender");
 const tabScheduler = section("function scheduleActiveTabRender", "function activateTab");
 assert.ok(startupShell.includes("continue-startup-shell") && deferredHydration.includes("yieldForPaint({ frames: 2 })"), "A abertura deve pintar um shell de Continuar antes da montagem completa.");
+assert.ok(immediateStartupShell.includes('const tabName = "continuar"') && immediateStartupShell.includes("els.panels.forEach"), "O shell inicial deve substituir o painel de configuração antes da restauração pesada.");
 assert.ok(tabScheduler.indexOf("firstInteractive") < tabScheduler.indexOf("secondaryHydrationStart"), "A tela precisa registrar interatividade antes da hidratação secundária.");
 
 const appStart = section("async function startMeuCronogramaApp", "window.startMeuCronogramaApp");
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
+assert.ok(appStart.indexOf("presentStartupHydrationShell(startupTrace)") < appStart.indexOf("restoreAppState({ cacheOnly: true })") && appStart.indexOf("await yieldForPaint({ frames: 1 })") < appStart.indexOf("restoreAppState({ cacheOnly: true })"), "A tela Continuar precisa ser exibida e pintada antes de restaurar o planejamento.");
 const advisorHistory = section("function scheduleAICoachHistoryForAdvisor", "function openStrategicAdvisorModal");
 assert.ok(advisorHistory.includes("loadAICoachHistory") && advisorHistory.includes("requestIdleCallback"), "O histórico do Coach deve carregar apenas de forma ociosa após abrir o Orientador.");
 

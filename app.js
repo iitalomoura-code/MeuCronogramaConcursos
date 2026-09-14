@@ -2368,6 +2368,18 @@ function renderStartupHydrationShell(tabName, trace) {
   return true;
 }
 
+function presentStartupHydrationShell(trace) {
+  const tabName = "continuar";
+  els.tabs.forEach((button) => {
+    const isActive = button.dataset.tabTarget === tabName;
+    button.classList.toggle("active", isActive);
+    if (isActive) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
+  return renderStartupHydrationShell(tabName, trace);
+}
+
 function scheduleStartupBackgroundWork(trace) {
   if (!trace || trace.backgroundScheduled) return;
   trace.backgroundScheduled = true;
@@ -15091,7 +15103,6 @@ function applyAppSnapshot(saved = {}) {
     : null;
   state.programVersions = Array.isArray(saved.programVersions) ? saved.programVersions : [];
   state.currentProgramVersionId = saved.currentProgramVersionId || "";
-  updateContentFlowSteps();
 
   state.confirmed = Boolean(saved.confirmed);
   state.planningBase = saved.planningBase || null;
@@ -18118,12 +18129,12 @@ async function startMeuCronogramaApp() {
     return;
   }
   state.activeStudyPlanId = activeStudyPlanId;
-  beginStartupHydration(activeStudyPlanId);
-  renderDailyInputs();
+  const startupTrace = beginStartupHydration(activeStudyPlanId);
   applyThemePreference();
-  defaultReferenceWeek();
-  renderHistory();
   if (entryAction === "new") {
+    renderDailyInputs();
+    defaultReferenceWeek();
+    renderHistory();
     state.activeStudyPlanId = "";
     state.currentPlanId = "";
     applyAppSnapshot(blankAppSnapshot());
@@ -18135,6 +18146,18 @@ async function startMeuCronogramaApp() {
     newPlanCloudReadyPromise = initializeNewPlanCloudSource();
     return;
   }
+  // A restauração pode normalizar histórico, ciclo e centenas de temas. Mostre
+  // primeiro uma superfície útil, para que a configuração estática não fique
+  // visível enquanto esse trabalho síncrono é concluído.
+  if (presentStartupHydrationShell(startupTrace)) {
+    await yieldForPaint({ frames: 1 });
+    startupPerfMark(startupTrace, "firstShellPaint");
+    startupPerfMark(startupTrace, "firstInteractive");
+    startupPerfYielded(startupTrace);
+  }
+  renderDailyInputs();
+  defaultReferenceWeek();
+  renderHistory();
   // Restaura cache online ou snapshot local antes da consulta remota. Assim,
   // o F5 não exibe o setup vazio enquanto a nuvem confirma a versão atual.
   const restoredFromCloudCache = restoreAppState({ cacheOnly: true });
