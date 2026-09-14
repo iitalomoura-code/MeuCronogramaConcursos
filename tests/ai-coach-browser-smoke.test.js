@@ -18,7 +18,7 @@ const moduleFiles = [
   "js/ai-coach-memory.js",
 ];
 
-const appPosition = index.indexOf("app.js?v=20260913-ai-coach-voice");
+const appPosition = index.indexOf("app.js?v=20260914-startup-shell");
 let previousPosition = -1;
 for (const file of moduleFiles) {
   const position = index.indexOf(file);

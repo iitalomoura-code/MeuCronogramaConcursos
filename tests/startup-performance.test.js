@@ -4,7 +4,9 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
+const root = path.resolve(__dirname, "..");
+const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const section = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
 
 const startupPerf = section("function startupPerformanceEnabled", "function focusPerformanceEnabled");
@@ -33,6 +35,7 @@ assert.ok(tabScheduler.indexOf("firstInteractive") < tabScheduler.indexOf("secon
 const appStart = section("async function startMeuCronogramaApp", "window.startMeuCronogramaApp");
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
 assert.ok(appStart.indexOf("presentStartupHydrationShell(startupTrace)") < appStart.indexOf("restoreAppState({ cacheOnly: true })") && appStart.indexOf("await yieldForPaint({ frames: 1 })") < appStart.indexOf("restoreAppState({ cacheOnly: true })"), "A tela Continuar precisa ser exibida e pintada antes de restaurar o planejamento.");
+assert.ok(index.includes('app.js?v=20260914-startup-shell'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
 const advisorHistory = section("function scheduleAICoachHistoryForAdvisor", "function openStrategicAdvisorModal");
 assert.ok(advisorHistory.includes("loadAICoachHistory") && advisorHistory.includes("requestIdleCallback"), "O histórico do Coach deve carregar apenas de forma ociosa após abrir o Orientador.");
 
