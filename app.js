@@ -125,6 +125,39 @@ let isLoadingNotebook = false;
 let notebookEditing = false;
 let notebookReturnToFocus = null;
 
+// Recursos usados apenas em telas pontuais ficam fora do caminho inicial do
+// cronograma. Cada carregamento e reutilizado durante a sessao do navegador.
+const ON_DEMAND_VENDOR_ASSETS = Object.freeze({
+  lucide: { source: "./vendor/lucide.min.js", ready: () => Boolean(window.lucide?.createIcons) },
+  mammoth: { source: "./vendor/mammoth.browser.min.js", ready: () => Boolean(window.mammoth) },
+  quill: { source: "./vendor/quill.js", ready: () => typeof window.Quill === "function" },
+});
+const onDemandVendorLoads = new Map();
+
+function loadOnDemandVendor(name) {
+  const asset = ON_DEMAND_VENDOR_ASSETS[name];
+  if (!asset) return Promise.reject(new Error(`Recurso opcional desconhecido: ${name}`));
+  if (asset.ready()) return Promise.resolve();
+  if (onDemandVendorLoads.has(name)) return onDemandVendorLoads.get(name);
+  const load = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = asset.source;
+    script.async = true;
+    script.dataset.onDemandVendor = name;
+    script.onload = () => asset.ready() ? resolve() : reject(new Error(`Recurso opcional indisponivel: ${name}`));
+    script.onerror = () => reject(new Error(`Nao foi possivel carregar o recurso opcional: ${name}`));
+    document.head.append(script);
+  });
+  onDemandVendorLoads.set(name, load);
+  return load;
+}
+
+async function ensureMammothReader() {
+  if (!window.mammoth) await loadOnDemandVendor("mammoth");
+  if (!window.mammoth) throw new Error("Leitor DOCX indisponivel no navegador.");
+  return window.mammoth;
+}
+
 let isRestoring = false;
 let saveTimer = 0;
 let cloudSaveTimer = 0;
@@ -2392,6 +2425,9 @@ function scheduleStartupBackgroundWork(trace) {
     if (!refreshStudyAlerts()) return;
     scheduleAutoSave();
   }, 3000);
+  runWhenIdle("load interface icons", () => {
+    void loadOnDemandVendor("lucide").then(() => renderLucideIcons()).catch(() => {});
+  }, 1800);
   runWhenIdle("knowledge base bootstrap", () => scheduleKnowledgeBaseBootstrap(), 3500);
 }
 
@@ -3896,10 +3932,10 @@ function extractDocxTextFromHtml(html) {
 }
 
 async function readDocx(file) {
-  if (!window.mammoth) throw new Error("Leitor DOCX indispon\u00edvel no navegador.");
+  const mammoth = await ensureMammothReader();
   const arrayBuffer = await file.arrayBuffer();
-  if (typeof window.mammoth.convertToHtml === "function") {
-    const result = await window.mammoth.convertToHtml({ arrayBuffer });
+  if (typeof mammoth.convertToHtml === "function") {
+    const result = await mammoth.convertToHtml({ arrayBuffer });
     const extracted = window.DocumentStructureParser?.extractHtmlBlocks?.(result.value)
       || window.DocumentStructureParser?.extractHtmlNodes?.(result.value);
     const text = extracted?.text || extractDocxTextFromHtml(result.value);
@@ -3914,7 +3950,7 @@ async function readDocx(file) {
     };
     return text;
   }
-  const result = await window.mammoth.extractRawText({ arrayBuffer });
+  const result = await mammoth.extractRawText({ arrayBuffer });
   const text = formatImportedProgramText(result.value);
   lastDocumentExtractionMeta = { type: "docx", textSearchable: Boolean(text), warnings: result.messages || [], nodes: [], sourceText: text, structurePreserved: false };
   return text;
@@ -13799,6 +13835,7 @@ function renderErrors() {
   }).join("") : `<div class="empty-panel">Nenhum tema nesta mat\u00e9ria.</div>`;
 
   renderNotebookEditor();
+  if (getActiveTabName() === "erros") initQuillEditor();
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -17650,8 +17687,16 @@ els.notebookEditorHeader?.addEventListener("click", (event) => {
   if (event.target.closest("[data-return-focused-study]")) returnToFocusedStudyFromNotebook();
 });
 function initQuillEditor() {
-  if (quillEditor || typeof Quill === "undefined" || !els.notebookText) return;
-  quillEditor = new Quill("#notebookText", {
+  if (quillEditor || !els.notebookText) return;
+  if (typeof window.Quill === "undefined") {
+    void loadOnDemandVendor("quill").then(() => {
+      if (getActiveTabName() !== "erros") return;
+      initQuillEditor();
+      renderNotebookEditor();
+    }).catch(() => {});
+    return;
+  }
+  quillEditor = new window.Quill("#notebookText", {
     theme: "snow",
     placeholder: "Escreva ou cole aqui o resumo deste tema: conceitos-chave, macetes, artigos importantes, tudo que ajudar na revis\u00e3o.",
     modules: {
@@ -17676,7 +17721,6 @@ function initQuillEditor() {
     saveNotebookEditor();
   });
 }
-initQuillEditor();
 updateExamBoardControls();
 
 els.reviewFilter?.addEventListener("change", () => {

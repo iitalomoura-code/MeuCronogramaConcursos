@@ -37,7 +37,11 @@ const appStart = section("async function startMeuCronogramaApp", "window.startMe
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
 assert.ok(appStart.indexOf("presentStartupHydrationShell(startupTrace)") < appStart.indexOf("restoreAppState({ cacheOnly: true })") && appStart.indexOf("await yieldForPaint({ frames: 1 })") < appStart.indexOf("restoreAppState({ cacheOnly: true })"), "A tela Continuar precisa ser exibida e pintada antes de restaurar o planejamento.");
 assert.ok(appStart.includes("const cloudAvailableAtStartup = cloudIsAvailable()") && appStart.includes("!cloudAvailableAtStartup && restoreAppState"), "Uma cópia local não confirmada não deve abrir o setup antes do planejamento online.");
-assert.ok(index.includes('app.js?v=20260914-cloud-cache-ready'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
+assert.ok(index.includes('app.js?v=20260914-lazy-study-assets'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
+assert.ok(!index.includes('src="./vendor/lucide.min.js"') && !index.includes('src="./vendor/mammoth.browser.min.js"') && !index.includes('src="./vendor/quill.js"'), "Bibliotecas de ícones, DOCX e resumos não devem bloquear a entrada no cronograma.");
+assert.ok(app.includes("function loadOnDemandVendor") && app.includes('"load interface icons"'), "Recursos opcionais devem ser carregados fora da fase crítica da abertura.");
+assert.ok(app.includes("async function ensureMammothReader") && app.includes("const mammoth = await ensureMammothReader()"), "A importação DOCX deve carregar seu leitor apenas quando o usuário escolher um arquivo.");
+assert.ok(app.includes('if (getActiveTabName() === "erros") initQuillEditor()'), "O editor de resumos só deve ser preparado ao abrir seu próprio caderno.");
 const advisorHistory = section("function scheduleAICoachHistoryForAdvisor", "function openStrategicAdvisorModal");
 assert.ok(advisorHistory.includes("loadAICoachHistory") && advisorHistory.includes("requestIdleCallback"), "O histórico do Coach deve carregar apenas de forma ociosa após abrir o Orientador.");
 
