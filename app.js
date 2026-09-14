@@ -266,6 +266,144 @@ let knowledgeMappingReviewCacheKey = "";
 let knowledgeMappingReviewCacheValue = null;
 let knowledgeMappingView = "review";
 let knowledgeMappingManagerOpen = false;
+let startupHydrationState = {
+  planId: "",
+  pending: false,
+  secondaryScheduled: false,
+  trace: null,
+  runId: 0,
+};
+
+function startupPerformanceEnabled() {
+  if (window.__startupPerfEnabled === true) return true;
+  try {
+    return window.localStorage?.getItem("meuCronogramaStartupPerf") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function startupPerfNow() {
+  return focusPerformanceNow();
+}
+
+function startupPerfSummary(trace) {
+  if (!trace) return null;
+  const summarize = (items) => Object.fromEntries(Object.entries(items).map(([label, item]) => [label, {
+    calls: item.calls,
+    totalMs: Math.round(item.totalMs * 10) / 10,
+    avgMs: item.calls ? Math.round((item.totalMs / item.calls) * 10) / 10 : 0,
+    maxMs: Math.round(item.maxMs * 10) / 10,
+  }]));
+  return {
+    planId: trace.planId,
+    totalMs: Math.round((startupPerfNow() - trace.startedAt) * 10) / 10,
+    marks: [...trace.marks],
+    stages: summarize(trace.stages),
+    functions: summarize(trace.functions),
+    renders: { ...trace.renders },
+    maxNoYieldMs: Math.round(trace.maxNoYieldMs * 10) / 10,
+    longTasks: {
+      count: trace.longTasks.length,
+      maxMs: Math.max(0, ...trace.longTasks.map((entry) => entry.durationMs)),
+      entries: [...trace.longTasks],
+    },
+  };
+}
+
+function publishStartupPerf(trace) {
+  if (!trace?.enabled) return;
+  window.__startupPerf = startupPerfSummary(trace);
+}
+
+function startupPerfMark(trace, label) {
+  if (!trace) return;
+  const at = Math.round((startupPerfNow() - trace.startedAt) * 10) / 10;
+  trace.marks.push({ label, at });
+  try { performance.mark(label); } catch {}
+  publishStartupPerf(trace);
+}
+
+function startupPerfRecord(trace, collection, label, startedAt) {
+  if (!trace) return;
+  const elapsed = startupPerfNow() - startedAt;
+  const item = trace[collection][label] || { calls: 0, totalMs: 0, maxMs: 0 };
+  item.calls += 1;
+  item.totalMs += elapsed;
+  item.maxMs = Math.max(item.maxMs, elapsed);
+  trace[collection][label] = item;
+  trace.maxNoYieldMs = Math.max(trace.maxNoYieldMs, startupPerfNow() - trace.lastYieldAt);
+  publishStartupPerf(trace);
+}
+
+function startupPerfMeasure(trace, label, work, collection = "functions") {
+  const startedAt = startupPerfNow();
+  const finish = () => startupPerfRecord(trace, collection, label, startedAt);
+  const result = work();
+  if (result?.then) return result.finally(finish);
+  finish();
+  return result;
+}
+
+function startupPerfRender(trace, name) {
+  if (!trace) return;
+  trace.renders[name] = (trace.renders[name] || 0) + 1;
+  publishStartupPerf(trace);
+}
+
+function startupPerfYielded(trace) {
+  if (!trace) return;
+  trace.maxNoYieldMs = Math.max(trace.maxNoYieldMs, startupPerfNow() - trace.lastYieldAt);
+  trace.lastYieldAt = startupPerfNow();
+  publishStartupPerf(trace);
+}
+
+function beginStartupHydration(planId = state.currentPlanId || state.activeStudyPlanId || "") {
+  const normalizedPlanId = String(planId || "");
+  const current = startupHydrationState;
+  if (current.pending && current.planId === normalizedPlanId && current.trace) return current.trace;
+  current.trace?.longTaskObserver?.disconnect?.();
+  const trace = {
+    enabled: startupPerformanceEnabled(),
+    planId: normalizedPlanId,
+    startedAt: startupPerfNow(),
+    marks: [],
+    stages: {},
+    functions: {},
+    renders: {},
+    longTasks: [],
+    maxNoYieldMs: 0,
+    lastYieldAt: startupPerfNow(),
+    activeStage: "",
+  };
+  if (trace.enabled && typeof PerformanceObserver === "function") {
+    try {
+      trace.longTaskObserver = new PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => trace.longTasks.push({
+          durationMs: Math.round(entry.duration * 10) / 10,
+          stage: trace.activeStage || "unknown",
+        }));
+        publishStartupPerf(trace);
+      });
+      trace.longTaskObserver.observe({ entryTypes: ["longtask"] });
+    } catch {
+      // Long task não é suportada em todos os navegadores.
+    }
+  }
+  startupHydrationState = {
+    planId: normalizedPlanId,
+    pending: true,
+    secondaryScheduled: false,
+    trace,
+    runId: current.runId + 1,
+  };
+  startupPerfMark(trace, "planOpenStart");
+  return trace;
+}
+
+function currentStartupHydrationTrace() {
+  return startupHydrationState.pending ? startupHydrationState.trace : null;
+}
 
 function focusPerformanceEnabled() {
   const host = String(window.location?.hostname || "");
@@ -2218,17 +2356,95 @@ function syncGoalTimerIntervalForTab(tabName) {
   else stopGoalTimerInterval();
 }
 
+function renderStartupHydrationShell(tabName, trace) {
+  if (tabName !== "continuar" || !els.continuePanel) return false;
+  const plan = activePlan() || {};
+  const title = planVisibleName(plan) || els.contestName?.value || "Seu cronograma";
+  els.continuePanel.innerHTML = `
+    <section class="continue-empty-card continue-startup-shell" aria-live="polite">
+      <div><span class="section-kicker">${escapeHtml(title)}</span><h3>Seu cronograma está pronto.</h3><p>Organizando o próximo estudo e os acompanhamentos do seu ciclo.</p></div>
+    </section>`;
+  startupPerfRender(trace, "startup-shell");
+  return true;
+}
+
+function scheduleStartupBackgroundWork(trace) {
+  if (!trace || trace.backgroundScheduled) return;
+  trace.backgroundScheduled = true;
+  const runWhenIdle = (label, work, timeout) => {
+    const run = () => startupPerfMeasure(trace, label, work, "stages");
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout });
+    else window.setTimeout(run, Math.min(timeout, 800));
+  };
+  runWhenIdle("refresh study alerts", () => {
+    if (!refreshStudyAlerts()) return;
+    scheduleAutoSave();
+  }, 3000);
+  runWhenIdle("knowledge base bootstrap", () => scheduleKnowledgeBaseBootstrap(), 3500);
+}
+
+async function completeStartupHydration(tabName, trace, runId) {
+  await yieldForPaint({ frames: 2 });
+  startupPerfYielded(trace);
+  if (!startupHydrationState.pending || startupHydrationState.trace !== trace || startupHydrationState.runId !== runId) return;
+  const panel = document.querySelector(`#tab-${tabName}`);
+  if (!panel?.classList.contains("active")) return;
+  trace.activeStage = "render active tab";
+  startupPerfMark(trace, "secondaryHydrationStart");
+  startupPerfMeasure(trace, "render active tab", () => {
+    renderActiveTabContent(tabName);
+    animatePanelNumbers(tabName);
+  }, "stages");
+  startupPerfRender(trace, tabName);
+  startupPerfMark(trace, "firstUsefulPaint");
+  startupPerfMark(trace, "secondaryHydrationEnd");
+  trace.activeStage = "";
+  startupHydrationState.pending = false;
+  trace.longTaskObserver?.disconnect?.();
+  publishStartupPerf(trace);
+  scheduleStartupBackgroundWork(trace);
+}
+
 function scheduleActiveTabRender(tabName) {
   if (pendingTabRenderFrame) cancelAnimationFrame(pendingTabRenderFrame);
   if (pendingTabRenderTimer) clearTimeout(pendingTabRenderTimer);
   if (pendingSecondaryTabRender) clearTimeout(pendingSecondaryTabRender);
+  const startupTrace = currentStartupHydrationTrace();
+  const startupRunId = startupHydrationState.runId;
+  if (startupTrace && renderStartupHydrationShell(tabName, startupTrace)) {
+    pendingTabRenderFrame = requestAnimationFrame(() => {
+      pendingTabRenderFrame = 0;
+      const panel = document.querySelector(`#tab-${tabName}`);
+      if (!panel?.classList.contains("active")) return;
+      startupPerfMark(startupTrace, "firstShellPaint");
+      startupPerfMark(startupTrace, "firstInteractive");
+      void completeStartupHydration(tabName, startupTrace, startupRunId);
+    });
+    return;
+  }
   pendingTabRenderFrame = requestAnimationFrame(() => {
     pendingTabRenderFrame = 0;
     pendingTabRenderTimer = window.setTimeout(() => {
       pendingTabRenderTimer = 0;
       const panel = document.querySelector(`#tab-${tabName}`);
       if (!panel?.classList.contains("active")) return;
-      renderActiveTabContent(tabName);
+      if (startupTrace && startupHydrationState.pending && startupHydrationState.trace === startupTrace && startupHydrationState.runId === startupRunId) {
+        startupPerfMark(startupTrace, "firstShellPaint");
+        startupPerfMark(startupTrace, "firstInteractive");
+        startupPerfMark(startupTrace, "secondaryHydrationStart");
+        startupTrace.activeStage = "render active tab";
+        startupPerfMeasure(startupTrace, "render active tab", () => renderActiveTabContent(tabName), "stages");
+        startupPerfRender(startupTrace, tabName);
+        startupPerfMark(startupTrace, "firstUsefulPaint");
+        startupPerfMark(startupTrace, "secondaryHydrationEnd");
+        startupTrace.activeStage = "";
+        startupHydrationState.pending = false;
+        startupTrace.longTaskObserver?.disconnect?.();
+        publishStartupPerf(startupTrace);
+        scheduleStartupBackgroundWork(startupTrace);
+      } else {
+        renderActiveTabContent(tabName);
+      }
       animatePanelNumbers(tabName);
       if (tabName === "evolucao") {
         pendingSecondaryTabRender = window.setTimeout(() => {
@@ -6454,6 +6670,15 @@ async function renderStrategicAdvisorContent(renderVersion, performanceTrace) {
   scheduleStrategicAdvisorCoachContext(renderVersion, performanceTrace);
 }
 
+function scheduleAICoachHistoryForAdvisor() {
+  if (aiCoachUIState.loaded || aiCoachUIState.loading) return;
+  const loadHistory = () => {
+    if (!els.strategicAdvisorModal?.hidden) void loadAICoachHistory();
+  };
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(loadHistory, { timeout: 1200 });
+  else window.setTimeout(loadHistory, 240);
+}
+
 function openStrategicAdvisorModal(trigger = null) {
   if (!els.strategicAdvisorModal) return;
   const performanceTrace = createFocusPerformanceTrace("advisor-open");
@@ -6468,6 +6693,7 @@ function openStrategicAdvisorModal(trigger = null) {
     measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(els.strategicAdvisorModal));
     renderStrategicAdvisorPersistedCoachPreview(performanceTrace);
     els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
+    scheduleAICoachHistoryForAdvisor();
   }
   void measureFocusPerformance(performanceTrace, "paint before model", () => strategicPerfYield(performanceTrace, { frames: 2 })).then(() => {
     strategicPerfMark(performanceTrace, "advisorShellPainted");
@@ -10243,13 +10469,12 @@ function phaseVisualFor(phaseState = {}, config = {}) {
 }
 
 function renderContinuePanel() {
+  const startupTrace = currentStartupHydrationTrace();
   // A sessão em andamento deve continuar disponível após F5, mas o modo foco
   // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
   if (focusedStudyIndex < 0) removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
-  if (state.generatedBlocks.length) ensureWeeklyStudyCycle();
-  renderContinueCycleProgress();
-  renderContinueWeeklySummary(null, null);
+  if (state.generatedBlocks.length) startupPerfMeasure(startupTrace, "ensure weekly study cycle", () => ensureWeeklyStudyCycle());
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -10286,17 +10511,17 @@ function renderContinuePanel() {
     return;
   }
 
-  const weeklyGoal = ensureCurrentWeeklyGoal();
-  const weeklyClosure = pendingWeeklyClosure();
-  const weeklyProgress = weeklyGoal ? weeklyProgressFor(weeklyGoal) : weeklyProgressFromSummary(weeklyClosure);
-  renderContinueWeeklySummary(weeklyGoal || weeklyClosure, weeklyProgress);
-  const pending = rankedContinueEntries();
+  const weeklyGoal = startupPerfMeasure(startupTrace, "ensure current weekly goal", () => ensureCurrentWeeklyGoal());
+  const weeklyClosure = startupPerfMeasure(startupTrace, "read pending weekly closure", () => pendingWeeklyClosure());
+  const weeklyProgress = startupPerfMeasure(startupTrace, "calculate weekly progress", () => weeklyGoal ? weeklyProgressFor(weeklyGoal) : weeklyProgressFromSummary(weeklyClosure));
+  startupPerfMeasure(startupTrace, "render weekly summary", () => renderContinueWeeklySummary(weeklyGoal || weeklyClosure, weeklyProgress), "stages");
+  const pending = startupPerfMeasure(startupTrace, "rank Continue entries", () => rankedContinueEntries());
   const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
   const total = cycleBlocks.length;
   const completed = cycleBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
   const progress = total ? Math.round((completed / total) * 100) : 0;
-  renderContinueCycleProgress(completed, total, progress);
-  const recommendationResult = buildContinueRecommendation(pending, continueAlternativesOpen);
+  startupPerfMeasure(startupTrace, "render cycle progress", () => renderContinueCycleProgress(completed, total, progress), "stages");
+  const recommendationResult = startupPerfMeasure(startupTrace, "build Continue recommendation", () => buildContinueRecommendation(pending, continueAlternativesOpen));
   const manualEntry = manualOverrideEntry();
   const suggested = manualEntry || recommendationResult.recommendation;
   const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
@@ -14336,6 +14561,8 @@ function scheduleCloudCacheWrite(record, snapshot = record?.data) {
 function restoreCloudCacheState() {
   const cache = readCloudCache();
   if (!cache) return false;
+  const trace = beginStartupHydration(cache.id);
+  startupPerfMark(trace, "snapshotLoadStart");
   const meta = cloudPlanMeta({
     id: cache.id,
     name: cache.name,
@@ -14349,6 +14576,7 @@ function restoreCloudCacheState() {
   state.cloudPlanVersion = meta.version;
   state.cloudPlanUpdatedAt = meta.updatedAt;
   renderPlanSelect();
+  startupPerfMark(trace, "snapshotLoadEnd");
   applyAppSnapshot(cache.data);
   updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
   return true;
@@ -14484,7 +14712,10 @@ function uniqueCloudPlanName(name, existingPlans = state.plans) {
 
 async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurrentTab = false } = {}) {
   const currentTab = preserveCurrentTab ? getActiveTabName() : "";
-  const record = await window.loadCloudPlan(planId);
+  const trace = beginStartupHydration(planId);
+  startupPerfMark(trace, "snapshotLoadStart");
+  const record = await startupPerfMeasure(trace, "load cloud snapshot", () => window.loadCloudPlan(planId), "stages");
+  startupPerfMark(trace, "snapshotLoadEnd");
   const meta = cloudPlanMeta(record);
   state.currentPlanId = meta.id;
   state.activeStudyPlanId = meta.id;
@@ -14527,6 +14758,22 @@ async function initializeCloudPlanSource() {
     state.plans = records.map(cloudPlanMeta);
     const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
+    const currentCacheIsFresh = state.dataSource !== "cloud-unavailable"
+      && state.currentPlanId === active.id
+      && Number(state.cloudPlanVersion) === Number(active.version);
+    if (currentCacheIsFresh) {
+      // A cópia local já passou por applyAppSnapshot. Reidratar exatamente os
+      // mesmos dados novamente era um segundo bloqueio completo no F5.
+      state.activeStudyPlanId = active.id;
+      state.currentPlanId = active.id;
+      state.cloudPlanVersion = active.version;
+      state.cloudPlanUpdatedAt = active.updatedAt;
+      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, active.id);
+      localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, active.id);
+      renderPlanSelect();
+      updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
+      return true;
+    }
     await loadCloudPlanIntoState(active.id, { restoreTab: true });
     return true;
   } catch {
@@ -14819,8 +15066,10 @@ function resetPlanningAccess() {
 }
 
 function applyAppSnapshot(saved = {}) {
-  invalidateDerivedStudyCaches();
-  resetAICoachContext();
+  const startupTrace = currentStartupHydrationTrace() || beginStartupHydration(state.currentPlanId || state.activeStudyPlanId);
+  startupPerfMark(startupTrace, "applyAppSnapshotStart");
+  startupPerfMeasure(startupTrace, "invalidate derived caches", () => invalidateDerivedStudyCaches());
+  startupPerfMeasure(startupTrace, "reset Coach context", () => resetAICoachContext());
   isRestoring = true;
   let repairedCycleEntries = 0;
   let repairedReviewEntries = 0;
@@ -14830,8 +15079,9 @@ function applyAppSnapshot(saved = {}) {
   let repairedDuplicateCycleBlocks = 0;
   clearUnsavedChanges();
   try {
-  resetPlanningAccess();
-  applyFormState(saved.form);
+   const stateRehydrationStartedAt = startupPerfNow();
+   startupPerfMeasure(startupTrace, "reset planning access", () => resetPlanningAccess());
+   startupPerfMeasure(startupTrace, "apply form state", () => applyFormState(saved.form));
   els.programText.value = saved.programText || "";
   state.rows = Array.isArray(saved.rows) ? saved.rows.map(enrichThemeRow) : [];
   state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows.map(enrichThemeRow) : [];
@@ -14897,16 +15147,17 @@ function applyAppSnapshot(saved = {}) {
       updatedAt: record.updatedAt || record.createdAt || saved.savedAt || new Date().toISOString(),
     }))
     : [];
-  repairedHistoricalDuplicates = pruneHistoricalDuplicatesFromCurrentCycle();
-  state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
-  repairedDuplicateCycleBlocks = pruneDuplicatePendingCycleBlocks();
-  repairedPrematureReviewBlocks = prunePrematureReviewBlocksFromCurrentCycle();
-  repairedCycleEntries = pruneTrailingEmptyCycleClosures();
-  repairedReviewEntries = ensureReviewsArray();
-  repairedCycleLabels = repairStoredCycleLabels();
+   startupPerfRecord(startupTrace, "functions", "rehydrate plan state", stateRehydrationStartedAt);
+   repairedHistoricalDuplicates = startupPerfMeasure(startupTrace, "prune historical duplicates", () => pruneHistoricalDuplicatesFromCurrentCycle());
+   state.reviews = Array.isArray(saved.reviews) ? saved.reviews.map((record) => normalizeAdaptiveReviewRecord(record)) : [];
+   repairedDuplicateCycleBlocks = startupPerfMeasure(startupTrace, "prune duplicate cycle blocks", () => pruneDuplicatePendingCycleBlocks());
+   repairedPrematureReviewBlocks = startupPerfMeasure(startupTrace, "prune premature review blocks", () => prunePrematureReviewBlocksFromCurrentCycle());
+   repairedCycleEntries = startupPerfMeasure(startupTrace, "prune trailing cycle closures", () => pruneTrailingEmptyCycleClosures());
+   repairedReviewEntries = startupPerfMeasure(startupTrace, "normalize reviews", () => ensureReviewsArray());
+   repairedCycleLabels = startupPerfMeasure(startupTrace, "repair cycle labels", () => repairStoredCycleLabels());
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.interventionHistory = Array.isArray(saved.interventionHistory) ? saved.interventionHistory : [];
-  state.strategicAdvisorSnapshots = window.StrategicAdvisorHistory?.rehydrateSnapshots?.(saved.strategicAdvisorSnapshots) || (Array.isArray(saved.strategicAdvisorSnapshots) ? saved.strategicAdvisorSnapshots.slice(-20) : []);
+   state.strategicAdvisorSnapshots = startupPerfMeasure(startupTrace, "rehydrate strategic snapshots", () => window.StrategicAdvisorHistory?.rehydrateSnapshots?.(saved.strategicAdvisorSnapshots) || (Array.isArray(saved.strategicAdvisorSnapshots) ? saved.strategicAdvisorSnapshots.slice(-20) : []));
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   state.adaptiveSelection = saved.adaptiveSelection?.materia && saved.adaptiveSelection?.assunto ? saved.adaptiveSelection : null;
   continueManualOverride = state.adaptiveSelection;
@@ -14914,9 +15165,9 @@ function applyAppSnapshot(saved = {}) {
   state.locked = Boolean(saved.locked);
   state.setup = normalizedSetupState(saved.setup, { legacy: !Object.prototype.hasOwnProperty.call(saved, "setup") });
   showPendingOnly = Boolean(saved.showPendingOnly);
-  refreshStudyAlerts();
-
-  updateContestSummary();
+   // Alertas percorrem histórico, evolução e diagnóstico. A cópia salva ainda
+   // é exibida agora; o recálculo fica para a fase ociosa após a primeira tela.
+   startupPerfMeasure(startupTrace, "update contest summary", () => updateContestSummary());
   if (state.planningBase) {
     ["pesos", "disponibilidade"].forEach((tab) => setTabEnabled(tab, true));
   }
@@ -14928,14 +15179,15 @@ function applyAppSnapshot(saved = {}) {
     els.confirmationStatus.classList.add("confirmed");
   }
   updateContentFlowSteps();
-  applyLockState();
+   startupPerfMeasure(startupTrace, "apply lock state", () => applyLockState());
   const restoredTab = setupIsIncomplete()
     ? setupTabForStep()
     : [...els.tabs].some((button) => button.dataset.tabTarget === saved.activeTab) ? saved.activeTab : "continuar";
   // A aba ativa é renderizada de forma adiada por activateTab. Renderizar todos
   // os painéis aqui tornava o F5 desnecessariamente lento, sobretudo com Quill
   // e o Painel de Evolução já montados antes da primeira pintura.
-  activateTab(restoredTab);
+   activateTab(restoredTab);
+   startupPerfMark(startupTrace, "applyAppSnapshotEnd");
   } finally {
     isRestoring = false;
     if (repairedCycleEntries || repairedReviewEntries || repairedCycleLabels || repairedHistoricalDuplicates || repairedDuplicateCycleBlocks || repairedPrematureReviewBlocks) scheduleAutoSave();
@@ -15252,7 +15504,11 @@ function restoreAppState({ preserveDataSource = false, cacheOnly = false, prefer
   if (!raw) return false;
 
   try {
-    applyAppSnapshot(JSON.parse(raw));
+    const trace = beginStartupHydration(state.currentPlanId);
+    startupPerfMark(trace, "snapshotLoadStart");
+    const snapshot = startupPerfMeasure(trace, "parse local snapshot", () => JSON.parse(raw), "stages");
+    startupPerfMark(trace, "snapshotLoadEnd");
+    applyAppSnapshot(snapshot);
   } catch (error) {
     console.error("Falha ao restaurar planejamento:", error);
     showInitializationError(error);
@@ -15484,6 +15740,7 @@ async function switchPlan(planId) {
   saveAppStateNow("Salvo");
   state.currentPlanId = planId;
   state.activeStudyPlanId = planId;
+  beginStartupHydration(planId);
   localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, planId);
   localStorage.setItem(ACTIVE_PLAN_KEY, planId);
   renderPlanSelect();
@@ -17861,6 +18118,7 @@ async function startMeuCronogramaApp() {
     return;
   }
   state.activeStudyPlanId = activeStudyPlanId;
+  beginStartupHydration(activeStudyPlanId);
   renderDailyInputs();
   applyThemePreference();
   defaultReferenceWeek();
@@ -17907,8 +18165,9 @@ async function startMeuCronogramaApp() {
     }
     scheduleLocalMigrationPrompt();
     renderBackupReminder();
-    scheduleKnowledgeBaseBootstrap();
-    void loadAICoachHistory();
+    // Base Permanente e histórico do Coach não participam da primeira tela.
+    // O primeiro entra no período ocioso; o segundo somente quando o
+    // Orientador for realmente aberto.
     const requestedTab = sessionStorage.getItem(APP_ENTRY_TAB_KEY) || "";
     sessionStorage.removeItem(APP_ENTRY_TAB_KEY);
     sessionStorage.removeItem(APP_ENTRY_ACTION_KEY);

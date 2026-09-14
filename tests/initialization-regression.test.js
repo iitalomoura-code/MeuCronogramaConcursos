@@ -18,6 +18,7 @@ assert.ok(app.includes("const horas = entries.reduce"), "A métrica de tempo dev
 assert.ok(app.includes("const restoredImmediately = restoredFromCloudCache || restoreAppState({ preserveDataSource: true, preferCloudCache: false })"), "O F5 deve restaurar o snapshot local enquanto a nuvem é consultada.");
 assert.ok(app.includes("if (!loadedFromCloud && (state.dataSource === \"cloud-empty\" || !restoredImmediately))"), "A recuperação legada deve respeitar o estado restaurado imediatamente.");
 const appStart = app.slice(app.indexOf("async function startMeuCronogramaApp"));
-assert.ok(appStart.indexOf("scheduleKnowledgeBaseBootstrap();") > appStart.indexOf("initializeCloudPlanSource().then"), "O bootstrap pesado deve começar depois da recuperação da fonte principal.");
+assert.ok(!appStart.includes("loadAICoachHistory()"), "O histórico do Coach não deve carregar na abertura do cronograma.");
+assert.ok(app.includes("function scheduleStartupBackgroundWork") && app.includes('"knowledge base bootstrap"'), "A Base Permanente deve aguardar a fase ociosa posterior à primeira tela.");
 
 console.log("OK - inicialização restaura painéis independentemente e preserva a aba salva.");
