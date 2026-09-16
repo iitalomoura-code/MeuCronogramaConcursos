@@ -19,6 +19,9 @@ assert.ok(app.includes("void initializeCloudPlanSource().then"), "A sincronizaç
 assert.ok(app.includes("function shouldShowToast"), "Avisos de rotina devem ser filtrados antes de criar elementos na tela.");
 assert.ok(app.includes("function renderLucideIcons(root = document)"), "A renderização de ícones deve aceitar um painel específico.");
 assert.ok(app.includes("renderLucideIcons(els.continuePanel);"), "A tela Continuar não deve varrer o documento inteiro ao atualizar seus ícones.");
+assert.ok(app.includes("function scheduleCycleIconRender()"), "Os ícones do ciclo devem ser renderizados depois da primeira pintura da lista.");
+assert.ok(app.includes("window.requestIdleCallback(render, { timeout: 250 })"), "A conversão dos ícones do ciclo deve ceder prioridade à resposta do toque.");
+assert.ok(app.includes('data-timer-state="${running ? "Pausar tempo" : "Iniciar tempo"}"'), "Os cronômetros não devem recriar todos os ícones quando a aba do ciclo abre.");
 assert.ok(app.includes("buildContinueRecommendation(pending, continueAlternativesOpen)"), "A recomendação deve reutilizar a ordenação já calculada no mesmo render.");
 assert.ok(!app.includes("showToast((focusedStudySession?.context || context.context)"), "Iniciar estudo não deve abrir uma notificação de rotina.");
 assert.ok(!app.includes("if (focusedStudyIndex === index) renderContinuePanel();"), "Abrir o modo foco não deve reconstruir a tela Continuar por trás do painel.");

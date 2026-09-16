@@ -234,6 +234,9 @@ let pendingContinuePanelRefresh = 0;
 let pendingTabRenderFrame = 0;
 let pendingTabRenderTimer = 0;
 let pendingSecondaryTabRender = 0;
+let pendingCycleIconRender = 0;
+let pendingCycleIconRenderUsesIdleCallback = false;
+let cycleIconRenderRevision = 0;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
@@ -8186,6 +8189,34 @@ function renderLucideIcons(root = document) {
   window.lucide.createIcons({ icons: window.lucide.icons, root: root || document });
 }
 
+function scheduleCycleIconRender() {
+  cycleIconRenderRevision += 1;
+  const revision = cycleIconRenderRevision;
+  if (pendingCycleIconRender) {
+    if (pendingCycleIconRenderUsesIdleCallback && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(pendingCycleIconRender);
+    } else {
+      clearTimeout(pendingCycleIconRender);
+    }
+    pendingCycleIconRender = 0;
+  }
+
+  const render = () => {
+    pendingCycleIconRender = 0;
+    if (revision !== cycleIconRenderRevision || getActiveTabName() !== "cronograma") return;
+    renderLucideIcons(els.scheduleWrap);
+  };
+
+  // Deixa a lista aparecer antes de converter os muitos ícones dos cartões.
+  if (typeof window.requestIdleCallback === "function") {
+    pendingCycleIconRenderUsesIdleCallback = true;
+    pendingCycleIconRender = window.requestIdleCallback(render, { timeout: 250 });
+  } else {
+    pendingCycleIconRenderUsesIdleCallback = false;
+    pendingCycleIconRender = window.setTimeout(render, 0);
+  }
+}
+
 function renderAppViews(options = {}) {
   const settings = {
     cycle: true,
@@ -8310,7 +8341,7 @@ function renderGeneratedSchedule() {
     ${visiblePerformancePanel ? performancePanel(performanceDraft || state.generatedBlocks[performanceEditIndex], performanceEditIndex) : ""}
   `;
   organizeCycleBlocksByStatus();
-  renderLucideIcons(els.scheduleWrap);
+  scheduleCycleIconRender();
 }
 
 function organizeCycleBlocksByStatus() {
@@ -14071,7 +14102,7 @@ function goalTimerMarkup(block, index) {
       <span>Tempo</span>
       <strong data-timer-display="${index}">${formatTimerSeconds(remaining)}</strong>
       <div class="goal-timer-actions">
-        <button class="timer-button" type="button" data-timer-toggle="${index}" aria-label="${running ? "Pausar tempo" : "Iniciar tempo"}">
+        <button class="timer-button" type="button" data-timer-toggle="${index}" data-timer-state="${running ? "Pausar tempo" : "Iniciar tempo"}" aria-label="${running ? "Pausar tempo" : "Iniciar tempo"}">
           <i data-lucide="${running ? "pause" : "play"}"></i>
         </button>
         <button class="timer-button" type="button" data-timer-reset="${index}" aria-label="Reiniciar tempo">
