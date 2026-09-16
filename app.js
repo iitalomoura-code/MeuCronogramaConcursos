@@ -9962,7 +9962,7 @@ function focusedStudyMarkup(block, index, draft, suggestion, context = {}) {
   const reviewReason = review ? reviewReasonText(review) : "Retome os erros, releia o resumo e registre uma nova tentativa.";
   return `
     <div class="focused-study-modal" role="dialog" aria-modal="true" aria-labelledby="focusedStudyTitle">
-      <button class="focused-study-backdrop" type="button" data-close-focused aria-label="Continuar estudo depois"></button>
+      <div class="focused-study-backdrop" aria-hidden="true"></div>
       <button class="focused-study-mobile-close icon-button" type="button" data-close-focused aria-label="Fechar modo focado"><i data-lucide="x"></i></button>
       <section class="focused-study-panel">
         <header class="focused-study-header">
@@ -10353,7 +10353,7 @@ function activeFocusSessionMarkup() {
     <div class="continue-active-session-actions">
       <button class="primary-button compact-button" type="button" data-resume-focused><i data-lucide="play"></i><span>Retomar</span></button>
       ${running ? `<button class="ghost-button compact-button" type="button" data-pause-active-focused><i data-lucide="pause"></i><span>Pausar</span></button>` : ""}
-      <button class="text-action" type="button" data-finalize-active-focused>Finalizar</button>
+      <button class="text-action" type="button" data-finalize-active-focused>Retomar para finalizar</button>
       <button class="text-action danger-text" type="button" data-discard-active-focused>Descartar</button>
     </div>
   </section>`;
