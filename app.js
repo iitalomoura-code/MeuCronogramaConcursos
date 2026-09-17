@@ -237,6 +237,12 @@ let pendingSecondaryTabRender = 0;
 let pendingCycleIconRender = 0;
 let pendingCycleIconRenderUsesIdleCallback = false;
 let cycleIconRenderRevision = 0;
+let cycleRenderJobRevision = 0;
+let cycleRenderedRevision = "";
+let cycleViewModelCache = { revision: "", model: null };
+let cycleRenderTrace = null;
+let cycleRenderCount = 0;
+const CYCLE_RENDER_BATCH_BUDGET_MS = 8;
 let evolutionView = { period: "all", subject: "all", activity: "all", sort: "attention" };
 let evolutionContext = null;
 let predictiveEvolutionSnapshot = null;
@@ -2516,6 +2522,7 @@ function activateTab(tabName, activeButton = null) {
     else button.removeAttribute("aria-current");
   });
   els.panels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${tabName}`));
+  if (tabName === "cronograma") cycleTraceMark(cycleRenderTrace, "cyclePanelActivated");
   if (tabName === "revisar-planejamento") renderPlanningReview();
   updatePlanningContext(tabName);
   renderSetupProgress();
@@ -2539,6 +2546,10 @@ function switchTab(tabName, activeButton = null) {
   closePlanMenu();
   closePlanPopover();
   closeMobileDrawer({ restoreFocus: false });
+  if (tabName === "cronograma") {
+    createCycleRenderTrace();
+    cycleTraceMark(cycleRenderTrace, "cycleTabClick");
+  }
   if (focusedStudySession && tabName !== "continuar") void suspendFocusedStudy({ silent: true });
   // Trocar o painel imediatamente evita o custo de capturar a página inteira
   // que a View Transition API impõe em planejamentos maiores.
@@ -8189,7 +8200,65 @@ function renderLucideIcons(root = document) {
   window.lucide.createIcons({ icons: window.lucide.icons, root: root || document });
 }
 
+function cyclePerformanceEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).has("cyclePerf")
+      || window.localStorage.getItem("meu-cronograma-cycle-perf") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function createCycleRenderTrace() {
+  if (!cyclePerformanceEnabled() || !window.performance) return null;
+  cycleRenderTrace?.longTaskObserver?.disconnect?.();
+  const trace = {
+    startedAt: performance.now(), lastYieldAt: performance.now(), marks: {}, blockCount: 0,
+    markupMs: 0, domCommitMs: 0, organizationMs: 0, iconsMs: 0, htmlBytes: 0,
+    elementCount: 0, maxNoYieldMs: 0, longTasks: [], renderCount: cycleRenderCount,
+    reusedRender: false, cacheHit: false, completed: false,
+  };
+  if (typeof PerformanceObserver === "function") {
+    try {
+      trace.longTaskObserver = new PerformanceObserver((entries) => entries.getEntries().forEach((entry) => trace.longTasks.push({ duration: Math.round(entry.duration), start: Math.round(entry.startTime - trace.startedAt) })));
+      trace.longTaskObserver.observe({ entryTypes: ["longtask"] });
+    } catch {}
+  }
+  cycleRenderTrace = trace;
+  return trace;
+}
+
+function cycleTraceMark(trace, name) {
+  if (!trace || trace.completed) return;
+  trace.marks[name] = Math.round((performance.now() - trace.startedAt) * 10) / 10;
+  try { performance.mark(name); } catch {}
+}
+
+function cycleTraceYield(trace) {
+  if (!trace || trace.completed) return;
+  const now = performance.now();
+  trace.maxNoYieldMs = Math.max(trace.maxNoYieldMs, now - trace.lastYieldAt);
+  trace.lastYieldAt = now;
+}
+
+function publishCycleRenderPerf(trace) {
+  if (!trace || trace.completed) return;
+  trace.completed = true;
+  trace.longTaskObserver?.disconnect?.();
+  const marks = trace.marks;
+  window.__cycleRenderPerf = {
+    blockCount: trace.blockCount, totalMs: Math.round((performance.now() - trace.startedAt) * 10) / 10,
+    markupMs: Math.round(trace.markupMs * 10) / 10, domCommitMs: Math.round(trace.domCommitMs * 10) / 10,
+    organizationMs: Math.round(trace.organizationMs * 10) / 10, iconsMs: Math.round(trace.iconsMs * 10) / 10,
+    firstPaintMs: marks.cycleShellPainted ?? marks.cyclePanelActivated ?? 0, interactiveMs: marks.cycleInteractive ?? 0,
+    longTasks: trace.longTasks, maxNoYieldMs: Math.round(trace.maxNoYieldMs * 10) / 10,
+    htmlBytes: trace.htmlBytes, elementCount: trace.elementCount, renderCount: trace.renderCount,
+    reusedRender: trace.reusedRender, cacheHit: trace.cacheHit, marks,
+  };
+}
+
 function scheduleCycleIconRender() {
+  const trace = cycleRenderTrace;
   cycleIconRenderRevision += 1;
   const revision = cycleIconRenderRevision;
   if (pendingCycleIconRender) {
@@ -8204,7 +8273,12 @@ function scheduleCycleIconRender() {
   const render = () => {
     pendingCycleIconRender = 0;
     if (revision !== cycleIconRenderRevision || getActiveTabName() !== "cronograma") return;
+    cycleTraceMark(trace, "cycleIconsStart");
+    const startedAt = trace ? performance.now() : 0;
     renderLucideIcons(els.scheduleWrap);
+    if (trace) trace.iconsMs += performance.now() - startedAt;
+    cycleTraceMark(trace, "cycleIconsEnd");
+    publishCycleRenderPerf(trace);
   };
 
   // Deixa a lista aparecer antes de converter os muitos ícones dos cartões.
@@ -8219,7 +8293,7 @@ function scheduleCycleIconRender() {
 
 function renderAppViews(options = {}) {
   const settings = {
-    cycle: true,
+    cycle: getActiveTabName() === "cronograma",
     weekly: true,
     completed: true,
     reviews: true,
@@ -8238,7 +8312,171 @@ function renderAppViews(options = {}) {
   updateNavigationState();
 }
 
+function cycleVisualRevision() {
+  const config = scheduleConfig();
+  return [showPendingOnly, unitDetailIndex, performanceEditIndex, config.horasSemanaCronograma, JSON.stringify(state.generatedBlocks || []), performanceEditIndex >= 0 ? JSON.stringify(performanceDraft || null) : ""].join("|");
+}
+
+const CYCLE_VIEW_GROUPS = [
+  { key: "in-progress", label: "Em andamento" },
+  { key: "upcoming", label: "Próximos blocos" },
+  { key: "adaptive", label: "Ajustes adaptativos" },
+  { key: "completed", label: "Concluídos", collapsible: true },
+];
+
+function cycleGroupKey(status, display) {
+  if (status === "Em andamento") return "in-progress";
+  if (["Não iniciado", "Reprogramar"].includes(status) && !display.isAdaptive) return "upcoming";
+  if (display.isAdaptive && !["Em andamento", "Concluído"].includes(status)) return "adaptive";
+  return status === "Concluído" ? "completed" : "upcoming";
+}
+
+function buildCycleViewModel() {
+  const config = scheduleConfig();
+  const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
+  const completedCount = cycleBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
+  const visible = state.generatedBlocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block, index }) => !isStrategicPlanSessionBlock(block) && (!showPendingOnly || isPendingBlock(block) || index === performanceEditIndex))
+    .map(({ block, index }) => {
+      const status = normalizeStatus(block.status);
+      const display = activityVisual(block);
+      return { block, index, status, display, group: cycleGroupKey(status, display) };
+    });
+  const groups = new Map(CYCLE_VIEW_GROUPS.map((group) => [group.key, []]));
+  visible.forEach((entry) => groups.get(entry.group).push(entry));
+  return {
+    config, cycleBlocks, completedCount, totalBlocks: cycleBlocks.length,
+    remainingCount: Math.max(0, cycleBlocks.length - completedCount),
+    progress: cycleBlocks.length ? Math.round((completedCount / cycleBlocks.length) * 100) : 0,
+    visible, groups,
+  };
+}
+
+function cycleCardMarkup(entry) {
+  const { block, index, status, display } = entry;
+  const isCompleted = status === "Concluído";
+  const isPerformanceOpen = index === performanceEditIndex;
+  const isDetailOpen = index === unitDetailIndex;
+  return `<article class="cycle-goal-card cycle-activity-${display.kind} ${isCompleted ? "is-completed" : ""} ${status === "Em andamento" ? "is-in-progress" : ""} ${display.isAdaptive ? "has-adaptive-adjustment" : ""}" data-cycle-status="${escapeHtml(status)}" data-cycle-adaptive="${display.isAdaptive}" data-block-index="${index}">
+    <div class="goal-card-index"><span>Bloco</span><strong>${block.bloco}</strong></div>
+    <div class="goal-card-main">
+      <div class="goal-card-top"><div class="goal-card-title"><span>${escapeHtml(block.materia)}</span><strong>${escapeHtml(shortText(block.assunto, 110))}</strong></div>${goalTimerMarkup(block, index)}</div>
+      <div class="goal-card-meta"><span class="${display.className} cycle-type-badge" aria-label="Atividade sugerida: ${escapeHtml(display.label)}"><i data-lucide="${display.icon}"></i><span>${escapeHtml(display.label)}</span></span>${display.isAdaptive ? `<span class="cycle-adaptive-label"><i data-lucide="sparkles"></i>Ajuste adaptativo</span>` : ""}<label class="goal-duration-field"><input class="goal-duration-input" data-duration-index="${index}" value="${formatDuration(block.duracao)}" aria-label="Duração real do bloco ${block.bloco}" /></label>${display.questions ? `<span class="cycle-question-count">${display.questions} questões</span>` : ""}<div class="goal-status"><span>Status</span>${statusBadge(status)}</div><div class="goal-priority"><span>Prioridade</span>${priorityDots(displayPriorityForBlock(block))}</div></div>
+      <div class="goal-card-actions">${isCompleted ? "" : `<button class="primary-button compact-button cycle-start-button study-play-button" type="button" data-start-cycle="${index}"><i data-lucide="play"></i><span>${status === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button>`}<button class="text-action" type="button" data-toggle-unit="${index}">${isDetailOpen ? "Ocultar detalhes" : display.detailsLabel}</button>${isCompleted ? `<button class="ghost-button compact-button" type="button" data-reopen-block="${index}"><i data-lucide="rotate-ccw"></i><span>Reabrir meta</span></button>` : ""}<button class="ghost-button compact-button" type="button" data-toggle-performance="${index}"><i data-lucide="${isPerformanceOpen ? "chevron-right" : "activity"}"></i><span>Atualizar desempenho</span></button></div>
+      ${isDetailOpen ? unitDetailCard(block) : ""}
+    </div>
+  </article>`;
+}
+
+function cycleGroupShellMarkup(group, count) {
+  const heading = group.collapsible ? `<summary><span>${group.label}</span><small>${count}</small></summary>` : `<h3>${group.label}</h3>`;
+  const tag = group.collapsible ? "details" : "section";
+  return `<${tag} class="cycle-block-group cycle-block-group-${group.key}" data-cycle-group="${group.key}">${heading}<div class="cycle-block-group-cards" data-cycle-group-cards="${group.key}"></div></${tag}>`;
+}
+
+function renderCycleSummary(model) {
+  if (els.scheduleStatus) els.scheduleStatus.textContent = `${model.totalBlocks} blocos no ciclo`;
+  syncPendingFilterControl();
+  els.summaryGrid.classList.add("cycle-summary");
+  els.summaryGrid.innerHTML = `<section class="cycle-overview" aria-label="Resumo do ciclo atual"><div class="cycle-overview-progress"><div class="cycle-overview-copy"><span>Progresso do ciclo</span><strong>${formatHours(studiedCycleHours())} de ${formatHours(model.config.horasSemanaCronograma)} concluídas</strong></div><div class="cycle-overview-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${model.progress}" aria-label="${model.progress}% do ciclo concluído"><span style="width: ${model.progress}%"></span></div></div><div class="cycle-overview-stats"><div><strong>${model.completedCount}</strong><span>blocos concluídos</span></div><div><strong>${model.remainingCount}</strong><span>restantes</span></div><div><strong>${formatHours(model.config.horasSemanaCronograma)}</strong><span>carga total</span></div></div></section>`;
+  if (els.scheduleActions) els.scheduleActions.hidden = false;
+}
+
+async function appendCycleCardsInBatches(model, revision, jobRevision, trace) {
+  await yieldForPaint();
+  cycleTraceYield(trace);
+  if (jobRevision !== cycleRenderJobRevision || revision !== cycleVisualRevision() || getActiveTabName() !== "cronograma") return;
+  cycleTraceMark(trace, "cycleShellPainted");
+  cycleTraceMark(trace, "cycleMarkupStart");
+  cycleTraceMark(trace, "cycleDomCommitStart");
+  const queue = CYCLE_VIEW_GROUPS.flatMap((group) => model.groups.get(group.key).map((entry) => ({ group: group.key, entry })));
+  let cursor = 0;
+  while (cursor < queue.length) {
+    const batchStartedAt = performance.now();
+    const markupStartedAt = performance.now();
+    const chunks = new Map();
+    do {
+      const item = queue[cursor++];
+      const markup = cycleCardMarkup(item.entry);
+      chunks.set(item.group, `${chunks.get(item.group) || ""}${markup}`);
+      if (trace) trace.htmlBytes += markup.length;
+    } while (cursor < queue.length && performance.now() - batchStartedAt < CYCLE_RENDER_BATCH_BUDGET_MS);
+    if (trace) trace.markupMs += performance.now() - markupStartedAt;
+    const commitStartedAt = performance.now();
+    chunks.forEach((markup, group) => els.scheduleWrap.querySelector(`[data-cycle-group-cards="${group}"]`)?.insertAdjacentHTML("beforeend", markup));
+    if (trace) trace.domCommitMs += performance.now() - commitStartedAt;
+    cycleTraceYield(trace);
+    if (cursor < queue.length) {
+      await yieldForPaint();
+      cycleTraceYield(trace);
+      if (jobRevision !== cycleRenderJobRevision || revision !== cycleVisualRevision() || getActiveTabName() !== "cronograma") return;
+    }
+  }
+  cycleRenderedRevision = revision;
+  els.scheduleWrap._cycleRenderRevision = revision;
+  if (trace) trace.elementCount = els.scheduleWrap.querySelectorAll("*").length;
+  cycleTraceMark(trace, "cycleMarkupEnd");
+  cycleTraceMark(trace, "cycleDomCommitEnd");
+  cycleTraceMark(trace, "cycleOrganizationStart");
+  cycleTraceMark(trace, "cycleOrganizationEnd");
+  cycleTraceMark(trace, "cycleInteractive");
+  scheduleCycleIconRender();
+}
+
 function renderGeneratedSchedule() {
+  if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
+  const trace = cycleRenderTrace;
+  const revision = cycleVisualRevision();
+  cycleRenderJobRevision += 1;
+  const jobRevision = cycleRenderJobRevision;
+  if (cycleRenderedRevision === revision && els.scheduleWrap?._cycleRenderRevision === revision) {
+    if (trace) {
+      trace.blockCount = state.generatedBlocks.length;
+      trace.reusedRender = true;
+      trace.cacheHit = true;
+      trace.renderCount = cycleRenderCount;
+      ["cycleMarkupStart", "cycleMarkupEnd", "cycleDomCommitStart", "cycleDomCommitEnd", "cycleOrganizationStart", "cycleOrganizationEnd", "cycleIconsStart", "cycleIconsEnd", "cycleInteractive"].forEach((name) => cycleTraceMark(trace, name));
+      publishCycleRenderPerf(trace);
+    }
+    return;
+  }
+  if (!state.generatedBlocks.some((block) => !isStrategicPlanSessionBlock(block))) {
+    if (els.scheduleStatus) els.scheduleStatus.textContent = "Nenhum ciclo gerado";
+    syncPendingFilterControl();
+    els.summaryGrid.innerHTML = "";
+    if (els.scheduleActions) els.scheduleActions.hidden = true;
+    els.scheduleWrap.innerHTML = `<div class="empty-panel">Gere um ciclo para ver as próximas metas de estudo.</div>`;
+    cycleRenderedRevision = revision;
+    els.scheduleWrap._cycleRenderRevision = revision;
+    cycleTraceMark(trace, "cycleInteractive");
+    publishCycleRenderPerf(trace);
+    return;
+  }
+  const modelStartedAt = trace ? performance.now() : 0;
+  const model = cycleViewModelCache.revision === revision ? cycleViewModelCache.model : buildCycleViewModel();
+  if (cycleViewModelCache.revision !== revision) cycleViewModelCache = { revision, model };
+  if (trace) {
+    trace.organizationMs += performance.now() - modelStartedAt;
+    trace.blockCount = model.totalBlocks;
+    trace.renderCount = ++cycleRenderCount;
+  } else cycleRenderCount += 1;
+  updateDeadlineDisplays(model.config);
+  renderCycleSummary(model);
+  const shells = CYCLE_VIEW_GROUPS.filter((group) => model.groups.get(group.key).length).map((group) => cycleGroupShellMarkup(group, model.groups.get(group.key).length)).join("");
+  els.scheduleWrap.innerHTML = model.visible.length ? `<div class="cycle-goals-list cycle-rendering" data-cycle-rendering="true" style="--cycle-render-card-count:${Math.min(model.visible.length, 8)}">${shells}</div>` : `<div class="empty-panel">Nenhuma meta pendente no ciclo atual.</div>`;
+  if (!model.visible.length) {
+    cycleRenderedRevision = revision;
+    els.scheduleWrap._cycleRenderRevision = revision;
+    cycleTraceMark(trace, "cycleShellPainted");
+    cycleTraceMark(trace, "cycleInteractive");
+    scheduleCycleIconRender();
+    return;
+  }
+  void appendCycleCardsInBatches(model, revision, jobRevision, trace);
+}
+
+function renderGeneratedScheduleLegacy() {
   if (els.cycleClosurePanel) els.cycleClosurePanel.hidden = true;
 
   if (!state.generatedBlocks.some((block) => !isStrategicPlanSessionBlock(block))) {

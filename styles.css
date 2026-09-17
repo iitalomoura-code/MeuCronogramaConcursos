@@ -10079,6 +10079,20 @@ textarea:focus {
   gap: 16px;
 }
 
+.cycle-goals-list.cycle-rendering {
+  min-height: min(72vh, max(18rem, calc(var(--cycle-render-card-count) * 8rem)));
+}
+
+.cycle-block-group-cards {
+  display: grid;
+  gap: 16px;
+}
+
+.cycle-block-group-cards > .cycle-goal-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 136px;
+}
+
 .cycle-block-group {
   display: grid;
   gap: 0;
