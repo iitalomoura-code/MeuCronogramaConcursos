@@ -79,4 +79,11 @@ assert.ok(captureSource.includes('!["priority", "exam-structure"].includes(sourc
 const globalSaveSource = between("function shouldUseGlobalAutoSave", "function restoreAppState");
 assert.ok(globalSaveSource.includes("#examStructureGrid"), "o autosave global não pode duplicar a gravação da estrutura.");
 
+const toggleStart = app.indexOf("function setExamStructureOpen");
+const toggleEnd = app.indexOf("\n}\n\nfunction updateExamStructureComputedValues", toggleStart) + 2;
+const toggleSource = app.slice(toggleStart, toggleEnd);
+assert.ok(toggleSource.includes("examStructureContent.hidden"), "abrir e fechar a estrutura deve apenas alternar sua visibilidade no clique.");
+assert.ok(!toggleSource.includes("refreshExamImportance") && !toggleSource.includes("updateGenerationSummary") && !toggleSource.includes("scheduleAutoSave"), "o clique do acordeão não pode recalcular prioridades, ciclo ou salvar.");
+assert.ok(app.includes("function mountExamStructureAfterPaint") && app.includes("requestAnimationFrame"), "a tabela deve ser montada depois da primeira pintura do acordeão.");
+
 console.log("OK - 20 edições da estrutura em planejamento com 13 matérias/143 temas atualizam só o campo alvo e deixam uma única gravação após 2,5 s de inatividade.");

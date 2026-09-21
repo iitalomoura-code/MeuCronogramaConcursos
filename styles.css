@@ -4045,13 +4045,38 @@ textarea:focus {
   background: var(--card);
 }
 
-.exam-structure-details summary {
+.exam-structure-toggle {
+  appearance: none;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
   font-weight: 800;
   cursor: pointer;
+  text-align: left;
 }
 
-.exam-structure-details > p {
+.exam-structure-toggle::after {
+  content: "+";
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.exam-structure-toggle[aria-expanded="true"]::after {
+  content: "−";
+}
+
+.exam-structure-details #examStructureContent {
+  contain: layout paint;
+}
+
+.exam-structure-details #examStructureContent > p {
   max-width: 720px;
   margin: 8px 0 14px;
   color: var(--muted);

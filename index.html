@@ -454,12 +454,14 @@ MAT&Eacute;RIA: DIREITO ADMINISTRATIVO
           </div>
           <div class="priority-summary" id="prioritySummary"></div>
           <div class="planning-grid" id="planningGrid"></div>
-          <details class="exam-structure-details" id="examStructureDetails">
-            <summary>Estrutura da prova</summary>
-            <p>Informe questões e pesos quando houver essa referência. Para cada matéria com questões, a prioridade usa a estrutura objetiva; sem questões, usa a importância manual de 1 a 5.</p>
-            <label class="checkbox-label subtle-option"><input id="usePreviousExamStructure" type="checkbox" /><span>Usar último edital como referência</span></label>
-            <div id="examStructureGrid" class="exam-structure-grid"></div>
-          </details>
+          <section class="exam-structure-details" id="examStructureDetails">
+            <button id="examStructureToggle" class="exam-structure-toggle" type="button" aria-expanded="false" aria-controls="examStructureContent">Estrutura da prova</button>
+            <div id="examStructureContent" hidden>
+              <p>Informe questões e pesos quando houver essa referência. Para cada matéria com questões, a prioridade usa a estrutura objetiva; sem questões, usa a importância manual de 1 a 5.</p>
+              <label class="checkbox-label subtle-option"><input id="usePreviousExamStructure" type="checkbox" /><span>Usar último edital como referência</span></label>
+              <div id="examStructureGrid" class="exam-structure-grid" aria-live="polite"></div>
+            </div>
+          </section>
 
           <div class="cycle-adjust-card priority-cycle-card">
             <div class="cycle-adjust-header">

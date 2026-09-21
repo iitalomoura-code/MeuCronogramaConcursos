@@ -172,6 +172,8 @@ let priorityExplanationTimer = 0;
 let prioritySummaryTimer = 0;
 let examStructureRefreshTimer = 0;
 let examStructureRevision = 0;
+let examStructureOpen = false;
+let examStructureMountTimer = 0;
 let priorityLongTaskObserver = null;
 let cloudSaveSource = "";
 let pendingCloudCacheWrite = null;
@@ -906,6 +908,9 @@ const els = {
   saveContentButton: document.querySelector("#saveContentButton"),
   planningGrid: document.querySelector("#planningGrid"),
   prioritySummary: document.querySelector("#prioritySummary"),
+  examStructureDetails: document.querySelector("#examStructureDetails"),
+  examStructureToggle: document.querySelector("#examStructureToggle"),
+  examStructureContent: document.querySelector("#examStructureContent"),
   examStructureGrid: document.querySelector("#examStructureGrid"),
   usePreviousExamStructure: document.querySelector("#usePreviousExamStructure"),
   downloadButton: document.querySelector("#downloadButton"),
@@ -4961,6 +4966,12 @@ function renderExamStructure() {
   if (!els.examStructureGrid || !state.planningBase) return;
   const subjects = state.planningBase.materias || [];
   if (els.usePreviousExamStructure) els.usePreviousExamStructure.checked = state.planningBase.examStructureReference === "previous-edital";
+  // A tabela é montada somente quando o usuário abre o acordeão. Construí-la
+  // escondida fazia o navegador calcular seu layout no clique de abrir/fechar.
+  if (!examStructureOpen) {
+    els.examStructureGrid.replaceChildren();
+    return;
+  }
   els.examStructureGrid.innerHTML = `
     <div class="exam-structure-head"><span>Matéria</span><span>Questões</span><span>Peso</span><span>Participação</span><span>Importância</span><span>Fonte</span></div>
     ${subjects.map((subject, index) => {
@@ -4976,6 +4987,33 @@ function renderExamStructure() {
       </div>`;
     }).join("")}
   `;
+}
+
+function mountExamStructureAfterPaint() {
+  clearTimeout(examStructureMountTimer);
+  if (!examStructureOpen || els.examStructureGrid?.querySelector("[data-exam-structure]")) return;
+  // O painel já ficou visível antes da montagem da tabela. Assim a ação de
+  // abrir responde no primeiro frame, mesmo em planejamentos grandes.
+  els.examStructureGrid.innerHTML = '<p class="exam-structure-loading">Preparando campos…</p>';
+  requestAnimationFrame(() => {
+    examStructureMountTimer = window.setTimeout(() => {
+      if (!examStructureOpen) return;
+      renderExamStructure();
+    }, 0);
+  });
+}
+
+function setExamStructureOpen(open) {
+  const nextOpen = Boolean(open);
+  if (examStructureOpen === nextOpen) return;
+  examStructureOpen = nextOpen;
+  if (els.examStructureToggle) els.examStructureToggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+  if (els.examStructureContent) els.examStructureContent.hidden = !nextOpen;
+  if (!nextOpen) {
+    clearTimeout(examStructureMountTimer);
+    return;
+  }
+  mountExamStructureAfterPaint();
 }
 
 function examImportanceSourceLabel(importance = {}) {
@@ -17644,6 +17682,9 @@ els.planningGrid.addEventListener("input", (event) => {
     syncPlanningSliders({ index: Number(event.target.dataset.plan) });
     updateGenerationSummary();
   }
+});
+els.examStructureToggle?.addEventListener("click", () => {
+  setExamStructureOpen(!examStructureOpen);
 });
 els.examStructureGrid?.addEventListener("input", (event) => {
   const input = event.target.closest("[data-exam-structure]");
