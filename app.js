@@ -4,6 +4,8 @@ const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
 const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
 const KNOWLEDGE_BASE_CACHE_PREFIX = "meuCronogramaBaseConhecimento";
 const CLOUD_SAVE_DELAY = 900;
+const PRIORITY_CLOUD_SAVE_DELAY = 2500;
+const PRIORITY_DERIVED_DELAY = 3200;
 const FOCUS_SESSION_SAVE_DELAY = 700;
 const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
 const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
@@ -157,6 +159,8 @@ let saveTimer = 0;
 let cloudSaveTimer = 0;
 let cloudSavePromise = null;
 let cloudSaveQueued = false;
+let cloudSaveQueuedSource = "";
+let cloudSaveInFlightSource = "";
 let priorityChangeRevision = 0;
 let priorityConfirmedRevision = 0;
 let priorityDerivedRevision = 0;
@@ -481,6 +485,8 @@ function priorityPerformanceSnapshot() {
       fullPanelReplacements: 0,
       priorityCacheInvalidations: 0,
       staleDerivedModels: 0,
+      priorityCaptureSkippedControls: 0,
+      prioritySaveDelayMs: PRIORITY_CLOUD_SAVE_DELAY,
     };
   }
   return window.__priorityPerformance;
@@ -5146,12 +5152,12 @@ function schedulePriorityExplanationRefresh(index, revision) {
     if (!subject || !list) return;
     const explanation = explainPriority(subject);
     list.innerHTML = priorityExplanationMarkup(explanation);
-  }, 800), 260);
+  }, 1000), PRIORITY_DERIVED_DELAY);
 }
 
 function schedulePrioritySummaryRefresh() {
   clearTimeout(prioritySummaryTimer);
-  prioritySummaryTimer = setTimeout(schedulePriorityIdleWork(() => renderPrioritySummary(state.planningBase?.materias || []), 800), 260);
+  prioritySummaryTimer = setTimeout(schedulePriorityIdleWork(() => renderPrioritySummary(state.planningBase?.materias || []), 1000), PRIORITY_DERIVED_DELAY);
 }
 
 function applyPriorityScaleChange(index, field, value) {
@@ -5208,20 +5214,26 @@ function updateSliderOutput(input) {
   input.closest(".slider-field").querySelector("output").value = input.value;
 }
 
-function syncPlanningSliders() {
+function syncPlanningSliders({ index: targetIndex = null } = {}) {
   if (!state.planningBase) return;
-  document.querySelectorAll("[data-plan]").forEach((input) => {
-    const index = Number(input.dataset.plan);
-    state.planningBase.materias[index][input.dataset.field] = Number(input.value);
-  });
-  state.planningBase.materias.forEach((subject, index) => {
-    subject.prioridade = priorityScore(subject);
-    const el = document.querySelector(`[data-priority="${index}"]`);
-    if (el) {
-      const priority = priorityInfo(subject.prioridade);
-      el.innerHTML = `${priority.label} &middot; ${priority.percent}%`;
-      el.className = `priority-badge ${priority.className}`;
-    }
+  return priorityPerformanceMeasure("syncPlanningSliders", () => {
+    const subjects = state.planningBase.materias || [];
+    const indexes = Number.isInteger(targetIndex) && targetIndex >= 0 && targetIndex < subjects.length
+      ? [targetIndex]
+      : subjects.map((_, index) => index);
+    indexes.forEach((index) => {
+      const subject = subjects[index];
+      document.querySelectorAll(`[data-plan="${index}"]`).forEach((input) => {
+        subject[input.dataset.field] = Number(input.value);
+      });
+      subject.prioridade = priorityScore(subject);
+      const el = document.querySelector(`[data-priority="${index}"]`);
+      if (el) {
+        const priority = priorityInfo(subject.prioridade);
+        el.textContent = `${priority.label} · ${priority.percent}%`;
+        el.className = `priority-badge ${priority.className}`;
+      }
+    });
   });
 }
 
@@ -15392,12 +15404,16 @@ function applyFormState(data = {}) {
   updateExamPhaseStatus();
 }
 
-function captureAppState() {
+function captureAppState({ source = "" } = {}) {
   const activeTab = getActiveTabName();
   // Essas leituras percorrem centenas de campos. Fora das respectivas telas,
   // o estado já foi atualizado pelos listeners e não precisa ser relido.
   if (activeTab === "conteudo") syncRowsFromTable();
-  if (activeTab === "pesos" || planningSettingsContextTab === "pesos") syncPlanningSliders();
+  if ((activeTab === "pesos" || planningSettingsContextTab === "pesos") && source !== "priority") syncPlanningSliders();
+  if (source === "priority") {
+    const metrics = priorityPerformanceSnapshot();
+    if (metrics) metrics.priorityCaptureSkippedControls += 1;
+  }
   if (!focusedStudySession?.standaloneReview || focusedStudySession?.persistStandalone) syncFocusedSessionToState();
   return {
     version: 1,
@@ -15684,14 +15700,15 @@ async function handleCloudConflict(snapshot) {
   }
 }
 
-async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTrace = null) {
+async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTrace = null, { source = "" } = {}) {
   if (!cloudIsPrimary()) return false;
   if (cloudSavePromise) {
     cloudSaveQueued = true;
     return cloudSavePromise;
   }
   clearTimeout(cloudSaveTimer);
-  const data = snapshot || priorityPerformanceMeasure("captureAppState", () => captureAppState());
+  cloudSaveInFlightSource = source;
+  const data = snapshot || priorityPerformanceMeasure("captureAppState", () => captureAppState({ source }));
   const plan = activePlan();
   if (!plan) return false;
   const priorityRevisionAtRequest = priorityChangeRevision;
@@ -15744,9 +15761,15 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
       return false;
     } finally {
       cloudSavePromise = null;
+      cloudSaveInFlightSource = "";
       if (cloudSaveQueued) {
+        const queuedSource = cloudSaveQueuedSource;
         cloudSaveQueued = false;
-        scheduleCloudSave("Salvo");
+        cloudSaveQueuedSource = "";
+        // Uma alteração que chegou durante o UPDATE não cria snapshots
+        // intermediários: aguarda a próxima janela de inatividade e envia
+        // somente o estado mais recente.
+        scheduleCloudSave("Salvo", { source: queuedSource });
       }
     }
   })();
@@ -15760,6 +15783,7 @@ function scheduleCloudSave(label = "Salvo", { source = "" } = {}) {
   clearTimeout(cloudSaveTimer);
   if (cloudSavePromise) {
     cloudSaveQueued = true;
+    if (source) cloudSaveQueuedSource = source;
     return;
   }
   updateSaveStatus({ state: "pending", destination: "cloud" });
@@ -15767,7 +15791,7 @@ function scheduleCloudSave(label = "Salvo", { source = "" } = {}) {
     const sourceAtSave = cloudSaveSource;
     cloudSaveSource = "";
     void saveAppStateNow(label, { source: sourceAtSave });
-  }, CLOUD_SAVE_DELAY);
+  }, source === "priority" || cloudSaveSource === "priority" ? PRIORITY_CLOUD_SAVE_DELAY : CLOUD_SAVE_DELAY);
 }
 
 async function flushCloudSave(label = "Salvo") {
@@ -15778,7 +15802,7 @@ async function flushCloudSave(label = "Salvo") {
     const previousResult = await cloudSavePromise;
     if (!previousResult) return false;
   }
-  return saveCloudPlanNow(label);
+  return saveCloudPlanNow(label, null, null, { source: cloudSaveSource || cloudSaveQueuedSource || cloudSaveInFlightSource });
 }
 
 function yieldForInteraction() {
@@ -15820,12 +15844,12 @@ async function saveAppStateNow(label = "Salvo", { changes = true, force = false,
     return true;
   }
   await yieldForInteraction();
-  const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => priorityPerformanceMeasure("captureAppState", () => captureAppState()));
+  const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => priorityPerformanceMeasure("captureAppState", () => captureAppState({ source })));
   if (state.dataSource === "cloud-unavailable") {
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;
   }
-  if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot, performanceTrace);
+  if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot, performanceTrace, { source });
   updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível confirmar o salvamento no Supabase." });
   return false;
 }
@@ -17545,7 +17569,7 @@ els.saveContentButton?.addEventListener("click", () => saveAppStateNow("Conte\u0
 els.planningGrid.addEventListener("input", (event) => {
   if (event.target.matches(".subject-slider")) {
     updateSliderOutput(event.target);
-    syncPlanningSliders();
+    syncPlanningSliders({ index: Number(event.target.dataset.plan) });
     updateGenerationSummary();
   }
 });

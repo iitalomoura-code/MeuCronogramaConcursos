@@ -33,10 +33,10 @@ const runtime = {
 vm.createContext(runtime);
 vm.runInContext(`${applySource}; this.apply = applyPriorityScaleChange;`, runtime);
 
-for (const value of [1, 2, 3, 4, 5, 4, 3, 2, 4, 5]) runtime.apply(0, "peso", value);
+for (const value of [1, 2, 3, 4, 5, 4, 3, 2, 4, 5, 4, 3, 2, 1, 2, 3, 4, 5, 4, 5]) runtime.apply(0, "peso", value);
 assert.equal(runtime.state.planningBase.materias[0].peso, 5, "dez cliques preservam o último valor imediatamente.");
-assert.equal(priorityRowUpdates, 10, "cada clique atualiza somente a linha afetada.");
-assert.equal(scheduledAutoSaves.length, 10, "cada alteração agenda persistência sem aguardar a rede.");
+assert.equal(priorityRowUpdates, 20, "cada clique atualiza somente a linha afetada.");
+assert.equal(scheduledAutoSaves.length, 20, "cada alteração agenda persistência sem aguardar a rede.");
 assert.ok(scheduledAutoSaves.every((entry) => entry.source === "priority"), "a fila identifica alterações de prioridade.");
 assert.ok(!applySource.includes("renderPlanningBase()"), "o clique não pode reconstruir a grade inteira.");
 assert.ok(!applySource.includes("invalidateDerivedStudyCaches"), "a prioridade não pode invalidar todos os caches no clique.");
@@ -59,16 +59,22 @@ const largeRuntime = {
 };
 vm.createContext(largeRuntime);
 vm.runInContext(`${applySource}; this.apply = applyPriorityScaleChange;`, largeRuntime);
-for (const value of [1, 2, 3, 4, 5, 4, 3, 2, 4, 5]) largeRuntime.apply(12, "dominio", value);
+for (const value of [1, 2, 3, 4, 5, 4, 3, 2, 4, 5, 4, 3, 2, 1, 2, 3, 4, 5, 4, 5]) largeRuntime.apply(12, "dominio", value);
 assert.equal(largeRuntime.state.planningBase.materias[12].dominio, 5, "a sequência rápida no planejamento com 13 matérias e 143 temas preserva o último clique.");
 assert.ok(!applySource.includes("explainPriority("), "a explicação adaptativa não pode executar dentro do clique crítico.");
 assert.ok(!applySource.includes("adaptivePriorityAdjustment("), "o clique crítico não pode executar diagnóstico adaptativo.");
+
+const clickBenchmarkStartedAt = performance.now();
+for (let click = 0; click < 20; click += 1) largeRuntime.apply(12, "peso", (click % 5) + 1);
+const clickBenchmarkMs = performance.now() - clickBenchmarkStartedAt;
+assert.ok(clickBenchmarkMs < 100, `vinte alterações da matéria isolada devem concluir abaixo de 100 ms no teste de regressão; obtido: ${clickBenchmarkMs.toFixed(2)} ms.`);
 
 const schedulerSource = between("function scheduleCloudSave", "async function flushCloudSave");
 const scheduled = [];
 const saveCalls = [];
 const schedulerRuntime = {
   CLOUD_SAVE_DELAY: 900,
+  PRIORITY_CLOUD_SAVE_DELAY: 2500,
   cloudSaveTimer: 0,
   cloudSavePromise: null,
   cloudSaveQueued: false,
@@ -83,10 +89,10 @@ const schedulerRuntime = {
 };
 vm.createContext(schedulerRuntime);
 vm.runInContext(`${schedulerSource}; this.schedule = scheduleCloudSave;`, schedulerRuntime);
-for (let index = 0; index < 10; index += 1) schedulerRuntime.schedule("Salvo", { source: "priority" });
+for (let index = 0; index < 20; index += 1) schedulerRuntime.schedule("Salvo", { source: "priority" });
 const pending = scheduled.filter((timer) => !timer.cleared);
-assert.equal(pending.length, 1, "dez cliques rápidos criam uma única gravação remota pendente.");
-assert.equal(pending[0].delay, 900, "a prioridade usa debounce curto.");
+assert.equal(pending.length, 1, "vinte cliques rápidos criam uma única gravação remota pendente.");
+assert.equal(pending[0].delay, 2500, "a prioridade aguarda uma janela de inatividade antes de salvar.");
 pending[0].callback();
 assert.equal(saveCalls.length, 1, "somente uma gravação é disparada após a sequência.");
 
@@ -101,8 +107,15 @@ assert.ok(priorityRowSource.includes("data-priority-panel-badge") && priorityRow
 assert.ok(app.includes("requestIdleCallback") && app.includes("schedulePriorityExplanationRefresh"), "a explicação detalhada é reagendada para o período ocioso.");
 assert.ok(app.includes("priorityDerivedCacheRevision") && app.includes("invalidatePriorityDerivedCaches"), "modelos dependentes de prioridade ficam obsoletos sem limpar caches de histórico, revisão ou erros.");
 
+const captureSource = between("function captureAppState", "function resetPlanningAccess");
+const sliderSource = between("function syncPlanningSliders", "function priorityScore");
+assert.ok(captureSource.includes('source !== "priority"') && captureSource.includes("priorityCaptureSkippedControls"), "o snapshot de prioridade não relê os controles da aba de pesos.");
+assert.ok(sliderSource.includes("targetIndex") && !sliderSource.includes("materias.forEach"), "a sincronização de sliders aceita atualização incremental sem recalcular todas as matérias.");
+assert.ok(app.includes("PRIORITY_CLOUD_SAVE_DELAY = 2500"), "prioridade deve esperar a sequência de cliques terminar antes de preparar o snapshot.");
+assert.ok(app.includes("PRIORITY_DERIVED_DELAY = 3200"), "resumo e explicação não podem disputar o thread principal logo após o último clique.");
+
 assert.ok(app.includes("priorityRevisionAtRequest") && app.includes("priorityConfirmedRevision"), "a confirmação acompanha a revisão enviada e não descarta alterações mais novas.");
 assert.ok(app.includes("supabaseRequests") && app.includes("lastPayloadBytes"), "métricas locais registram chamadas, duração e tamanho do payload sem conteúdo sensível.");
 assert.ok(app.includes("window.lucide.createIcons(els.planningGrid)"), "a atualização completa da grade limita os ícones ao próprio painel.");
 
-console.log("OK - prioridades atualizam de forma otimista, agrupam dez cliques em uma gravação e preservam revisões novas.");
+console.log(`OK - 20 cliques em planejamento com 13 matérias/143 temas permaneceram abaixo de 100 ms (${clickBenchmarkMs.toFixed(2)} ms), geraram uma única gravação pendente e preservaram a revisão mais nova.`);
