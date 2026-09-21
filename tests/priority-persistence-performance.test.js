@@ -114,6 +114,26 @@ assert.ok(sliderSource.includes("targetIndex") && !sliderSource.includes("materi
 assert.ok(app.includes("PRIORITY_CLOUD_SAVE_DELAY = 2500"), "prioridade deve esperar a sequência de cliques terminar antes de preparar o snapshot.");
 assert.ok(app.includes("PRIORITY_DERIVED_DELAY = 3200"), "resumo e explicação não podem disputar o thread principal logo após o último clique.");
 
+let scoreCalls = 0;
+const sliderRuntime = {
+  state: { planningBase: { materias: largeSubjects.map((subject) => ({ ...subject })) } },
+  document: {
+    querySelectorAll: (selector) => {
+      const match = selector.match(/data-plan="(\d+)"/);
+      if (!match) return [];
+      return [{ dataset: { field: "peso" }, value: String(Number(match[1]) % 5 + 1) }];
+    },
+    querySelector: () => null,
+  },
+  priorityPerformanceMeasure: (_label, work) => work(),
+  priorityScore: () => { scoreCalls += 1; return .6; },
+  priorityInfo: () => ({ label: "Média", className: "medium", percent: 60 }),
+};
+vm.createContext(sliderRuntime);
+vm.runInContext(`${sliderSource}; this.sync = syncPlanningSliders;`, sliderRuntime);
+sliderRuntime.sync({ index: 12 });
+assert.equal(scoreCalls, 1, "a sincronização incremental recalcula somente a matéria alterada; o caminho anterior recalculava as 13 matérias.");
+
 assert.ok(app.includes("priorityRevisionAtRequest") && app.includes("priorityConfirmedRevision"), "a confirmação acompanha a revisão enviada e não descarta alterações mais novas.");
 assert.ok(app.includes("supabaseRequests") && app.includes("lastPayloadBytes"), "métricas locais registram chamadas, duração e tamanho do payload sem conteúdo sensível.");
 assert.ok(app.includes("window.lucide.createIcons(els.planningGrid)"), "a atualização completa da grade limita os ícones ao próprio painel.");
