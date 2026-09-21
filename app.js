@@ -10643,13 +10643,11 @@ async function saveFocusedStudy() {
   else showToast("Resultado salvo.");
   void saveAppStateNow("Resultado do estudo salvo", { performanceTrace }).then((persisted) => {
     if (!persisted) {
-      saveLocalSafetyCopy(captureAppState());
-      showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
+      showToast("Não foi possível salvar no Supabase. O resultado permanece nesta aba para nova tentativa.");
     }
   }).catch((error) => {
     console.error("Falha ao salvar o resultado do estudo:", error);
-    saveLocalSafetyCopy(captureAppState());
-    showToast("Resultado salvo neste navegador. A sincronização online será tentada novamente.");
+    showToast("Não foi possível salvar no Supabase. O resultado permanece nesta aba para nova tentativa.");
   }).finally(() => reportFocusPerformance(performanceTrace));
 }
 
@@ -15519,8 +15517,6 @@ function rememberBackupExport(version = 1) {
   renderBackupReminder();
 }
 
-function saveLocalSafetyCopy() {}
-
 function refreshCurrentPlanName(snapshot) {
   const name = planDisplayName(snapshot);
   state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name: plan.customName || name, updatedAt: new Date().toISOString() } : plan);
@@ -17899,7 +17895,7 @@ els.signOutButton?.addEventListener("click", async () => {
     if (!canSignOut) {
       const choice = await openDialog({
         title: "Não foi possível salvar antes de sair",
-        message: "Suas alterações permanecem neste navegador até a conexão voltar.",
+        message: "Suas alterações permanecem nesta aba até a conexão voltar. Tente novamente antes de sair.",
         actions: [
           { id: "cancel", label: "Cancelar", value: "cancel" },
           { id: "retry", label: "Tentar novamente", value: "retry" },
