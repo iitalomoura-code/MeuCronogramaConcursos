@@ -6,6 +6,10 @@ const KNOWLEDGE_BASE_CACHE_PREFIX = "meuCronogramaBaseConhecimento";
 const CLOUD_SAVE_DELAY = 900;
 const PRIORITY_CLOUD_SAVE_DELAY = 2500;
 const PRIORITY_DERIVED_DELAY = 3200;
+// Digitar questões e pesos dispara vários eventos. Esperamos a pausa antes de
+// recalcular a estrutura inteira e de preparar o snapshot para a nuvem.
+const EXAM_STRUCTURE_CLOUD_SAVE_DELAY = 2500;
+const EXAM_STRUCTURE_DERIVED_DELAY = 650;
 const FOCUS_SESSION_SAVE_DELAY = 700;
 const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
 const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
@@ -166,6 +170,8 @@ let priorityConfirmedRevision = 0;
 let priorityDerivedRevision = 0;
 let priorityExplanationTimer = 0;
 let prioritySummaryTimer = 0;
+let examStructureRefreshTimer = 0;
+let examStructureRevision = 0;
 let priorityLongTaskObserver = null;
 let cloudSaveSource = "";
 let pendingCloudCacheWrite = null;
@@ -4964,12 +4970,70 @@ function renderExamStructure() {
         <strong>${escapeHtml(subject.materia)}</strong>
         <input type="number" min="0" step="1" data-exam-structure="${index}" data-exam-field="questionCount" value="${Number(importance.questionCount) || ""}" aria-label="Questões de ${escapeHtml(subject.materia)}" />
         <input type="number" min="1" step="0.5" data-exam-structure="${index}" data-exam-field="weight" value="${Number(importance.weight) || 1}" aria-label="Peso de ${escapeHtml(subject.materia)}" />
-        <span>${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
-        <span>${Math.round(Number(importance.importanceScore || 0) * 100)}%</span>
-        <span class="exam-importance-source">${source}</span>
+        <span data-exam-participation="${index}">${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
+        <span data-exam-importance-score="${index}">${Math.round(Number(importance.importanceScore || 0) * 100)}%</span>
+        <span class="exam-importance-source" data-exam-importance-source="${index}">${source}</span>
       </div>`;
     }).join("")}
   `;
+}
+
+function examImportanceSourceLabel(importance = {}) {
+  if (importance.sourceType === "current-edital") return "Confirmada";
+  if (importance.sourceType === "previous-edital") return "Estimada";
+  if (importance.sourceType === "manual-fallback") return "Manual";
+  return "Histórica";
+}
+
+function updateExamStructureComputedValues() {
+  const subjects = state.planningBase?.materias || [];
+  subjects.forEach((subject, index) => {
+    const importance = subject.examImportance || {};
+    const participation = els.examStructureGrid?.querySelector(`[data-exam-participation="${index}"]`);
+    if (participation) participation.textContent = `${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
+    const score = els.examStructureGrid?.querySelector(`[data-exam-importance-score="${index}"]`);
+    if (score) score.textContent = `${Math.round(Number(importance.importanceScore || 0) * 100)}%`;
+    const source = els.examStructureGrid?.querySelector(`[data-exam-importance-source="${index}"]`);
+    if (source) source.textContent = examImportanceSourceLabel(importance);
+    updatePriorityRow(subject, index);
+  });
+  renderPrioritySummary(subjects);
+}
+
+function flushExamStructureRefresh() {
+  clearTimeout(examStructureRefreshTimer);
+  examStructureRefreshTimer = 0;
+  refreshExamImportance();
+  invalidatePriorityDerivedCaches();
+  updateExamStructureComputedValues();
+  // A capacidade do ciclo depende dessas prioridades. Ela é atualizada fora
+  // do evento de digitação, depois que os valores estabilizam.
+  updateGenerationSummary();
+}
+
+function scheduleExamStructureRefresh() {
+  const revision = ++examStructureRevision;
+  clearTimeout(examStructureRefreshTimer);
+  examStructureRefreshTimer = setTimeout(schedulePriorityIdleWork(() => {
+    if (revision !== examStructureRevision) return;
+    flushExamStructureRefresh();
+  }, 1000), EXAM_STRUCTURE_DERIVED_DELAY);
+}
+
+function applyExamStructureInput(input) {
+  if (!input || !state.planningBase) return false;
+  const index = Number(input.dataset.examStructure);
+  const subject = state.planningBase.materias[index];
+  const field = input.dataset.examField;
+  if (!subject || !["questionCount", "weight"].includes(field)) return false;
+  const minimum = field === "weight" ? 1 : 0;
+  const value = Math.max(minimum, Number(input.value) || 0);
+  const previous = Number(subject.examImportance?.[field]);
+  if (previous === value) return false;
+  subject.examImportance = { ...(subject.examImportance || {}), [field]: value };
+  scheduleExamStructureRefresh();
+  scheduleAutoSave({ invalidate: false, source: "exam-structure" });
+  return true;
 }
 
 function priorityReason(subject) {
@@ -15409,8 +15473,9 @@ function captureAppState({ source = "" } = {}) {
   // Essas leituras percorrem centenas de campos. Fora das respectivas telas,
   // o estado já foi atualizado pelos listeners e não precisa ser relido.
   if (activeTab === "conteudo") syncRowsFromTable();
-  if ((activeTab === "pesos" || planningSettingsContextTab === "pesos") && source !== "priority") syncPlanningSliders();
-  if (source === "priority") {
+  if ((activeTab === "pesos" || planningSettingsContextTab === "pesos") && !["priority", "exam-structure"].includes(source)) syncPlanningSliders();
+  if (source === "exam-structure" && examStructureRefreshTimer) flushExamStructureRefresh();
+  if (["priority", "exam-structure"].includes(source)) {
     const metrics = priorityPerformanceSnapshot();
     if (metrics) metrics.priorityCaptureSkippedControls += 1;
   }
@@ -15787,11 +15852,17 @@ function scheduleCloudSave(label = "Salvo", { source = "" } = {}) {
     return;
   }
   updateSaveStatus({ state: "pending", destination: "cloud" });
+  const saveSource = source || cloudSaveSource;
+  const delay = saveSource === "priority"
+    ? PRIORITY_CLOUD_SAVE_DELAY
+    : saveSource === "exam-structure"
+      ? EXAM_STRUCTURE_CLOUD_SAVE_DELAY
+      : CLOUD_SAVE_DELAY;
   cloudSaveTimer = setTimeout(() => {
     const sourceAtSave = cloudSaveSource;
     cloudSaveSource = "";
     void saveAppStateNow(label, { source: sourceAtSave });
-  }, source === "priority" || cloudSaveSource === "priority" ? PRIORITY_CLOUD_SAVE_DELAY : CLOUD_SAVE_DELAY);
+  }, delay);
 }
 
 async function flushCloudSave(label = "Salvo") {
@@ -15836,7 +15907,7 @@ function yieldForPaint({ frames = 1 } = {}) {
 async function saveAppStateNow(label = "Salvo", { changes = true, force = false, performanceTrace = null, source = "" } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) {
-    if (source !== "priority") invalidateDerivedStudyCaches();
+    if (!["priority", "exam-structure"].includes(source)) invalidateDerivedStudyCaches();
     markUnsavedChanges();
   }
   if (cloudIsPrimary() && !force && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
@@ -15873,6 +15944,7 @@ function shouldUseGlobalAutoSave(target) {
   // O modo foco e o Quill possuem persistência própria. Deixá-los passar por
   // este listener criava um segundo salvamento completo para a mesma edição.
   if (target.closest(".focused-study-modal, .performance-modal, .ql-editor")) return false;
+  if (target.closest("#examStructureGrid")) return false;
   return Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
 }
 
@@ -17573,23 +17645,19 @@ els.planningGrid.addEventListener("input", (event) => {
     updateGenerationSummary();
   }
 });
+els.examStructureGrid?.addEventListener("input", (event) => {
+  const input = event.target.closest("[data-exam-structure]");
+  applyExamStructureInput(input);
+});
 els.examStructureGrid?.addEventListener("change", (event) => {
   const input = event.target.closest("[data-exam-structure]");
-  if (!input || !state.planningBase) return;
-  const subject = state.planningBase.materias[Number(input.dataset.examStructure)];
-  const field = input.dataset.examField;
-  if (!subject || !["questionCount", "weight"].includes(field)) return;
-  subject.examImportance = { ...(subject.examImportance || {}), [field]: Math.max(0, Number(input.value) || 0) };
-  refreshExamImportance();
-  renderPlanningBase();
-  scheduleAutoSave();
+  applyExamStructureInput(input);
 });
 els.usePreviousExamStructure?.addEventListener("change", () => {
   if (!state.planningBase) return;
   state.planningBase.examStructureReference = els.usePreviousExamStructure.checked ? "previous-edital" : "current-edital";
-  refreshExamImportance();
-  renderPlanningBase();
-  scheduleAutoSave();
+  scheduleExamStructureRefresh();
+  scheduleAutoSave({ invalidate: false, source: "exam-structure" });
 });
 els.planningGrid.addEventListener("click", async (event) => {
   const activityButton = event.target.closest("[data-toggle-subject-active]");

@@ -109,7 +109,7 @@ assert.ok(app.includes("priorityDerivedCacheRevision") && app.includes("invalida
 
 const captureSource = between("function captureAppState", "function resetPlanningAccess");
 const sliderSource = between("function syncPlanningSliders", "function priorityScore");
-assert.ok(captureSource.includes('source !== "priority"') && captureSource.includes("priorityCaptureSkippedControls"), "o snapshot de prioridade não relê os controles da aba de pesos.");
+assert.ok(captureSource.includes('!["priority", "exam-structure"].includes(source)') && captureSource.includes("priorityCaptureSkippedControls"), "snapshots incrementais não relêem os controles da aba de pesos.");
 assert.ok(sliderSource.includes("targetIndex") && !sliderSource.includes("materias.forEach"), "a sincronização de sliders aceita atualização incremental sem recalcular todas as matérias.");
 assert.ok(app.includes("PRIORITY_CLOUD_SAVE_DELAY = 2500"), "prioridade deve esperar a sequência de cliques terminar antes de preparar o snapshot.");
 assert.ok(app.includes("PRIORITY_DERIVED_DELAY = 3200"), "resumo e explicação não podem disputar o thread principal logo após o último clique.");
