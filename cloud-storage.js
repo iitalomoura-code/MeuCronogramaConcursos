@@ -15,6 +15,33 @@
     return error;
   }
 
+  function isDevelopmentEnvironment() {
+    const host = String(window.location?.hostname || "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
+  }
+
+  function reportCloudFailure(operation, error, context = {}) {
+    if (!isDevelopmentEnvironment() || !window.console?.error) return;
+    window.console.error(`[Meu Cronograma · nuvem] ${operation} falhou`, {
+      code: error?.code || null,
+      status: Number(error?.status) || null,
+      message: String(error?.message || "Erro sem mensagem"),
+      table: context.table || null,
+      hasAuthenticatedUser: Boolean(context.userId),
+      hasPlanId: Boolean(context.planId),
+    });
+  }
+
+  function throwCloudFailure(operation, error, context = {}) {
+    reportCloudFailure(operation, error, context);
+    throw error;
+  }
+
+  function requireConfirmedRecord(record, operation, context = {}) {
+    if (record?.id || (context.table === "user_knowledge_bases" && record?.user_id)) return record;
+    throwCloudFailure(operation, cloudError("O banco não confirmou a gravação.", "cloud_confirmation_missing"), context);
+  }
+
   async function requireCloudUser(expectedUserId = "") {
     if (!window.supabaseConfiguration?.isConfigured || !window.supabaseClient) {
       throw cloudError("A integra\u00e7\u00e3o com o banco ainda n\u00e3o foi configurada.", "config_missing");
@@ -49,7 +76,7 @@
       .select(PLAN_LIST_FIELDS)
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false });
-    if (error) throw error;
+    if (error) throwCloudFailure("listar planejamentos", error, { table: "study_plans", userId: user.id });
     return data || [];
   }
 
@@ -61,8 +88,8 @@
       .eq("id", planId)
       .eq("user_id", user.id)
       .single();
-    if (error) throw error;
-    return data;
+    if (error) throwCloudFailure("carregar planejamento", error, { table: "study_plans", userId: user.id, planId });
+    return requireConfirmedRecord(data, "carregar planejamento", { table: "study_plans", userId: user.id, planId });
   }
 
   async function getCloudPlanVersion(planId) {
@@ -73,7 +100,7 @@
       .eq("id", planId)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (error) throw error;
+    if (error) throwCloudFailure("consultar versão do planejamento", error, { table: "study_plans", userId: user.id, planId });
     return data || null;
   }
 
@@ -90,8 +117,8 @@
       .insert(payload)
       .select(PLAN_FIELDS)
       .single();
-    if (error) throw error;
-    return data;
+    if (error) throwCloudFailure("criar planejamento", error, { table: "study_plans", userId: user.id });
+    return requireConfirmedRecord(data, "criar planejamento", { table: "study_plans", userId: user.id });
   }
 
   async function updateCloudPlan(planId, payload = {}) {
@@ -115,15 +142,15 @@
       .eq("version", expectedVersion)
       .select(PLAN_FIELDS)
       .maybeSingle();
-    if (error) throw error;
-    if (data) return data;
+    if (error) throwCloudFailure("atualizar planejamento", error, { table: "study_plans", userId: user.id, planId });
+    if (data) return requireConfirmedRecord(data, "atualizar planejamento", { table: "study_plans", userId: user.id, planId });
 
     let latestPlan = null;
     try {
       latestPlan = await loadCloudPlan(planId);
     } catch (loadError) {
       if (loadError?.code === "PGRST116") throw cloudError("O planejamento online n\u00e3o foi encontrado.", "cloud_plan_missing");
-      throw loadError;
+      throwCloudFailure("confirmar atualização do planejamento", loadError, { table: "study_plans", userId: user.id, planId });
     }
     if (Number(latestPlan?.version) > expectedVersion) throw cloudConflict(latestPlan);
     throw cloudError("N\u00e3o foi poss\u00edvel atualizar o planejamento online.", "cloud_update_failed");
@@ -137,12 +164,15 @@
 
   async function deleteCloudPlan(planId) {
     const user = await requireCloudUser();
-    const { error } = await window.supabaseClient
+    const { data, error } = await window.supabaseClient
       .from("study_plans")
       .delete()
       .eq("id", planId)
-      .eq("user_id", user.id);
-    if (error) throw error;
+      .eq("user_id", user.id)
+      .select("id")
+      .maybeSingle();
+    if (error) throwCloudFailure("excluir planejamento", error, { table: "study_plans", userId: user.id, planId });
+    if (!data?.id) throwCloudFailure("excluir planejamento", cloudError("O planejamento online não foi encontrado.", "cloud_plan_missing"), { table: "study_plans", userId: user.id, planId });
     return true;
   }
 
@@ -153,7 +183,7 @@
       .select("id")
       .eq("user_id", user.id)
       .limit(1);
-    if (error) throw error;
+    if (error) throwCloudFailure("testar conexão com planejamentos", error, { table: "study_plans", userId: user.id });
     return true;
   }
 
@@ -164,7 +194,7 @@
       .select(KNOWLEDGE_BASE_FIELDS)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (error) throw error;
+    if (error) throwCloudFailure("carregar base permanente", error, { table: "user_knowledge_bases", userId: user.id });
     return data || null;
   }
 
@@ -178,8 +208,8 @@
         .insert({ user_id: user.id, data: payload.data || {}, version: 1, updated_at: new Date().toISOString() })
         .select(KNOWLEDGE_BASE_FIELDS)
         .single();
-      if (error) throw error;
-      return data;
+      if (error) throwCloudFailure("criar base permanente", error, { table: "user_knowledge_bases", userId: user.id });
+      return requireConfirmedRecord(data, "criar base permanente", { table: "user_knowledge_bases", userId: user.id });
     }
     const version = Number.isFinite(expectedVersion) && expectedVersion > 0 ? expectedVersion : Number(existing.version) || 1;
     const { data, error } = await window.supabaseClient
@@ -189,8 +219,8 @@
       .eq("version", version)
       .select(KNOWLEDGE_BASE_FIELDS)
       .maybeSingle();
-    if (error) throw error;
-    if (data) return data;
+    if (error) throwCloudFailure("atualizar base permanente", error, { table: "user_knowledge_bases", userId: user.id });
+    if (data) return requireConfirmedRecord(data, "atualizar base permanente", { table: "user_knowledge_bases", userId: user.id });
     throw cloudConflict(await loadCloudKnowledgeBase());
   }
 

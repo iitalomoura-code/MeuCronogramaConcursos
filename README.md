@@ -21,7 +21,13 @@ No painel do Supabase, crie os usuários manualmente para esta primeira etapa. N
 
 Crie `public.study_plans` com as colunas `id` (UUID), `user_id` (UUID), `name` (text), `data` (jsonb), `version` (integer), `created_at` e `updated_at` (timestamptz). Ative RLS e crie políticas que permitam somente `auth.uid() = user_id` para leitura, criação, alteração e exclusão. O cliente nunca usa `service_role` e sempre obtém o usuário autenticado antes de consultar a tabela.
 
-A Base Permanente de Conhecimento usa também `public.user_knowledge_bases`. A migration em `supabase/migrations/20260911_create_user_knowledge_bases.sql` precisa ser aplicada manualmente no SQL Editor do Supabase antes de a sincronização dessa base funcionar entre aparelhos. Este repositório não possui um mecanismo automático de aplicar migrations em produção; até a aplicação do SQL, a base permanece somente no armazenamento local associado ao usuário.
+A Base Permanente de Conhecimento usa também `public.user_knowledge_bases`, e o histórico do Coach usa `public.ai_coach_reviews`. As migrations versionadas em `supabase/migrations/` devem ser aplicadas com a CLI autenticada antes de publicar uma nova versão do banco:
+
+```sh
+supabase db push --linked
+```
+
+No projeto de produção vinculado, as migrations `20260911`, `20260912` e `20260913` já estão aplicadas. A interface conserva uma cópia local de segurança quando a sincronização falha e informa o erro em vez de confirmar uma gravação não reconhecida pelo banco.
 
 Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. Um cache temporário da conta pode ser usado para a primeira pintura, mas a versão recebida do Supabase é sempre a fonte definitiva. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
 

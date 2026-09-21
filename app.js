@@ -302,6 +302,9 @@ let historyInheritanceCache = new Map();
 let knowledgeBaseState = null;
 let knowledgeBaseCloudVersion = 0;
 let knowledgeBaseBootstrapPromise = null;
+let knowledgeBaseCloudSavePromise = null;
+let knowledgeBaseCloudSaveQueued = false;
+let knowledgeBaseLastFailureKey = "";
 let knowledgeMappingReviewCache = [];
 let knowledgeMappingConfirmedCache = [];
 let knowledgeMappingReviewCacheKey = "";
@@ -14647,6 +14650,54 @@ function knowledgeBaseCloudIsAvailable() {
   return Boolean(window.authGate?.isAuthenticated?.() && window.loadCloudKnowledgeBase && window.saveCloudKnowledgeBase);
 }
 
+function isDevelopmentRuntime() {
+  const host = String(window.location?.hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
+}
+
+function reportKnowledgeBaseSyncFailure(error) {
+  if (isDevelopmentRuntime()) {
+    console.error("[Meu Cronograma · nuvem] Base Permanente não foi sincronizada", {
+      code: error?.code || null,
+      status: Number(error?.status) || null,
+      message: String(error?.message || "Erro sem mensagem"),
+    });
+  }
+  const failureKey = `${error?.code || "unknown"}:${error?.message || ""}`;
+  updateSaveStatus({ state: "error", destination: "cloud", message: "A Base Permanente ficou salva neste dispositivo, mas não foi sincronizada com a nuvem." });
+  if (failureKey !== knowledgeBaseLastFailureKey) {
+    knowledgeBaseLastFailureKey = failureKey;
+    showToast("Não foi possível sincronizar a Base Permanente. Seus dados permanecem neste dispositivo.");
+  }
+}
+
+function saveKnowledgeBaseToCloud(snapshot = knowledgeBaseState) {
+  if (!snapshot?.schemaVersion || !knowledgeBaseCloudIsAvailable()) return Promise.resolve(null);
+  if (knowledgeBaseCloudSavePromise) {
+    knowledgeBaseCloudSaveQueued = true;
+    return knowledgeBaseCloudSavePromise;
+  }
+  const version = knowledgeBaseCloudVersion;
+  knowledgeBaseCloudSavePromise = window.saveCloudKnowledgeBase({ data: snapshot, version })
+    .then((saved) => {
+      knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
+      knowledgeBaseLastFailureKey = "";
+      return saved || null;
+    })
+    .catch((error) => {
+      reportKnowledgeBaseSyncFailure(error);
+      return null;
+    })
+    .finally(() => {
+      knowledgeBaseCloudSavePromise = null;
+      if (knowledgeBaseCloudSaveQueued) {
+        knowledgeBaseCloudSaveQueued = false;
+        void saveKnowledgeBaseToCloud(knowledgeBaseState);
+      }
+    });
+  return knowledgeBaseCloudSavePromise;
+}
+
 function knowledgeBaseStructureSignature(base = {}) {
   return JSON.stringify({
     schemaVersion: base.schemaVersion,
@@ -14754,12 +14805,7 @@ async function bootstrapKnowledgeBase() {
     invalidateDerivedStudyCaches();
     if (getActiveTabName() === "diagnostico") renderInitialDiagnosis();
     if (knowledgeBaseNeedsCloudSync(cloudRecord, knowledgeBaseState) && knowledgeBaseCloudIsAvailable()) {
-      try {
-        const saved = await window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion });
-        knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
-      } catch {
-        // A cópia local preserva o bootstrap até a próxima conexão com a nuvem.
-      }
+      await saveKnowledgeBaseToCloud(knowledgeBaseState);
     }
     return knowledgeBaseState;
   })().finally(() => {
@@ -14787,9 +14833,7 @@ function commitKnowledgeBaseMutation(next) {
   knowledgeMappingReviewCacheValue = null;
   saveLocalKnowledgeBase(knowledgeBaseState);
   if (knowledgeBaseCloudIsAvailable()) {
-    void window.saveCloudKnowledgeBase({ data: knowledgeBaseState, version: knowledgeBaseCloudVersion }).then((saved) => {
-      knowledgeBaseCloudVersion = Number(saved?.version) || knowledgeBaseCloudVersion;
-    }).catch(() => {});
+    void saveKnowledgeBaseToCloud(knowledgeBaseState);
   }
   return knowledgeBaseState;
 }
