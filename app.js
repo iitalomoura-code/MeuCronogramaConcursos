@@ -3,7 +3,7 @@ const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
 const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
 const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
 const KNOWLEDGE_BASE_CACHE_PREFIX = "meuCronogramaBaseConhecimento";
-const CLOUD_SAVE_DELAY = 3000;
+const CLOUD_SAVE_DELAY = 900;
 const FOCUS_SESSION_SAVE_DELAY = 700;
 const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
 const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
@@ -157,6 +157,9 @@ let saveTimer = 0;
 let cloudSaveTimer = 0;
 let cloudSavePromise = null;
 let cloudSaveQueued = false;
+let priorityChangeRevision = 0;
+let priorityConfirmedRevision = 0;
+let cloudSaveSource = "";
 let pendingCloudCacheWrite = null;
 let cloudCacheWriteHandle = 0;
 let cloudCacheWriteUsesIdleCallback = false;
@@ -447,6 +450,36 @@ function currentStartupHydrationTrace() {
 function focusPerformanceEnabled() {
   const host = String(window.location?.hostname || "");
   return window.__MEU_CRONOGRAMA_FOCUS_PERF__ === true || host === "localhost" || host === "127.0.0.1";
+}
+
+function priorityPerformanceEnabled() {
+  return focusPerformanceEnabled() || window.__MEU_CRONOGRAMA_PRIORITY_PERF__ === true;
+}
+
+function priorityPerformanceSnapshot() {
+  if (!priorityPerformanceEnabled()) return null;
+  if (!window.__priorityPerformance) {
+    window.__priorityPerformance = {
+      clicks: 0,
+      renders: 0,
+      supabaseRequests: 0,
+      confirmedSaves: 0,
+      failures: 0,
+      lastClick: null,
+      lastRenderMs: 0,
+      lastVisualMs: 0,
+      lastRequestMs: 0,
+      lastPayloadBytes: 0,
+      latestRevision: 0,
+    };
+  }
+  return window.__priorityPerformance;
+}
+
+function recordPriorityPerformance(values = {}) {
+  const metrics = priorityPerformanceSnapshot();
+  if (!metrics) return;
+  Object.assign(metrics, values);
 }
 
 function strategicPerformanceEnabled() {
@@ -4727,6 +4760,7 @@ function confirmRows(options = {}) {
 
 function renderPlanningBase() {
   if (!state.planningBase) return;
+  const renderStartedAt = focusPerformanceNow();
   syncPlanningSliders();
   refreshExamImportance();
   const subjects = state.planningBase.materias;
@@ -4739,7 +4773,7 @@ function renderPlanningBase() {
     const isOpen = index === priorityEditIndex;
     const historicalSummary = historyInheritanceSummaryForSubject(subject);
     return `
-      <article class="priority-row ${isOpen ? "is-open" : ""} ${planningSubject.active ? "" : "is-paused"}">
+      <article class="priority-row ${isOpen ? "is-open" : ""} ${planningSubject.active ? "" : "is-paused"}" data-priority-row="${index}">
         <div class="priority-row-main">
           <div class="priority-subject">
             <strong>${escapeHtml(subject.materia)}</strong>
@@ -4748,11 +4782,11 @@ function renderPlanningBase() {
           </div>
           <div class="priority-cell">
             <span>${objectiveImportance ? "Importância relativa na prova" : "Importância na prova"}</span>
-            <strong>${objectiveImportance ? `${Math.round(Number(planningSubject.examImportance.importanceScore || 0) * 100)}%` : Number(subject.peso) || 3}</strong>
+            <strong data-priority-weight="${index}">${objectiveImportance ? `${Math.round(Number(planningSubject.examImportance.importanceScore || 0) * 100)}%` : Number(subject.peso) || 3}</strong>
           </div>
           <div class="priority-cell">
             <span>Dificuldade pessoal</span>
-            <strong>${Number(subject.dominio) || 3}</strong>
+            <strong data-priority-difficulty="${index}">${Number(subject.dominio) || 3}</strong>
           </div>
           <div class="priority-cell priority-result">
             <span>Prioridade de estudo</span>
@@ -4769,9 +4803,14 @@ function renderPlanningBase() {
       </article>
     `;
   }).join("");
-  if (window.lucide) window.lucide.createIcons();
+  if (window.lucide) window.lucide.createIcons(els.planningGrid);
   renderExamStructure();
   updateGenerationSummary();
+  const metrics = priorityPerformanceSnapshot();
+  if (metrics) {
+    metrics.renders += 1;
+    metrics.lastRenderMs = Math.round((focusPerformanceNow() - renderStartedAt) * 10) / 10;
+  }
 }
 
 function renderPrioritySummary(subjects) {
@@ -4960,7 +4999,7 @@ function priorityEditPanel(subject, index, priority) {
     ? "A estrutura de questões está sendo usada. Esta escala fica como alternativa caso a quantidade seja removida."
     : "Sem questões informadas para esta matéria, esta escala define a importância no cálculo.";
   return `
-    <div class="priority-edit-panel">
+    <div class="priority-edit-panel" data-priority-panel="${index}">
       <div class="priority-edit-toolbar">
         <span>Ajuste os crit\u00e9rios desta mat\u00e9ria</span>
         <span class="priority-badge ${priority.className}">Prioridade de estudo: ${priority.label} &middot; ${priority.percent}%</span>
@@ -4976,6 +5015,57 @@ function priorityEditPanel(subject, index, priority) {
       </div>
     </div>
   `;
+}
+
+function updatePriorityRow(subject, index) {
+  const row = els.planningGrid?.querySelector(`[data-priority-row="${index}"]`);
+  if (!row) {
+    renderPlanningBase();
+    return;
+  }
+  const priority = priorityInfo(subject.prioridade);
+  const planningSubject = subjectPlanningCapacity(subject);
+  const objectiveImportance = Number(planningSubject.examImportance?.questionCount) > 0
+    && ["current-edital", "previous-edital"].includes(planningSubject.examImportance?.sourceType);
+  const priorityBadge = row.querySelector(`[data-priority="${index}"]`);
+  if (priorityBadge) {
+    priorityBadge.textContent = `${priority.label} · ${priority.percent}%`;
+    priorityBadge.className = `priority-badge ${priority.className}`;
+  }
+  const weight = row.querySelector(`[data-priority-weight="${index}"]`);
+  if (weight) weight.textContent = objectiveImportance ? `${Math.round(Number(planningSubject.examImportance.importanceScore || 0) * 100)}%` : String(Number(subject.peso) || 3);
+  const difficulty = row.querySelector(`[data-priority-difficulty="${index}"]`);
+  if (difficulty) difficulty.textContent = String(Number(subject.dominio) || 3);
+  const panel = row.querySelector(`[data-priority-panel="${index}"]`);
+  if (panel) panel.outerHTML = priorityEditPanel(subject, index, priority);
+  const examWeight = els.examStructureGrid?.querySelector(`[data-exam-structure="${index}"][data-exam-field="weight"]`);
+  if (examWeight && !objectiveImportance) examWeight.value = String(Number(subject.peso) || 3);
+  renderPrioritySummary(state.planningBase?.materias || []);
+}
+
+function applyPriorityScaleChange(index, field, value) {
+  const subject = state.planningBase?.materias?.[index];
+  if (!subject || !["peso", "dominio"].includes(field) || !Number.isFinite(value)) return false;
+  const nextValue = Math.max(1, Math.min(5, value));
+  if (Number(subject[field]) === nextValue) return false;
+  const clickStartedAt = focusPerformanceNow();
+  subject[field] = nextValue;
+  subject.prioridade = priorityScore(subject);
+  priorityEditIndex = index;
+  priorityChangeRevision += 1;
+  recordPriorityPerformance({
+    clicks: (priorityPerformanceSnapshot()?.clicks || 0) + 1,
+    latestRevision: priorityChangeRevision,
+    lastClick: { field, index, at: new Date().toISOString() },
+  });
+  updatePriorityRow(subject, index);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => recordPriorityPerformance({ lastVisualMs: Math.round((focusPerformanceNow() - clickStartedAt) * 10) / 10 }));
+  } else {
+    recordPriorityPerformance({ lastVisualMs: Math.round((focusPerformanceNow() - clickStartedAt) * 10) / 10 });
+  }
+  scheduleAutoSave({ source: "priority" });
+  return true;
 }
 
 function scaleMarkup(index, field, label, help, value) {
@@ -15486,6 +15576,16 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
   const data = snapshot || captureAppState();
   const plan = activePlan();
   if (!plan) return false;
+  const priorityRevisionAtRequest = priorityChangeRevision;
+  const savesPriority = priorityRevisionAtRequest > priorityConfirmedRevision;
+  const requestStartedAt = focusPerformanceNow();
+  if (savesPriority) {
+    const metrics = priorityPerformanceSnapshot();
+    if (metrics) {
+      metrics.supabaseRequests += 1;
+      metrics.lastPayloadBytes = JSON.stringify(data).length;
+    }
+  }
   updateSaveStatus({ state: "saving", destination: "cloud" });
   cloudSavePromise = (async () => {
     try {
@@ -15496,6 +15596,13 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
         version: state.cloudPlanVersion,
       }));
       updateCloudPlanMeta(record);
+      if (savesPriority) {
+        priorityConfirmedRevision = Math.max(priorityConfirmedRevision, priorityRevisionAtRequest);
+        recordPriorityPerformance({
+          confirmedSaves: (priorityPerformanceSnapshot()?.confirmedSaves || 0) + 1,
+          lastRequestMs: Math.round((focusPerformanceNow() - requestStartedAt) * 10) / 10,
+        });
+      }
       clearUnsavedChanges();
       updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
       return true;
@@ -15507,6 +15614,12 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
           return true;
         }
         return handleCloudConflict(data);
+      }
+      if (savesPriority) {
+        recordPriorityPerformance({
+          failures: (priorityPerformanceSnapshot()?.failures || 0) + 1,
+          lastRequestMs: Math.round((focusPerformanceNow() - requestStartedAt) * 10) / 10,
+        });
       }
       updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível salvar no banco. Tentar novamente." });
       return false;
@@ -15521,16 +15634,21 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
   return cloudSavePromise;
 }
 
-function scheduleCloudSave(label = "Salvo") {
+function scheduleCloudSave(label = "Salvo", { source = "" } = {}) {
   if (!cloudIsPrimary() || isRestoring) return;
   markUnsavedChanges();
+  if (source) cloudSaveSource = source;
   clearTimeout(cloudSaveTimer);
   if (cloudSavePromise) {
     cloudSaveQueued = true;
     return;
   }
   updateSaveStatus({ state: "pending", destination: "cloud" });
-  cloudSaveTimer = setTimeout(() => saveAppStateNow(label), CLOUD_SAVE_DELAY);
+  cloudSaveTimer = setTimeout(() => {
+    const sourceAtSave = cloudSaveSource;
+    cloudSaveSource = "";
+    void saveAppStateNow(label, { source: sourceAtSave });
+  }, CLOUD_SAVE_DELAY);
 }
 
 async function flushCloudSave(label = "Salvo") {
@@ -15572,7 +15690,7 @@ function yieldForPaint({ frames = 1 } = {}) {
   });
 }
 
-async function saveAppStateNow(label = "Salvo", { changes = true, force = false, performanceTrace = null } = {}) {
+async function saveAppStateNow(label = "Salvo", { changes = true, force = false, performanceTrace = null, source = "" } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) {
     invalidateDerivedStudyCaches();
@@ -15593,7 +15711,7 @@ async function saveAppStateNow(label = "Salvo", { changes = true, force = false,
   return false;
 }
 
-function scheduleAutoSave({ invalidate = true } = {}) {
+function scheduleAutoSave({ invalidate = true, source = "" } = {}) {
   if (isRestoring) return;
   if (invalidate) invalidateDerivedStudyCaches();
   if (state.dataSource === "cloud-unavailable") {
@@ -15601,7 +15719,7 @@ function scheduleAutoSave({ invalidate = true } = {}) {
     return;
   }
   if (state.dataSource === "cloud" && cloudIsAvailable()) {
-    scheduleCloudSave("Salvo");
+    scheduleCloudSave("Salvo", { source });
     return;
   }
   updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível conectar ao Supabase para salvar." });
@@ -17371,12 +17489,7 @@ els.planningGrid.addEventListener("click", async (event) => {
   const index = Number(scaleButton.dataset.scaleIndex);
   const field = scaleButton.dataset.scaleField;
   const value = Number(scaleButton.dataset.scaleValue);
-  const subject = state.planningBase.materias[index];
-  if (!subject || !["peso", "dominio"].includes(field)) return;
-  subject[field] = value;
-  subject.prioridade = priorityScore(subject);
-  priorityEditIndex = index;
-  renderPlanningBase();
+  applyPriorityScaleChange(index, field, value);
 });
 els.scheduleWrap.addEventListener("click", (event) => {
   const timerToggle = event.target.closest("[data-timer-toggle]");

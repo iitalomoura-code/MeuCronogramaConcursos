@@ -32,6 +32,17 @@
     });
   }
 
+  function reportCloudOperation(operation, context = {}) {
+    if (!isDevelopmentEnvironment() || !window.console?.debug) return;
+    window.console.debug(`[Meu Cronograma · nuvem] ${operation}`, {
+      table: context.table || null,
+      hasPlanId: Boolean(context.planId),
+      payloadBytes: Number(context.payloadBytes) || 0,
+      durationMs: Math.round((Number(context.durationMs) || 0) * 10) / 10,
+      confirmed: Boolean(context.confirmed),
+    });
+  }
+
   function throwCloudFailure(operation, error, context = {}) {
     reportCloudFailure(operation, error, context);
     throw error;
@@ -134,6 +145,8 @@
       version: expectedVersion + 1,
       updated_at: new Date().toISOString(),
     };
+    const requestStartedAt = typeof performance?.now === "function" ? performance.now() : Date.now();
+    const payloadBytes = JSON.stringify(update.data).length;
     const { data, error } = await window.supabaseClient
       .from("study_plans")
       .update(update)
@@ -143,7 +156,17 @@
       .select(PLAN_FIELDS)
       .maybeSingle();
     if (error) throwCloudFailure("atualizar planejamento", error, { table: "study_plans", userId: user.id, planId });
-    if (data) return requireConfirmedRecord(data, "atualizar planejamento", { table: "study_plans", userId: user.id, planId });
+    if (data) {
+      const record = requireConfirmedRecord(data, "atualizar planejamento", { table: "study_plans", userId: user.id, planId });
+      reportCloudOperation("atualizar planejamento", {
+        table: "study_plans",
+        planId,
+        payloadBytes,
+        durationMs: (typeof performance?.now === "function" ? performance.now() : Date.now()) - requestStartedAt,
+        confirmed: true,
+      });
+      return record;
+    }
 
     let latestPlan = null;
     try {
