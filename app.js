@@ -159,6 +159,10 @@ let cloudSavePromise = null;
 let cloudSaveQueued = false;
 let priorityChangeRevision = 0;
 let priorityConfirmedRevision = 0;
+let priorityDerivedRevision = 0;
+let priorityExplanationTimer = 0;
+let prioritySummaryTimer = 0;
+let priorityLongTaskObserver = null;
 let cloudSaveSource = "";
 let pendingCloudCacheWrite = null;
 let cloudCacheWriteHandle = 0;
@@ -249,15 +253,15 @@ let reviewAttentionCacheSource = null;
 let masteryDiagnosisCache = new Map();
 let errorAnalysisRevision = 0;
 let learningDiagnosisModelCache = null;
-let learningDiagnosisModelRevision = -1;
+let learningDiagnosisModelRevision = "";
 let learningDiagnosisModelBuildPromise = null;
-let learningDiagnosisModelBuildRevision = -1;
+let learningDiagnosisModelBuildRevision = "";
 let strategicAdvisorModelCache = null;
-let strategicAdvisorModelRevision = -1;
+let strategicAdvisorModelRevision = "";
 let strategicAdvisorModelBuildPromise = null;
-let strategicAdvisorModelBuildRevision = -1;
+let strategicAdvisorModelBuildRevision = "";
 let strategicPlanningTopicsCache = null;
-let strategicPlanningTopicsRevision = -1;
+let strategicPlanningTopicsRevision = "";
 let strategicPlanningHistoryIndex = null;
 let strategicPlanningHistoryIndexSource = null;
 let initialDiagnosisEvidenceCache = new Map();
@@ -471,6 +475,12 @@ function priorityPerformanceSnapshot() {
       lastRequestMs: 0,
       lastPayloadBytes: 0,
       latestRevision: 0,
+      stages: {},
+      longTasks: [],
+      domUpdates: 0,
+      fullPanelReplacements: 0,
+      priorityCacheInvalidations: 0,
+      staleDerivedModels: 0,
     };
   }
   return window.__priorityPerformance;
@@ -480,6 +490,43 @@ function recordPriorityPerformance(values = {}) {
   const metrics = priorityPerformanceSnapshot();
   if (!metrics) return;
   Object.assign(metrics, values);
+}
+
+function priorityPerformanceMeasure(label, work) {
+  if (!priorityPerformanceEnabled()) return work();
+  const startedAt = focusPerformanceNow();
+  const markName = `priority:${label}:${Math.round(startedAt * 1000)}`;
+  try {
+    globalThis.performance?.mark?.(`${markName}:start`);
+    return work();
+  } finally {
+    const durationMs = Math.round((focusPerformanceNow() - startedAt) * 10) / 10;
+    const metrics = priorityPerformanceSnapshot();
+    metrics.stages = { ...metrics.stages, [label]: durationMs };
+    try {
+      globalThis.performance?.mark?.(`${markName}:end`);
+      globalThis.performance?.measure?.(markName, `${markName}:start`, `${markName}:end`);
+      globalThis.performance?.clearMarks?.(`${markName}:start`);
+      globalThis.performance?.clearMarks?.(`${markName}:end`);
+      globalThis.performance?.clearMeasures?.(markName);
+    } catch {
+      // A medição não pode afetar a interação quando a API não estiver disponível.
+    }
+  }
+}
+
+function ensurePriorityLongTaskObserver() {
+  if (!priorityPerformanceEnabled() || priorityLongTaskObserver || typeof PerformanceObserver !== "function") return;
+  try {
+    priorityLongTaskObserver = new PerformanceObserver((list) => {
+      const metrics = priorityPerformanceSnapshot();
+      const entries = list.getEntries().map((entry) => Math.round(entry.duration * 10) / 10);
+      metrics.longTasks = [...metrics.longTasks, ...entries].slice(-20);
+    });
+    priorityLongTaskObserver.observe({ entryTypes: ["longtask"] });
+  } catch {
+    // Long Tasks ainda não está disponível em todos os navegadores.
+  }
 }
 
 function strategicPerformanceEnabled() {
@@ -631,20 +678,21 @@ function reportFocusPerformance(trace, phase = "") {
 }
 
 function invalidateDerivedStudyCaches() {
+  return priorityPerformanceMeasure("invalidateDerivedStudyCaches", () => {
   adaptiveHistoryCache = null;
   reviewAttentionCache.clear();
   reviewAttentionCacheSource = null;
   masteryDiagnosisCache.clear();
   learningDiagnosisModelCache = null;
-  learningDiagnosisModelRevision = -1;
+  learningDiagnosisModelRevision = "";
   learningDiagnosisModelBuildPromise = null;
-  learningDiagnosisModelBuildRevision = -1;
+  learningDiagnosisModelBuildRevision = "";
   strategicAdvisorModelCache = null;
-  strategicAdvisorModelRevision = -1;
+  strategicAdvisorModelRevision = "";
   strategicAdvisorModelBuildPromise = null;
-  strategicAdvisorModelBuildRevision = -1;
+  strategicAdvisorModelBuildRevision = "";
   strategicPlanningTopicsCache = null;
-  strategicPlanningTopicsRevision = -1;
+  strategicPlanningTopicsRevision = "";
   strategicPlanningHistoryIndex = null;
   strategicPlanningHistoryIndexSource = null;
   initialDiagnosisEvidenceCache.clear();
@@ -657,6 +705,25 @@ function invalidateDerivedStudyCaches() {
   historyInheritanceCache.clear();
   continueDerivedStateRevision += 1;
   window.StudyDerivedState?.invalidate?.();
+  });
+}
+
+function priorityDerivedCacheRevision() {
+  return `${errorAnalysisRevision}:${priorityDerivedRevision}`;
+}
+
+function invalidatePriorityDerivedCaches() {
+  // Prioridade muda a ordenação futura, mas não altera histórico, revisões,
+  // erros ou diagnósticos já registrados. Os modelos que usam prioridade são
+  // marcados como desatualizados e só serão reconstruídos quando forem abertos.
+  priorityDerivedRevision += 1;
+  continueDerivedStateRevision += 1;
+  window.StudyDerivedState?.invalidate?.();
+  const metrics = priorityPerformanceSnapshot();
+  if (metrics) {
+    metrics.priorityCacheInvalidations += 1;
+    metrics.staleDerivedModels += 3;
+  }
 }
 
 // Reviews and checkpoints describe a concrete plan, unlike the permanent
@@ -4912,37 +4979,39 @@ function priorityReason(subject) {
 }
 
 function explainPriority(subject = {}) {
-  const baseScore = priorityScore(subject);
-  const base = priorityInfo(baseScore);
-  const adaptive = adaptivePriorityAdjustment({ materia: subject.materia, prioridadeBase: baseScore });
-  const importance = capacityPlanning().normalizeExamImportance(subject);
-  const usesStructure = Number(importance.questionCount) > 0 && ["current-edital", "previous-edital"].includes(importance.sourceType);
-  const mainReasons = usesStructure
-    ? [
-      `Importância relativa na prova: ${Math.round(Number(importance.importanceScore || 0) * 100)}%`,
-      `Participação estimada: ${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
-      `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
-    ]
-    : [
-      ...(Number(importance.historicalIncidence) > 0 ? [`Incidência histórica disponível: ${Math.round(Number(importance.historicalIncidence) * 100)}%`] : []),
-      `Importância informada como ${Number(subject.peso) || 3} de 5`,
-      `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
-    ];
-  const secondaryReasons = [];
-  adaptive.reasons?.forEach((reason) => {
-    if (!mainReasons.some((item) => normalizeForMatch(item).includes(normalizeForMatch(reason)))) secondaryReasons.push(reason);
+  return priorityPerformanceMeasure("explainPriority", () => {
+    const baseScore = priorityScore(subject);
+    const base = priorityInfo(baseScore);
+    const adaptive = priorityPerformanceMeasure("adaptivePriorityAdjustment", () => adaptivePriorityAdjustment({ materia: subject.materia, prioridadeBase: baseScore }));
+    const importance = capacityPlanning().normalizeExamImportance(subject);
+    const usesStructure = Number(importance.questionCount) > 0 && ["current-edital", "previous-edital"].includes(importance.sourceType);
+    const mainReasons = usesStructure
+      ? [
+        `Importância relativa na prova: ${Math.round(Number(importance.importanceScore || 0) * 100)}%`,
+        `Participação estimada: ${(Number(importance.estimatedPercentage || 0) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
+        `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
+      ]
+      : [
+        ...(Number(importance.historicalIncidence) > 0 ? [`Incidência histórica disponível: ${Math.round(Number(importance.historicalIncidence) * 100)}%`] : []),
+        `Importância informada como ${Number(subject.peso) || 3} de 5`,
+        `Dificuldade pessoal ${Number(subject.dominio) || 3} de 5`,
+      ];
+    const secondaryReasons = [];
+    adaptive.reasons?.forEach((reason) => {
+      if (!mainReasons.some((item) => normalizeForMatch(item).includes(normalizeForMatch(reason)))) secondaryReasons.push(reason);
+    });
+    if (adaptive.adjustment > 0 && adaptive.rawAdjustment > adaptive.adjustment) {
+      secondaryReasons.push(`Ajuste adaptativo limitado ao teto de ${Math.round(adaptive.cap * 100)}%`);
+    }
+    return {
+      level: base.label,
+      basePercent: base.percent,
+      adjustedPercent: Math.round(Math.min(1, baseScore + adaptive.adjustment) * 100),
+      mainReasons: [...mainReasons, ...secondaryReasons].slice(0, 3),
+      secondaryReasons: secondaryReasons.slice(0, 4),
+      adaptive,
+    };
   });
-  if (adaptive.adjustment > 0 && adaptive.rawAdjustment > adaptive.adjustment) {
-    secondaryReasons.push(`Ajuste adaptativo limitado ao teto de ${Math.round(adaptive.cap * 100)}%`);
-  }
-  return {
-    level: base.label,
-    basePercent: base.percent,
-    adjustedPercent: Math.round(Math.min(1, baseScore + adaptive.adjustment) * 100),
-    mainReasons: [...mainReasons, ...secondaryReasons].slice(0, 3),
-    secondaryReasons: secondaryReasons.slice(0, 4),
-    adaptive,
-  };
 }
 
 function renderPriorityXray(subjects) {
@@ -4992,6 +5061,7 @@ function renderPriorityXray(subjects) {
 }
 
 function priorityEditPanel(subject, index, priority) {
+  return priorityPerformanceMeasure("priorityEditPanel", () => {
   const explanation = explainPriority(subject);
   const importance = subjectPlanningCapacity(subject).examImportance;
   const usesStructure = Number(importance.questionCount) > 0 && ["current-edital", "previous-edital"].includes(importance.sourceType);
@@ -5002,7 +5072,7 @@ function priorityEditPanel(subject, index, priority) {
     <div class="priority-edit-panel" data-priority-panel="${index}">
       <div class="priority-edit-toolbar">
         <span>Ajuste os crit\u00e9rios desta mat\u00e9ria</span>
-        <span class="priority-badge ${priority.className}">Prioridade de estudo: ${priority.label} &middot; ${priority.percent}%</span>
+        <span class="priority-badge ${priority.className}" data-priority-panel-badge="${index}">Prioridade de estudo: ${priority.label} &middot; ${priority.percent}%</span>
       </div>
       <div class="priority-scale-grid">
         ${scaleMarkup(index, "peso", "Import\u00e2ncia na prova", importanceHelp, subject.peso)}
@@ -5010,11 +5080,12 @@ function priorityEditPanel(subject, index, priority) {
       </div>
       <div class="priority-explanation">
         <strong>Por que esta prioridade?</strong>
-        <ul>${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
+        <ul data-priority-explanation="${index}">${explanation.mainReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
         <small>A pontuação base permanece ligada à importância e à dificuldade. Ajustes adaptativos só entram quando há desempenho, revisões ou reprogramações registradas.</small>
       </div>
     </div>
   `;
+  });
 }
 
 function updatePriorityRow(subject, index) {
@@ -5023,24 +5094,64 @@ function updatePriorityRow(subject, index) {
     renderPlanningBase();
     return;
   }
-  const priority = priorityInfo(subject.prioridade);
-  const planningSubject = subjectPlanningCapacity(subject);
-  const objectiveImportance = Number(planningSubject.examImportance?.questionCount) > 0
-    && ["current-edital", "previous-edital"].includes(planningSubject.examImportance?.sourceType);
-  const priorityBadge = row.querySelector(`[data-priority="${index}"]`);
-  if (priorityBadge) {
-    priorityBadge.textContent = `${priority.label} · ${priority.percent}%`;
-    priorityBadge.className = `priority-badge ${priority.className}`;
-  }
-  const weight = row.querySelector(`[data-priority-weight="${index}"]`);
-  if (weight) weight.textContent = objectiveImportance ? `${Math.round(Number(planningSubject.examImportance.importanceScore || 0) * 100)}%` : String(Number(subject.peso) || 3);
-  const difficulty = row.querySelector(`[data-priority-difficulty="${index}"]`);
-  if (difficulty) difficulty.textContent = String(Number(subject.dominio) || 3);
-  const panel = row.querySelector(`[data-priority-panel="${index}"]`);
-  if (panel) panel.outerHTML = priorityEditPanel(subject, index, priority);
-  const examWeight = els.examStructureGrid?.querySelector(`[data-exam-structure="${index}"][data-exam-field="weight"]`);
-  if (examWeight && !objectiveImportance) examWeight.value = String(Number(subject.peso) || 3);
-  renderPrioritySummary(state.planningBase?.materias || []);
+  return priorityPerformanceMeasure("updatePriorityRow", () => {
+    const priority = priorityInfo(subject.prioridade);
+    const importance = subject.examImportance || {};
+    const objectiveImportance = Number(importance.questionCount) > 0
+      && ["current-edital", "previous-edital"].includes(importance.sourceType);
+    const priorityBadge = row.querySelector(`[data-priority="${index}"]`);
+    if (priorityBadge) {
+      priorityBadge.textContent = `${priority.label} · ${priority.percent}%`;
+      priorityBadge.className = `priority-badge ${priority.className}`;
+    }
+    const weight = row.querySelector(`[data-priority-weight="${index}"]`);
+    if (weight) weight.textContent = objectiveImportance ? `${Math.round(Number(importance.importanceScore || 0) * 100)}%` : String(Number(subject.peso) || 3);
+    const difficulty = row.querySelector(`[data-priority-difficulty="${index}"]`);
+    if (difficulty) difficulty.textContent = String(Number(subject.dominio) || 3);
+    row.querySelectorAll(`[data-scale-index="${index}"]`).forEach((button) => {
+      const selected = Number(button.dataset.scaleValue) === Number(subject[button.dataset.scaleField]);
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    const panelBadge = row.querySelector(`[data-priority-panel-badge="${index}"]`);
+    if (panelBadge) {
+      panelBadge.textContent = `Prioridade de estudo: ${priority.label} · ${priority.percent}%`;
+      panelBadge.className = `priority-badge ${priority.className}`;
+    }
+    const examWeight = els.examStructureGrid?.querySelector(`[data-exam-structure="${index}"][data-exam-field="weight"]`);
+    if (examWeight && !objectiveImportance) examWeight.value = String(Number(subject.peso) || 3);
+    const metrics = priorityPerformanceSnapshot();
+    if (metrics) metrics.domUpdates += 1;
+  });
+}
+
+function priorityExplanationMarkup(explanation = {}) {
+  return (explanation.mainReasons || []).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+}
+
+function schedulePriorityIdleWork(work, timeout = 800) {
+  const run = () => {
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(work, { timeout });
+    else window.setTimeout(work, Math.min(timeout, 120));
+  };
+  return run;
+}
+
+function schedulePriorityExplanationRefresh(index, revision) {
+  clearTimeout(priorityExplanationTimer);
+  priorityExplanationTimer = setTimeout(schedulePriorityIdleWork(() => {
+    if (revision !== priorityChangeRevision || priorityEditIndex !== index) return;
+    const subject = state.planningBase?.materias?.[index];
+    const list = els.planningGrid?.querySelector(`[data-priority-explanation="${index}"]`);
+    if (!subject || !list) return;
+    const explanation = explainPriority(subject);
+    list.innerHTML = priorityExplanationMarkup(explanation);
+  }, 800), 260);
+}
+
+function schedulePrioritySummaryRefresh() {
+  clearTimeout(prioritySummaryTimer);
+  prioritySummaryTimer = setTimeout(schedulePriorityIdleWork(() => renderPrioritySummary(state.planningBase?.materias || []), 800), 260);
 }
 
 function applyPriorityScaleChange(index, field, value) {
@@ -5048,9 +5159,10 @@ function applyPriorityScaleChange(index, field, value) {
   if (!subject || !["peso", "dominio"].includes(field) || !Number.isFinite(value)) return false;
   const nextValue = Math.max(1, Math.min(5, value));
   if (Number(subject[field]) === nextValue) return false;
+  ensurePriorityLongTaskObserver();
   const clickStartedAt = focusPerformanceNow();
   subject[field] = nextValue;
-  subject.prioridade = priorityScore(subject);
+  subject.prioridade = priorityPerformanceMeasure("priorityScore", () => priorityScore(subject));
   priorityEditIndex = index;
   priorityChangeRevision += 1;
   recordPriorityPerformance({
@@ -5059,12 +5171,15 @@ function applyPriorityScaleChange(index, field, value) {
     lastClick: { field, index, at: new Date().toISOString() },
   });
   updatePriorityRow(subject, index);
+  invalidatePriorityDerivedCaches();
+  schedulePriorityExplanationRefresh(index, priorityChangeRevision);
+  schedulePrioritySummaryRefresh();
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => recordPriorityPerformance({ lastVisualMs: Math.round((focusPerformanceNow() - clickStartedAt) * 10) / 10 }));
   } else {
     recordPriorityPerformance({ lastVisualMs: Math.round((focusPerformanceNow() - clickStartedAt) * 10) / 10 });
   }
-  scheduleAutoSave({ source: "priority" });
+  scheduleAutoSave({ invalidate: false, source: "priority" });
   return true;
 }
 
@@ -5675,6 +5790,7 @@ function macroTopicFor(materia = "", assunto = "") {
 }
 
 function masteryDiagnosisForTarget(target = {}, { performanceTrace = null } = {}) {
+  return priorityPerformanceMeasure("masteryDiagnosisForTarget", () => {
   const engine = window.MasteryDiagnosis;
   const materia = target.materia || "";
   const assunto = target.assunto || "";
@@ -5762,9 +5878,11 @@ function masteryDiagnosisForTarget(target = {}, { performanceTrace = null } = {}
   masteryDiagnosisCache.set(cacheKey, result);
   return result;
   }, { materia, assunto, subarea });
+  });
 }
 
 function adaptivePriorityAdjustment(target = {}) {
+  return priorityPerformanceMeasure("adaptivePriorityAdjustment", () => {
   const materia = target.materia || "";
   const assunto = target.assunto || "";
   const mastery = masteryDiagnosisForTarget(target);
@@ -5790,6 +5908,7 @@ function adaptivePriorityAdjustment(target = {}) {
     basis: mastery.basis,
     hasContact: mastery.hasContact,
   };
+  });
 }
 
 function adaptivePriorityReason(target = {}, data = adaptivePriorityAdjustment(target)) {
@@ -5878,17 +5997,18 @@ function buildLearningDiagnosisModel(topics) {
 }
 
 function learningDiagnosisModel() {
-  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
+  const revision = priorityDerivedCacheRevision();
+  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === revision) return learningDiagnosisModelCache;
   const topics = learningDiagnosisTopics().map(learningDiagnosisTopic);
   learningDiagnosisModelCache = buildLearningDiagnosisModel(topics);
-  learningDiagnosisModelRevision = errorAnalysisRevision;
+  learningDiagnosisModelRevision = revision;
   return learningDiagnosisModelCache;
 }
 
 async function learningDiagnosisModelForModal({ onProgress = null, performanceTrace = null } = {}) {
-  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === errorAnalysisRevision) return learningDiagnosisModelCache;
-  if (learningDiagnosisModelBuildPromise && learningDiagnosisModelBuildRevision === errorAnalysisRevision) return learningDiagnosisModelBuildPromise;
-  const revision = errorAnalysisRevision;
+  const revision = priorityDerivedCacheRevision();
+  if (learningDiagnosisModelCache && learningDiagnosisModelRevision === revision) return learningDiagnosisModelCache;
+  if (learningDiagnosisModelBuildPromise && learningDiagnosisModelBuildRevision === revision) return learningDiagnosisModelBuildPromise;
   learningDiagnosisModelBuildRevision = revision;
   learningDiagnosisModelBuildPromise = (async () => {
     const sourceTopics = learningDiagnosisTopics();
@@ -5902,7 +6022,7 @@ async function learningDiagnosisModelForModal({ onProgress = null, performanceTr
       }
     }
     const model = buildLearningDiagnosisModel(topics);
-    if (revision === errorAnalysisRevision) {
+    if (revision === priorityDerivedCacheRevision()) {
       learningDiagnosisModelCache = model;
       learningDiagnosisModelRevision = revision;
     }
@@ -5910,7 +6030,7 @@ async function learningDiagnosisModelForModal({ onProgress = null, performanceTr
   })().finally(() => {
     if (learningDiagnosisModelBuildRevision === revision) {
       learningDiagnosisModelBuildPromise = null;
-      learningDiagnosisModelBuildRevision = -1;
+      learningDiagnosisModelBuildRevision = "";
     }
   });
   return learningDiagnosisModelBuildPromise;
@@ -5965,17 +6085,18 @@ function strategicPlanningRowsByKey() {
 }
 
 function strategicPlanningTopics() {
-  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === errorAnalysisRevision) return strategicPlanningTopicsCache;
+  const revision = priorityDerivedCacheRevision();
+  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === revision) return strategicPlanningTopicsCache;
   const rowsByKey = strategicPlanningRowsByKey();
   const topics = learningDiagnosisModel().topics.map((topic) => strategicPlanningTopic(topic, rowsByKey));
   strategicPlanningTopicsCache = topics;
-  strategicPlanningTopicsRevision = errorAnalysisRevision;
+  strategicPlanningTopicsRevision = revision;
   return topics;
 }
 
 async function strategicPlanningTopicsForModal({ onProgress = null, performanceTrace = null } = {}) {
-  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === errorAnalysisRevision) return strategicPlanningTopicsCache;
-  const revision = errorAnalysisRevision;
+  const revision = priorityDerivedCacheRevision();
+  if (strategicPlanningTopicsCache && strategicPlanningTopicsRevision === revision) return strategicPlanningTopicsCache;
   const rowsByKey = strategicPlanningRowsByKey();
   const diagnosisModel = await measureFocusPerformance(performanceTrace, "learningDiagnosisModel", () => learningDiagnosisModelForModal({ onProgress, performanceTrace }));
   const topics = [];
@@ -5986,7 +6107,7 @@ async function strategicPlanningTopicsForModal({ onProgress = null, performanceT
       await strategicPerfYield(performanceTrace);
     }
   }
-  if (revision === errorAnalysisRevision) {
+  if (revision === priorityDerivedCacheRevision()) {
     strategicPlanningTopicsCache = topics;
     strategicPlanningTopicsRevision = revision;
   }
@@ -6210,22 +6331,23 @@ async function buildCurrentAIStrategicSnapshotAsync({ now = new Date().toISOStri
 }
 
 function strategicAdvisorModel() {
-  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
+  const revision = priorityDerivedCacheRevision();
+  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === revision) return strategicAdvisorModelCache;
   const topics = strategicPlanningTopics();
   strategicAdvisorModelCache = window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] };
-  strategicAdvisorModelRevision = errorAnalysisRevision;
+  strategicAdvisorModelRevision = revision;
   return strategicAdvisorModelCache;
 }
 
 async function strategicAdvisorModelForModal({ performanceTrace = null, onProgress = null } = {}) {
-  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === errorAnalysisRevision) return strategicAdvisorModelCache;
-  if (strategicAdvisorModelBuildPromise && strategicAdvisorModelBuildRevision === errorAnalysisRevision) return strategicAdvisorModelBuildPromise;
-  const revision = errorAnalysisRevision;
+  const revision = priorityDerivedCacheRevision();
+  if (strategicAdvisorModelCache && strategicAdvisorModelRevision === revision) return strategicAdvisorModelCache;
+  if (strategicAdvisorModelBuildPromise && strategicAdvisorModelBuildRevision === revision) return strategicAdvisorModelBuildPromise;
   strategicAdvisorModelBuildRevision = revision;
   strategicAdvisorModelBuildPromise = (async () => {
     const topics = await measureFocusPerformance(performanceTrace, "strategicPlanningTopicsForModal", () => strategicPlanningTopicsForModal({ onProgress, performanceTrace }));
     const model = measureFocusPerformance(performanceTrace, "strategicAdvisorModel build", () => window.StrategicAdvisor?.build?.({ topics }) || { summary: [], priorities: [], reduceLoad: [], maintain: [], watch: [], building: [], insufficientEvidence: [], bottlenecks: [], positiveSignals: [], mixedSubjects: [], topicStates: [] });
-    if (revision === errorAnalysisRevision) {
+    if (revision === priorityDerivedCacheRevision()) {
       strategicAdvisorModelCache = model;
       strategicAdvisorModelRevision = revision;
     }
@@ -6233,7 +6355,7 @@ async function strategicAdvisorModelForModal({ performanceTrace = null, onProgre
   })().finally(() => {
     if (strategicAdvisorModelBuildRevision === revision) {
       strategicAdvisorModelBuildPromise = null;
-      strategicAdvisorModelBuildRevision = -1;
+      strategicAdvisorModelBuildRevision = "";
     }
   });
   return strategicAdvisorModelBuildPromise;
@@ -15569,7 +15691,7 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
     return cloudSavePromise;
   }
   clearTimeout(cloudSaveTimer);
-  const data = snapshot || captureAppState();
+  const data = snapshot || priorityPerformanceMeasure("captureAppState", () => captureAppState());
   const plan = activePlan();
   if (!plan) return false;
   const priorityRevisionAtRequest = priorityChangeRevision;
@@ -15579,7 +15701,8 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
     const metrics = priorityPerformanceSnapshot();
     if (metrics) {
       metrics.supabaseRequests += 1;
-      metrics.lastPayloadBytes = JSON.stringify(data).length;
+      // O tamanho é preenchido pelo adaptador de nuvem somente em desenvolvimento,
+      // para não serializar o mesmo estado duas vezes em produção.
     }
   }
   updateSaveStatus({ state: "saving", destination: "cloud" });
@@ -15689,7 +15812,7 @@ function yieldForPaint({ frames = 1 } = {}) {
 async function saveAppStateNow(label = "Salvo", { changes = true, force = false, performanceTrace = null, source = "" } = {}) {
   if (isRestoring || !state.currentPlanId) return Promise.resolve(false);
   if (changes) {
-    invalidateDerivedStudyCaches();
+    if (source !== "priority") invalidateDerivedStudyCaches();
     markUnsavedChanges();
   }
   if (cloudIsPrimary() && !force && !changes && !state.hasUnsavedChanges && !cloudSavePromise && !cloudSaveTimer) {
@@ -15697,7 +15820,7 @@ async function saveAppStateNow(label = "Salvo", { changes = true, force = false,
     return true;
   }
   await yieldForInteraction();
-  const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => captureAppState());
+  const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => priorityPerformanceMeasure("captureAppState", () => captureAppState()));
   if (state.dataSource === "cloud-unavailable") {
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;

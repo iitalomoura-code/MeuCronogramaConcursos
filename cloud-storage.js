@@ -38,6 +38,7 @@
       table: context.table || null,
       hasPlanId: Boolean(context.planId),
       payloadBytes: Number(context.payloadBytes) || 0,
+      serializationMs: Math.round((Number(context.serializationMs) || 0) * 10) / 10,
       durationMs: Math.round((Number(context.durationMs) || 0) * 10) / 10,
       confirmed: Boolean(context.confirmed),
     });
@@ -57,7 +58,11 @@
     if (!window.supabaseConfiguration?.isConfigured || !window.supabaseClient) {
       throw cloudError("A integra\u00e7\u00e3o com o banco ainda n\u00e3o foi configurada.", "config_missing");
     }
-    const result = await window.authGate.getCurrentUser();
+    // A sessão já foi carregada pela proteção da página. Reutilizá-la evita uma
+    // consulta de autenticação adicional em cada UPDATE; o JWT continua sendo
+    // validado pelo Supabase e uma sessão expirada ainda falha no próprio UPDATE.
+    const cachedUser = window.authGate?.getAuthenticatedUser?.();
+    const result = cachedUser ? { user: cachedUser, error: null } : await window.authGate.getCurrentUser();
     if (result.error || !result.user) {
       throw result.error || cloudError("Sua sess\u00e3o expirou. Entre novamente.", "session_expired");
     }
@@ -126,7 +131,7 @@
     const { data, error } = await window.supabaseClient
       .from("study_plans")
       .insert(payload)
-      .select(PLAN_FIELDS)
+      .select(PLAN_LIST_FIELDS)
       .single();
     if (error) throwCloudFailure("criar planejamento", error, { table: "study_plans", userId: user.id });
     return requireConfirmedRecord(data, "criar planejamento", { table: "study_plans", userId: user.id });
@@ -146,14 +151,19 @@
       updated_at: new Date().toISOString(),
     };
     const requestStartedAt = typeof performance?.now === "function" ? performance.now() : Date.now();
-    const payloadBytes = JSON.stringify(update.data).length;
+    const serializationStartedAt = requestStartedAt;
+    // Medição de bytes é limitada ao ambiente de desenvolvimento. Em produção,
+    // o cliente Supabase serializa apenas uma vez, ao enviar a requisição.
+    const serializedPayload = isDevelopmentEnvironment() ? JSON.stringify(update.data) : "";
+    const payloadBytes = serializedPayload ? new TextEncoder().encode(serializedPayload).byteLength : 0;
+    const serializationMs = (typeof performance?.now === "function" ? performance.now() : Date.now()) - serializationStartedAt;
     const { data, error } = await window.supabaseClient
       .from("study_plans")
       .update(update)
       .eq("id", planId)
       .eq("user_id", user.id)
       .eq("version", expectedVersion)
-      .select(PLAN_FIELDS)
+      .select(PLAN_LIST_FIELDS)
       .maybeSingle();
     if (error) throwCloudFailure("atualizar planejamento", error, { table: "study_plans", userId: user.id, planId });
     if (data) {
@@ -162,9 +172,13 @@
         table: "study_plans",
         planId,
         payloadBytes,
+        serializationMs,
         durationMs: (typeof performance?.now === "function" ? performance.now() : Date.now()) - requestStartedAt,
         confirmed: true,
       });
+      if (isDevelopmentEnvironment() && window.__priorityPerformance) {
+        window.__priorityPerformance.lastPayloadBytes = payloadBytes;
+      }
       return record;
     }
 

@@ -35,7 +35,7 @@ const appStart = section("async function startMeuCronogramaApp", "window.startMe
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
 assert.ok(appStart.includes("presentStartupHydrationShell(startupTrace)") && appStart.includes("await yieldForPaint({ frames: 1 })"), "A tela Continuar precisa ser exibida e pintada antes do carregamento remoto.");
 assert.ok(!appStart.includes("restoreAppState({ cacheOnly: true })"), "A abertura não pode usar uma cópia local antes do planejamento online.");
-assert.ok(index.includes('app.js?v=20260921-save-message'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
+assert.ok(index.includes('app.js?v=20260921-priority-critical-path'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
 assert.ok(!index.includes('src="./vendor/lucide.min.js"') && !index.includes('src="./vendor/mammoth.browser.min.js"') && !index.includes('src="./vendor/quill.js"'), "Bibliotecas de ícones, DOCX e resumos não devem bloquear a entrada no cronograma.");
 assert.ok(app.includes("function loadOnDemandVendor") && app.includes('"load interface icons"'), "Recursos opcionais devem ser carregados fora da fase crítica da abertura.");
 assert.ok(app.includes("async function ensureMammothReader") && app.includes("const mammoth = await ensureMammothReader()"), "A importação DOCX deve carregar seu leitor apenas quando o usuário escolher um arquivo.");

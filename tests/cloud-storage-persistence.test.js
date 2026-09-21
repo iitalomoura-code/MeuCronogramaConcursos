@@ -13,7 +13,7 @@ afterEach(() => {
   else global.window = originalWindow;
 });
 
-function installStorage({ user = { id: "user-1" }, authError = null, client, logs = [] } = {}) {
+function installStorage({ user = { id: "user-1" }, cachedUser = null, authError = null, client, logs = [] } = {}) {
   delete require.cache[storagePath];
   global.window = {
     location: { hostname: "localhost" },
@@ -22,6 +22,7 @@ function installStorage({ user = { id: "user-1" }, authError = null, client, log
     supabaseClient: client,
     authGate: {
       getCurrentUser: async () => ({ user, error: authError }),
+      getAuthenticatedUser: () => cachedUser,
     },
   };
   require(storagePath);
@@ -91,10 +92,11 @@ test("não permite salvar um planejamento em nome de outro usuário", async () =
 
 test("atualiza e exclui somente depois da confirmação do registro pertencente ao usuário", async () => {
   let updatePayload = null;
+  let updateResponseFields = "";
   const updateChain = {
     update(payload) { updatePayload = payload; return this; },
     eq() { return this; },
-    select() { return this; },
+    select(fields) { updateResponseFields = fields; return this; },
     maybeSingle: async () => ({ data: { id: "plan-1", user_id: "user-1", name: "Receita", data: { saved: true }, version: 2 }, error: null }),
   };
   const deleteChain = {
@@ -117,5 +119,27 @@ test("atualiza e exclui somente depois da confirmação do registro pertencente 
 
   assert.equal(updatePayload.version, 2);
   assert.equal(saved.version, 2);
+  assert.equal(updateResponseFields, "id, user_id, name, version, created_at, updated_at", "o UPDATE devolve somente os metadados necessários, sem baixar o JSONB novamente.");
   assert.equal(deleted, true);
+});
+
+test("reutiliza a identidade autenticada em memória sem consultar a sessão de novo", async () => {
+  let getCurrentUserCalls = 0;
+  const chain = {
+    update() { return this; },
+    eq() { return this; },
+    select() { return this; },
+    maybeSingle: async () => ({ data: { id: "plan-1", user_id: "user-1", name: "Receita", version: 2 }, error: null }),
+  };
+  const app = installStorage({
+    cachedUser: { id: "user-1" },
+    client: { from: () => chain },
+  });
+  global.window.authGate.getCurrentUser = async () => {
+    getCurrentUserCalls += 1;
+    return { user: null, error: new Error("não deveria ser chamado") };
+  };
+
+  await app.updateCloudPlan("plan-1", { name: "Receita", data: { saved: true }, version: 1 });
+  assert.equal(getCurrentUserCalls, 0);
 });

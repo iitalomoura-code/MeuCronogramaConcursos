@@ -17,10 +17,15 @@ const runtime = {
   priorityEditIndex: -1,
   priorityChangeRevision: 0,
   focusPerformanceNow: () => 10,
+  ensurePriorityLongTaskObserver() {},
+  priorityPerformanceMeasure: (_label, work) => work(),
   priorityScore: (subject) => (Number(subject.peso) + Number(subject.dominio)) / 10,
   priorityPerformanceSnapshot: () => priorityMetrics,
   recordPriorityPerformance: (values) => Object.assign(priorityMetrics, values),
   updatePriorityRow: () => { priorityRowUpdates += 1; },
+  invalidatePriorityDerivedCaches() {},
+  schedulePriorityExplanationRefresh() {},
+  schedulePrioritySummaryRefresh() {},
   scheduleAutoSave: (options) => { scheduledAutoSaves.push(options); },
   requestAnimationFrame(callback) { callback(); },
   Date,
@@ -34,6 +39,30 @@ assert.equal(priorityRowUpdates, 10, "cada clique atualiza somente a linha afeta
 assert.equal(scheduledAutoSaves.length, 10, "cada alteração agenda persistência sem aguardar a rede.");
 assert.ok(scheduledAutoSaves.every((entry) => entry.source === "priority"), "a fila identifica alterações de prioridade.");
 assert.ok(!applySource.includes("renderPlanningBase()"), "o clique não pode reconstruir a grade inteira.");
+assert.ok(!applySource.includes("invalidateDerivedStudyCaches"), "a prioridade não pode invalidar todos os caches no clique.");
+
+const largeSubjects = Array.from({ length: 13 }, (_, subjectIndex) => ({
+  materia: `Matéria ${subjectIndex + 1}`,
+  peso: 3,
+  dominio: 3,
+  prioridade: .6,
+  assuntos: Array.from({ length: 11 }, (_, topicIndex) => `Tema ${topicIndex + 1}`),
+}));
+const largeRuntime = {
+  ...runtime,
+  state: {
+    planningBase: { materias: largeSubjects },
+    completedHistory: Array.from({ length: 180 }, (_, index) => ({ materia: `Matéria ${(index % 13) + 1}`, questoes: 10 })),
+    reviews: Array.from({ length: 90 }, (_, index) => ({ materia: `Matéria ${(index % 13) + 1}` })),
+    errors: Array.from({ length: 70 }, (_, index) => ({ materia: `Matéria ${(index % 13) + 1}` })),
+  },
+};
+vm.createContext(largeRuntime);
+vm.runInContext(`${applySource}; this.apply = applyPriorityScaleChange;`, largeRuntime);
+for (const value of [1, 2, 3, 4, 5, 4, 3, 2, 4, 5]) largeRuntime.apply(12, "dominio", value);
+assert.equal(largeRuntime.state.planningBase.materias[12].dominio, 5, "a sequência rápida no planejamento com 13 matérias e 143 temas preserva o último clique.");
+assert.ok(!applySource.includes("explainPriority("), "a explicação adaptativa não pode executar dentro do clique crítico.");
+assert.ok(!applySource.includes("adaptivePriorityAdjustment("), "o clique crítico não pode executar diagnóstico adaptativo.");
 
 const schedulerSource = between("function scheduleCloudSave", "async function flushCloudSave");
 const scheduled = [];
@@ -60,6 +89,17 @@ assert.equal(pending.length, 1, "dez cliques rápidos criam uma única gravaçã
 assert.equal(pending[0].delay, 900, "a prioridade usa debounce curto.");
 pending[0].callback();
 assert.equal(saveCalls.length, 1, "somente uma gravação é disparada após a sequência.");
+
+schedulerRuntime.cloudSavePromise = Promise.resolve(true);
+schedulerRuntime.cloudSaveQueued = false;
+schedulerRuntime.schedule("Salvo", { source: "priority" });
+assert.equal(schedulerRuntime.cloudSaveQueued, true, "alterações durante uma requisição são consolidadas para uma única gravação posterior.");
+
+const priorityRowSource = between("function updatePriorityRow", "function priorityExplanationMarkup");
+assert.ok(!priorityRowSource.includes("outerHTML"), "a linha não pode substituir o painel inteiro a cada clique.");
+assert.ok(priorityRowSource.includes("data-priority-panel-badge") && priorityRowSource.includes("querySelectorAll"), "a linha atualiza somente a seleção e os valores visíveis.");
+assert.ok(app.includes("requestIdleCallback") && app.includes("schedulePriorityExplanationRefresh"), "a explicação detalhada é reagendada para o período ocioso.");
+assert.ok(app.includes("priorityDerivedCacheRevision") && app.includes("invalidatePriorityDerivedCaches"), "modelos dependentes de prioridade ficam obsoletos sem limpar caches de histórico, revisão ou erros.");
 
 assert.ok(app.includes("priorityRevisionAtRequest") && app.includes("priorityConfirmedRevision"), "a confirmação acompanha a revisão enviada e não descarta alterações mais novas.");
 assert.ok(app.includes("supabaseRequests") && app.includes("lastPayloadBytes"), "métricas locais registram chamadas, duração e tamanho do payload sem conteúdo sensível.");
