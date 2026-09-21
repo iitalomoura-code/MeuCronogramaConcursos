@@ -3,7 +3,6 @@
   const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
   const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
   const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
-  const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
   const THEME_KEY = "meu-cronograma-theme";
 
   const elements = {
@@ -190,28 +189,11 @@
     if (last) last.textContent = relativeDate(summary.lastStudy);
   }
 
-  function saveCloudCache(record) {
-    const userId = record.user_id || window.authGate?.getAuthenticatedUser?.()?.id || "";
-    if (!record?.id || !record?.data || !userId) return;
-    try {
-      localStorage.setItem(`${CLOUD_CACHE_PREFIX}:${record.id}`, JSON.stringify({
-        source: "cloud-cache",
-        id: record.id,
-        userId,
-        name: record.name || "Novo concurso",
-        version: Number(record.version) || 1,
-        updatedAt: record.updated_at || new Date().toISOString(),
-        data: record.data,
-      }));
-    } catch {}
-  }
-
   async function hydratePlan(plan) {
     try {
       const record = await window.loadCloudPlan(plan.id);
       const index = plans.findIndex((item) => item.id === record.id);
       if (index >= 0) plans[index] = record;
-      saveCloudCache(record);
       updatePlanCard(record);
     } catch {
       const card = elements.grid?.querySelector(`[data-plan-card="${CSS.escape(plan.id)}"]`);
@@ -278,7 +260,6 @@
     try {
       if (action === "delete") {
         await window.deleteCloudPlan(planId);
-        localStorage.removeItem(`${CLOUD_CACHE_PREFIX}:${planId}`);
         if (localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY) === planId) localStorage.removeItem(ACTIVE_CLOUD_PLAN_KEY);
         if (localStorage.getItem(ACTIVE_STUDY_PLAN_KEY) === planId) localStorage.removeItem(ACTIVE_STUDY_PLAN_KEY);
         plans = plans.filter((item) => item.id !== planId);
@@ -298,7 +279,6 @@
         });
         const index = plans.findIndex((item) => item.id === planId);
         if (index >= 0) plans[index] = updated;
-        saveCloudCache(updated);
         renderPlans();
         updatePlanCard(updated);
         showFeedback("Cronograma renomeado.");

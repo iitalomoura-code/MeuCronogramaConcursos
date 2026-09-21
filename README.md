@@ -6,7 +6,7 @@ O projeto funciona somente com HTML, CSS e JavaScript. Após o login, os planeja
 
 ## Acesso online
 
-O acesso por e-mail e senha usa Supabase Auth. Os planejamentos da conta usam a tabela `public.study_plans`; o navegador continua guardando um cache local temporário e os backups JSON permanecem disponíveis.
+O acesso por e-mail e senha usa Supabase Auth. Os planejamentos da conta usam a tabela `public.study_plans` como única fonte de dados: o aplicativo não grava cópias locais dos dados de estudo nem os usa para restaurar a tela. Preferências visuais, o planejamento atualmente selecionado e a sessão autenticada permanecem no navegador apenas para a experiência de uso.
 
 Antes de publicar, preencha somente os dois valores públicos em `supabase-config.js`:
 
@@ -27,13 +27,13 @@ A Base Permanente de Conhecimento usa também `public.user_knowledge_bases`, e o
 supabase db push --linked
 ```
 
-No projeto de produção vinculado, as migrations `20260911`, `20260912` e `20260913` já estão aplicadas. A interface conserva uma cópia local de segurança quando a sincronização falha e informa o erro em vez de confirmar uma gravação não reconhecida pelo banco.
+No projeto de produção vinculado, as migrations `20260911`, `20260912` e `20260913` já estão aplicadas. Quando a sincronização falha, a interface preserva os campos em memória na sessão atual e informa o erro; ela não confirma o salvamento nem cria cópia persistente no navegador.
 
-Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. Um cache temporário da conta pode ser usado para a primeira pintura, mas a versão recebida do Supabase é sempre a fonte definitiva. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
+Após o login, a aplicação busca os planejamentos online, abre o último utilizado e salva alterações automaticamente com debounce de aproximadamente 1,5 segundo. A versão recebida do Supabase é sempre a fonte definitiva. O campo `version` evita que uma alteração de outro aparelho seja sobrescrita silenciosamente: o usuário escolhe carregar a versão online ou salvar sua versão como cópia.
 
 Ao abrir, atualizar a página, trocar de planejamento ou voltar para uma aba em segundo plano, a versão online mais recente é aplicada automaticamente quando não existem alterações locais pendentes. A confirmação só aparece se houver edição local ainda não salva concorrendo com uma versão mais nova da conta.
 
-Na primeira entrada, planejamentos antigos deste navegador são detectados e podem ser adicionados à conta. A migração é sempre explícita e nunca apaga os dados antigos antes da confirmação.
+Backups JSON continuam sendo uma exportação manual opcional; ao importá-los enquanto conectado, o conteúdo é gravado no Supabase.
 
 ## Arquivos principais
 
@@ -55,7 +55,7 @@ Na primeira entrada, planejamentos antigos deste navegador são detectados e pod
 - Revisões.
 - Caderno de resumos.
 - Painel de evolução.
-- Salvamento online por conta, com cache temporário de segurança.
+- Salvamento online por conta, confirmado pelo Supabase.
 - Backup e importação de backup em JSON.
 
 ## Publicar no GitHub Pages
@@ -74,16 +74,11 @@ Arquivos como `meu-cronograma-concursos-dados.json`, backups e pastas `backup-*`
 
 ## Observação
 
-Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abertos em outro computador após o login na mesma conta. O cache temporário não substitui automaticamente a versão online; ele serve apenas para carregamento rápido, recuperação de conexão e migração explícita.
+Com a tabela e as políticas configuradas, os mesmos planejamentos podem ser abertos em outro computador após o login na mesma conta. O Supabase é a única fonte dos dados de estudo: se a conexão falhar, a edição em curso permanece somente na memória daquela aba até que seja salva ou descartada.
 
-### Chaves locais mantidas
+### Armazenamento no navegador
 
-- `meu-cronograma-theme`: preferência de tema claro ou noite.
-- `meuCronogramaPlanoNuvemAtivo` e `meuCronogramaCloudCache:<id>`: identificação e cache temporário do último planejamento online; o cache é associado ao usuário autenticado.
-- `planejaConcursosPlanos`, `planejaConcursosPlanoAtivo`, `planejaConcursosEstado:<id>` e `planejaConcursosEstado`: planejamentos legados, preservados apenas para migração explícita e uso offline temporário.
-- `conteudoProgramaticoHistorico`: até 20 importações recentes para reaproveitar texto do edital durante a revisão.
-- `meuCronogramaMigracoesNuvem` e `meuCronogramaMigracaoNuvemDispensada`: registro de migrações confirmadas ou dispensadas.
-- `meuCronogramaUltimoBackup`: data do último backup exportado, sem conteúdo do planejamento.
+O navegador mantém somente a sessão autenticada, a preferência de tema, o identificador do planejamento aberto e a data do último backup exportado. Nenhum conteúdo de estudo, histórico, caderno, ciclo, resultado ou base permanente é gravado localmente para restauração posterior.
 
 Projeto preparado para publicação no GitHub Pages.
 

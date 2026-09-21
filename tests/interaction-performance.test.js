@@ -41,7 +41,7 @@ assert.ok(app.includes("function scheduleContinuePanelRefresh"), "A reconstruç�
 assert.ok(app.includes("window.requestIdleCallback(render, { timeout: 900 })"), "O painel completo deve aguardar um período ocioso depois do card crítico.");
 assert.ok(app.includes('saveAppStateNow(label, { changes: false, force: true, performanceTrace })'), "Persistir apenas o estado da sessão não pode invalidar diagnóstico e prioridade.");
 assert.ok(app.includes("function createFocusPerformanceTrace"), "O modo foco deve expor perfil temporário somente em desenvolvimento.");
-assert.ok(app.includes("function scheduleCloudCacheWrite"), "A cópia local grande deve aguardar um período ocioso do navegador.");
+assert.ok(!app.includes("scheduleCloudCacheWrite"), "O aplicativo não deve criar cópias locais grandes dos dados de estudo.");
 assert.ok(app.includes("function invalidateDerivedStudyCaches"), "Cálculos derivados devem ter invalidação explícita.");
 assert.ok(app.includes("function continueDerivedSnapshot"), "A tela Continuar deve concentrar leituras reutilizáveis em um snapshot derivado.");
 assert.ok(app.includes("window.ContinueRecommendation.rank"), "A ordenação da recomendação deve ficar fora do renderizador da tela.");

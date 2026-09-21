@@ -10,8 +10,8 @@ const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 const startup = app.slice(app.indexOf("async function startMeuCronogramaApp"));
 const newEntry = startup.indexOf('if (entryAction === "new")');
-const regularRestore = startup.indexOf("restoreAppState({ cacheOnly: true })");
-assert.ok(newEntry >= 0 && newEntry < regularRestore, "Novo cronograma deve abrir antes de restaurar qualquer planejamento anterior.");
+assert.ok(newEntry >= 0, "Novo cronograma deve abrir sem restaurar planejamento anterior.");
+assert.ok(!startup.includes("restoreAppState({ cacheOnly: true })"), "Novo cronograma não pode depender de restauração local.");
 assert.ok(startup.includes("applyAppSnapshot(blankAppSnapshot())"), "A tela de criação deve usar um snapshot vazio.");
 assert.ok(startup.includes("openNewPlanModal({ returnToPlans: true })"), "Cancelar a criação iniciada pela seleção deve retornar à lista.");
 assert.ok(app.includes("async function initializeNewPlanCloudSource") && app.includes("newPlanCloudReadyPromise = initializeNewPlanCloudSource()"), "A lista online deve carregar sem abrir os dados de outro planejamento.");

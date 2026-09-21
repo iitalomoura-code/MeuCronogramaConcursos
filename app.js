@@ -1,12 +1,7 @@
-const STORAGE_KEY = "conteudoProgramaticoHistorico";
-const APP_STATE_KEY = "planejaConcursosEstado";
-const PLANS_INDEX_KEY = "planejaConcursosPlanos";
-const ACTIVE_PLAN_KEY = "planejaConcursosPlanoAtivo";
 const ACTIVE_CLOUD_PLAN_KEY = "meuCronogramaPlanoNuvemAtivo";
 const ACTIVE_STUDY_PLAN_KEY = "meuCronogramaCronogramaAtivo";
 const APP_ENTRY_ACTION_KEY = "meuCronogramaAcaoEntrada";
 const APP_ENTRY_TAB_KEY = "meuCronogramaAbaEntrada";
-const CLOUD_CACHE_PREFIX = "meuCronogramaCloudCache";
 const KNOWLEDGE_BASE_CACHE_PREFIX = "meuCronogramaBaseConhecimento";
 const CLOUD_SAVE_DELAY = 3000;
 const FOCUS_SESSION_SAVE_DELAY = 700;
@@ -14,7 +9,6 @@ const FOCUS_SESSION_PERSIST_INTERVAL = 60000;
 const FOCUS_SESSION_LONG_RUNNING_LIMIT = 12 * 60 * 60;
 const CLOUD_MIGRATION_RECORD_KEY = "meuCronogramaMigracoesNuvem";
 const CLOUD_MIGRATION_DISMISSED_KEY = "meuCronogramaMigracaoNuvemDispensada";
-const LEGACY_APP_STATE_KEY = APP_STATE_KEY;
 const APP_THEME_KEY = "meu-cronograma-theme";
 const BACKUP_META_KEY = "meuCronogramaUltimoBackup";
 const EVOLUTION_MIN_SAMPLE_QUESTIONS = 10;
@@ -89,12 +83,12 @@ const state = {
   currentPlanId: "",
   activeStudyPlanId: "",
   plans: [],
-  dataSource: "local-migration",
+  dataSource: "cloud",
   cloudPlanVersion: 0,
   cloudPlanUpdatedAt: "",
   hasUnsavedChanges: false,
   confirmed: false,
-  originalHistory: JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"),
+  originalHistory: [],
   planningBase: null,
   distribution: [],
   generatedBlocks: [],
@@ -3922,7 +3916,7 @@ function addHistory(source, text) {
   const entry = { id: crypto.randomUUID(), source, importedAt: new Date().toISOString(), text };
   state.originalHistory.unshift(entry);
   state.originalHistory = state.originalHistory.slice(0, 20);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.originalHistory));
+  scheduleAutoSave({ invalidate: false });
   renderHistory();
 }
 
@@ -5148,31 +5142,18 @@ function initialDiagnosisReason(materia = "", assunto = "", subarea = "") {
   return "";
 }
 
-function localHistoryInheritanceSources() {
-  return readPlansIndex().filter((plan) => plan?.id && plan.id !== state.currentPlanId).flatMap((plan) => {
-    try {
-      const snapshot = JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "null");
-      return snapshot ? [{ id: plan.id, name: planVisibleName(plan), snapshot }] : [];
-    } catch {
-      return [];
-    }
-  });
-}
-
 async function refreshHistoryInheritanceSources() {
-  const localPlans = readPlansIndex().filter((plan) => plan?.id && plan.id !== state.currentPlanId);
   const remotePlans = cloudIsPrimary() ? state.plans.filter((plan) => plan?.id && plan.id !== state.currentPlanId) : [];
-  const sourceKey = [state.currentPlanId, ...localPlans.map((plan) => `${plan.id}:${plan.updatedAt || ""}`), ...remotePlans.map((plan) => `${plan.id}:${plan.updatedAt || plan.version || ""}`)].join("|");
+  const sourceKey = [state.currentPlanId, ...remotePlans.map((plan) => `${plan.id}:${plan.updatedAt || plan.version || ""}`)].join("|");
   if (historyInheritanceSourcesKey === sourceKey) return historyInheritanceSources;
   if (historyInheritanceLoadPromise) return historyInheritanceLoadPromise;
   historyInheritanceLoadPromise = (async () => {
-    const sources = localHistoryInheritanceSources();
+    const sources = [];
     if (remotePlans.length && window.loadCloudPlan) {
       const remote = await Promise.all(remotePlans.map(async (plan) => {
         try {
-          const cached = readCloudCache(plan.id)?.data;
-          const record = cached ? null : await window.loadCloudPlan(plan.id);
-          const snapshot = cached || record?.data;
+          const record = await window.loadCloudPlan(plan.id);
+          const snapshot = record?.data;
           return snapshot ? { id: plan.id, name: planVisibleName(plan), snapshot } : null;
         } catch {
           return null;
@@ -14492,17 +14473,9 @@ function getActiveTabName() {
   return document.querySelector(".tab-button.active")?.dataset.tabTarget || "continuar";
 }
 
-function planStorageKey(planId) {
-  return `${APP_STATE_KEY}:${planId}`;
-}
-
 function createPlanMeta(name = "Novo concurso") {
   const id = crypto.randomUUID ? crypto.randomUUID() : `plano-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return { id, name, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-}
-
-function cloudCacheKey(planId) {
-  return `${CLOUD_CACHE_PREFIX}:${planId}`;
 }
 
 function cloudIsAvailable() {
@@ -14525,36 +14498,6 @@ function cloudPlanMeta(record = {}) {
   };
 }
 
-function readCloudCache(planId = localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY)) {
-  if (!planId) return null;
-  try {
-    const cache = JSON.parse(localStorage.getItem(cloudCacheKey(planId)) || "null");
-    if (!cache?.id || !cache?.data || cache.id !== planId) return null;
-    const currentUserId = window.authGate?.getAuthenticatedUser?.()?.id || "";
-    if (!currentUserId || cache.userId !== currentUserId) return null;
-    return cache;
-  } catch {
-    return null;
-  }
-}
-
-function saveCloudCache(record, snapshot = record?.data) {
-  if (!record?.id || !snapshot) return;
-  const userId = record.user_id || window.authGate?.getAuthenticatedUser?.()?.id || "";
-  const cache = {
-    source: "cloud-cache",
-    id: record.id,
-    userId,
-    name: record.name || "Novo concurso",
-    version: Number(record.version) || 1,
-    updatedAt: record.updated_at || record.updatedAt || new Date().toISOString(),
-    data: snapshot,
-  };
-  try {
-    localStorage.setItem(cloudCacheKey(record.id), JSON.stringify(cache));
-  } catch {}
-}
-
 function knowledgeBaseUserId() {
   return window.authGate?.getAuthenticatedUser?.()?.id || "local";
 }
@@ -14563,21 +14506,9 @@ function knowledgeBaseStorageKey(userId = knowledgeBaseUserId()) {
   return `${KNOWLEDGE_BASE_CACHE_PREFIX}:${userId || "local"}`;
 }
 
-function readLocalKnowledgeBase() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(knowledgeBaseStorageKey()) || "null");
-    return saved?.schemaVersion ? saved : null;
-  } catch {
-    return null;
-  }
-}
+function readLocalKnowledgeBase() { return null; }
 
-function saveLocalKnowledgeBase(base = knowledgeBaseState) {
-  if (!base?.schemaVersion) return;
-  try {
-    localStorage.setItem(knowledgeBaseStorageKey(), JSON.stringify(base));
-  } catch {}
-}
+function saveLocalKnowledgeBase() {}
 
 function currentKnowledgeMappingReviews() {
   if (!window.KnowledgeBaseStore?.suggestForTopic || !knowledgeBaseState || !state.rows?.length) return { automatic: 0, suggested: [], confirmed: [] };
@@ -14741,13 +14672,6 @@ function localKnowledgeBaseSources() {
     snapshot: captureAppState(),
     sourceType: "current-plan",
   });
-  readPlansIndex().forEach((plan) => {
-    if (!plan?.id || sources.has(plan.id)) return;
-    try {
-      const snapshot = JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "null");
-      if (snapshot) sources.set(plan.id, { id: plan.id, name: planVisibleName(plan), snapshot, sourceType: "local-plan" });
-    } catch {}
-  });
   return sources;
 }
 
@@ -14765,9 +14689,8 @@ async function collectKnowledgeBaseSources() {
   }
   const remote = await Promise.all(plans.filter((plan) => plan?.id).map(async (plan) => {
     try {
-      const cached = readCloudCache(plan.id)?.data;
-      const record = cached ? null : await window.loadCloudPlan(plan.id);
-      const snapshot = cached || record?.data;
+      const record = await window.loadCloudPlan(plan.id);
+      const snapshot = record?.data;
       return snapshot ? { id: plan.id, name: planVisibleName(plan), snapshot, sourceType: "cloud-plan" } : null;
     } catch {
       failures.push(plan.id);
@@ -14901,48 +14824,6 @@ function cancelScheduledCloudCacheWrite() {
   cloudCacheWriteUsesIdleCallback = false;
 }
 
-function scheduleCloudCacheWrite(record, snapshot = record?.data) {
-  if (!record?.id || !snapshot) return;
-  pendingCloudCacheWrite = { record, snapshot };
-  cancelScheduledCloudCacheWrite();
-  const writeLatest = () => {
-    cloudCacheWriteHandle = 0;
-    cloudCacheWriteUsesIdleCallback = false;
-    const pending = pendingCloudCacheWrite;
-    pendingCloudCacheWrite = null;
-    if (pending) saveCloudCache(pending.record, pending.snapshot);
-  };
-  if (typeof window.requestIdleCallback === "function") {
-    cloudCacheWriteUsesIdleCallback = true;
-    cloudCacheWriteHandle = window.requestIdleCallback(writeLatest, { timeout: 5000 });
-  } else {
-    cloudCacheWriteHandle = window.setTimeout(writeLatest, 800);
-  }
-}
-
-function restoreCloudCacheState(cache = readCloudCache()) {
-  if (!cache) return false;
-  const trace = beginStartupHydration(cache.id);
-  startupPerfMark(trace, "snapshotLoadStart");
-  const meta = cloudPlanMeta({
-    id: cache.id,
-    name: cache.name,
-    version: cache.version,
-    created_at: cache.createdAt,
-    updated_at: cache.updatedAt,
-  });
-  state.dataSource = "cloud-cache";
-  state.plans = [meta];
-  state.currentPlanId = meta.id;
-  state.cloudPlanVersion = meta.version;
-  state.cloudPlanUpdatedAt = meta.updatedAt;
-  renderPlanSelect();
-  startupPerfMark(trace, "snapshotLoadEnd");
-  applyAppSnapshot(cache.data);
-  updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
-  return true;
-}
-
 function updateCloudPlanMeta(record) {
   const meta = cloudPlanMeta(record);
   state.plans = state.plans.map((plan) => plan.id === meta.id ? { ...plan, ...meta } : plan);
@@ -14981,41 +14862,7 @@ function migrationCandidateSignature(candidates) {
   return candidates.map((candidate) => candidate.localId).sort().join("|");
 }
 
-function localPlanCandidates() {
-  const migrated = readCloudMigrationRecord();
-  const plans = readPlansIndex();
-  const candidates = plans.map((plan) => {
-    let snapshot = null;
-    try {
-      const raw = localStorage.getItem(planStorageKey(plan.id));
-      snapshot = raw ? JSON.parse(raw) : null;
-    } catch {}
-    if (!snapshot && plan.id === state.currentPlanId && state.dataSource !== "cloud") snapshot = captureAppState();
-    if (!snapshot || typeof snapshot !== "object") return null;
-    const form = snapshot.form || {};
-    const hasContent = Boolean(form.contestName || form.jobRole || snapshot.programText || snapshot.rows?.length || snapshot.generatedBlocks?.length || snapshot.notebook && Object.keys(snapshot.notebook).length);
-    if (!hasContent) return null;
-    return { localId: plan.id, plan, snapshot, name: planVisibleName(plan) || planDisplayName(snapshot), form };
-  }).filter(Boolean);
-  const pending = candidates.filter((candidate) => !migrated[candidate.localId]);
-  if (pending.length) return pending;
-  try {
-    const legacy = JSON.parse(localStorage.getItem(LEGACY_APP_STATE_KEY) || "null");
-    const form = legacy?.form || {};
-    const hasContent = Boolean(form.contestName || form.jobRole || legacy?.programText || legacy?.rows?.length || legacy?.generatedBlocks?.length || legacy?.notebook && Object.keys(legacy.notebook).length);
-    if (!hasContent) return [];
-    const name = form.contestName?.trim() || form.jobRole?.trim() || "Concurso importado";
-    return migrated["legacy-local-plan"] ? [] : [{
-      localId: "legacy-local-plan",
-      plan: { id: "legacy-local-plan", name, createdAt: legacy.savedAt || new Date().toISOString(), updatedAt: legacy.savedAt || new Date().toISOString() },
-      snapshot: legacy,
-      name,
-      form,
-    }];
-  } catch {
-    return [];
-  }
-}
+function localPlanCandidates() { return []; }
 
 function migrationCandidateMarkup(candidate) {
   const contest = candidate.form?.contestName || "Concurso sem nome";
@@ -15088,7 +14935,6 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
   localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
   applyAppSnapshot(record.data || blankAppSnapshot(meta.name));
   renderPlanSelect();
-  scheduleCloudCacheWrite(record);
   updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
   if (preserveCurrentTab) {
     const currentTarget = [...els.tabs].find((button) => button.dataset.tabTarget === currentTab);
@@ -15102,10 +14948,6 @@ async function initializeCloudPlanSource() {
   try {
     const records = await window.listCloudPlans();
     if (!records.length) {
-      if (localPlanCandidates().length) {
-        state.dataSource = "cloud-empty";
-        return false;
-      }
       state.dataSource = "cloud";
       state.plans = [];
       state.currentPlanId = "";
@@ -15119,38 +14961,6 @@ async function initializeCloudPlanSource() {
     state.plans = records.map(cloudPlanMeta);
     const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
-    const matchingCache = readCloudCache(active.id);
-    const currentCacheIsFresh = state.dataSource !== "cloud-unavailable"
-      && state.currentPlanId === active.id
-      && Number(state.cloudPlanVersion) === Number(active.version);
-    if (currentCacheIsFresh) {
-      // A cópia local já passou por applyAppSnapshot. Reidratar exatamente os
-      // mesmos dados novamente era um segundo bloqueio completo no F5.
-      state.activeStudyPlanId = active.id;
-      state.currentPlanId = active.id;
-      state.cloudPlanVersion = active.version;
-      state.cloudPlanUpdatedAt = active.updatedAt;
-      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, active.id);
-      localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, active.id);
-      renderPlanSelect();
-      updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
-      return true;
-    }
-    if (matchingCache && Number(matchingCache.version) === Number(active.version)) {
-      // Só restaure a cópia depois de confirmar a versão. Uma cópia antiga ou
-      // interrompida não pode levar o usuário de volta ao setup antes do
-      // planejamento atual chegar da nuvem.
-      restoreCloudCacheState(matchingCache);
-      state.activeStudyPlanId = active.id;
-      state.currentPlanId = active.id;
-      state.cloudPlanVersion = active.version;
-      state.cloudPlanUpdatedAt = active.updatedAt;
-      localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, active.id);
-      localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, active.id);
-      renderPlanSelect();
-      updateSaveStatus({ state: "saved", destination: "cloud", message: "Sincronizado" });
-      return true;
-    }
     await loadCloudPlanIntoState(active.id, { restoreTab: true });
     return true;
   } catch {
@@ -15237,7 +15047,6 @@ async function migrateSelectedLocalPlans() {
       created.push(record);
       markLocalPlanMigrated(candidate.localId, record.id);
       names.push(cloudPlanMeta(record));
-      saveCloudCache(record, snapshot);
     } catch {
       failures.push(candidate);
     }
@@ -15268,19 +15077,6 @@ function planVisibleName(plan = {}) {
   return plan.customName || plan.name || "Novo concurso";
 }
 
-function readPlansIndex() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PLANS_INDEX_KEY) || "[]");
-    return Array.isArray(saved) ? saved : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePlansIndex(plans = state.plans) {
-  localStorage.setItem(PLANS_INDEX_KEY, JSON.stringify(plans));
-}
-
 function renderPlanSelect() {
   if (!els.planSelect) return;
   els.planSelect.innerHTML = state.plans.map((plan) => `<option value="${plan.id}" ${plan.id === state.currentPlanId ? "selected" : ""}>${escapeHtml(planVisibleName(plan))}</option>`).join("");
@@ -15299,13 +15095,7 @@ function renderPlanSelect() {
 function planRoleFor(plan) {
   if (!plan) return "";
   if (plan.id === state.currentPlanId) return els.jobRole?.value?.trim() || "";
-  try {
-    const cache = JSON.parse(localStorage.getItem(cloudCacheKey(plan.id)) || "null");
-    const snapshot = cache?.data || JSON.parse(localStorage.getItem(planStorageKey(plan.id)) || "{}");
-    return snapshot?.form?.jobRole?.trim() || "";
-  } catch {
-    return "";
-  }
+  return "";
 }
 
 function renderPlanPopover() {
@@ -15405,6 +15195,7 @@ function captureAppState() {
     activeTab: getActiveTabName(),
     form: formState(),
     programText: els.programText.value,
+    originalHistory: state.originalHistory,
     rows: state.rows,
     contentOriginalRows: state.contentOriginalRows,
     contentDraftPendingConfirmation: state.contentDraftPendingConfirmation,
@@ -15458,8 +15249,9 @@ function applyAppSnapshot(saved = {}) {
   try {
    const stateRehydrationStartedAt = startupPerfNow();
    startupPerfMeasure(startupTrace, "reset planning access", () => resetPlanningAccess());
-   startupPerfMeasure(startupTrace, "apply form state", () => applyFormState(saved.form));
+  startupPerfMeasure(startupTrace, "apply form state", () => applyFormState(saved.form));
   els.programText.value = saved.programText || "";
+  state.originalHistory = Array.isArray(saved.originalHistory) ? saved.originalHistory : [];
   state.rows = Array.isArray(saved.rows) ? saved.rows.map(enrichThemeRow) : [];
   state.contentOriginalRows = Array.isArray(saved.contentOriginalRows) ? saved.contentOriginalRows.map(enrichThemeRow) : [];
   state.contentDraftPendingConfirmation = Boolean(saved.contentDraftPendingConfirmation);
@@ -15637,29 +15429,11 @@ function rememberBackupExport(version = 1) {
   renderBackupReminder();
 }
 
-function saveLocalSafetyCopy(snapshot) {
-  if (!state.currentPlanId || !snapshot) return;
-  try {
-    if (cloudIsPrimary()) {
-      const plan = activePlan() || {};
-      saveCloudCache({
-        id: state.currentPlanId,
-        user_id: window.authGate?.getAuthenticatedUser?.()?.id || "",
-        name: planVisibleName(plan),
-        version: state.cloudPlanVersion,
-        updated_at: state.cloudPlanUpdatedAt || new Date().toISOString(),
-      }, snapshot);
-      return;
-    }
-    localStorage.setItem(planStorageKey(state.currentPlanId), JSON.stringify(snapshot));
-    localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
-  } catch {}
-}
+function saveLocalSafetyCopy() {}
 
 function refreshCurrentPlanName(snapshot) {
   const name = planDisplayName(snapshot);
   state.plans = state.plans.map((plan) => plan.id === state.currentPlanId ? { ...plan, name: plan.customName || name, updatedAt: new Date().toISOString() } : plan);
-  if (!cloudIsPrimary()) writePlansIndex();
   renderPlanSelect();
 }
 
@@ -15722,14 +15496,10 @@ async function saveCloudPlanNow(label = "Salvo", snapshot = null, performanceTra
         version: state.cloudPlanVersion,
       }));
       updateCloudPlanMeta(record);
-      scheduleCloudCacheWrite(record, data);
       clearUnsavedChanges();
       updateSaveStatus({ state: "saved", destination: "cloud", message: `Sincronizado às ${formatCloudSaveTime()}` });
       return true;
     } catch (error) {
-      // Uma única cópia local basta quando a rede falha. Antes, o mesmo
-      // snapshot era serializado repetidamente antes e depois de cada envio.
-      saveLocalSafetyCopy(data);
       if (error?.code === "cloud_conflict") {
         if (!state.hasUnsavedChanges) {
           await loadCloudPlanIntoState(state.currentPlanId, { preserveCurrentTab: true });
@@ -15815,16 +15585,12 @@ async function saveAppStateNow(label = "Salvo", { changes = true, force = false,
   await yieldForInteraction();
   const snapshot = measureFocusPerformance(performanceTrace, "capture state", () => captureAppState());
   if (state.dataSource === "cloud-unavailable") {
-    saveLocalSafetyCopy(snapshot);
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;
   }
   if (cloudIsPrimary()) return saveCloudPlanNow(label, snapshot, performanceTrace);
-  measureFocusPerformance(performanceTrace, "local persist", () => saveLocalSafetyCopy(snapshot));
-  updateSaveStatus({ state: "saving", destination: "cache" });
-  refreshCurrentPlanName(snapshot);
-  updateSaveStatus({ state: "saved", destination: "cache", message: "Salvo" });
-  return true;
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível confirmar o salvamento no Supabase." });
+  return false;
 }
 
 function scheduleAutoSave({ invalidate = true } = {}) {
@@ -15838,9 +15604,7 @@ function scheduleAutoSave({ invalidate = true } = {}) {
     scheduleCloudSave("Salvo");
     return;
   }
-  clearTimeout(saveTimer);
-  updateSaveStatus({ state: "pending", destination: "cache" });
-  saveTimer = setTimeout(() => saveAppStateNow("Salvo"), 1000);
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível conectar ao Supabase para salvar." });
 }
 
 function shouldUseGlobalAutoSave(target) {
@@ -15851,74 +15615,7 @@ function shouldUseGlobalAutoSave(target) {
   return Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
 }
 
-function restoreAppState({ preserveDataSource = false, cacheOnly = false, preferCloudCache = true } = {}) {
-  if (!preserveDataSource) {
-    state.dataSource = "local-migration";
-    state.cloudPlanVersion = 0;
-  }
-  if (preferCloudCache && cloudIsAvailable() && restoreCloudCacheState()) return true;
-  if (cacheOnly) return false;
-  state.plans = readPlansIndex();
-  const legacyRaw = localStorage.getItem(LEGACY_APP_STATE_KEY);
-
-  if (!state.plans.length) {
-    const firstPlan = createPlanMeta("Concurso 1");
-    state.plans = [firstPlan];
-    state.currentPlanId = firstPlan.id;
-    writePlansIndex();
-    localStorage.setItem(ACTIVE_PLAN_KEY, firstPlan.id);
-    if (legacyRaw) localStorage.setItem(planStorageKey(firstPlan.id), legacyRaw);
-  }
-
-  state.currentPlanId = localStorage.getItem(ACTIVE_PLAN_KEY) || state.currentPlanId || state.plans[0]?.id || "";
-  if (!state.plans.some((plan) => plan.id === state.currentPlanId)) {
-    state.currentPlanId = state.plans[0]?.id || "";
-  }
-  renderPlanSelect();
-
-  const raw = state.currentPlanId ? localStorage.getItem(planStorageKey(state.currentPlanId)) : "";
-  if (!raw) return false;
-
-  try {
-    const trace = beginStartupHydration(state.currentPlanId);
-    startupPerfMark(trace, "snapshotLoadStart");
-    const snapshot = startupPerfMeasure(trace, "parse local snapshot", () => JSON.parse(raw), "stages");
-    startupPerfMark(trace, "snapshotLoadEnd");
-    applyAppSnapshot(snapshot);
-  } catch (error) {
-    console.error("Falha ao restaurar planejamento:", error);
-    showInitializationError(error);
-    return true;
-  }
-
-  setSaveStatus("Dados restaurados");
-  return true;
-}
-
-function applyDriveDataSnapshot(bundle = {}) {
-  const snapshots = bundle.planSnapshots && typeof bundle.planSnapshots === "object" ? bundle.planSnapshots : {};
-  const snapshotIds = Object.keys(snapshots);
-  const incomingPlans = Array.isArray(bundle.plans)
-    ? bundle.plans.filter((plan) => plan?.id && snapshots[plan.id])
-    : snapshotIds.map((id, index) => ({ id, name: snapshots[id]?.form?.contestName || `Concurso ${index + 1}`, createdAt: snapshots[id]?.savedAt || new Date().toISOString(), updatedAt: snapshots[id]?.savedAt || new Date().toISOString() }));
-
-  if (!incomingPlans.length && bundle.form) {
-    applyAppSnapshot(bundle);
-    return;
-  }
-
-  state.plans = incomingPlans.length ? incomingPlans : [createPlanMeta("Concurso 1")];
-  state.currentPlanId = state.plans.some((plan) => plan.id === bundle.activePlanId) ? bundle.activePlanId : state.plans[0].id;
-  writePlansIndex();
-  state.plans.forEach((plan) => {
-    const snapshot = snapshots[plan.id] || blankAppSnapshot(plan.name);
-    localStorage.setItem(planStorageKey(plan.id), JSON.stringify(snapshot));
-  });
-  localStorage.setItem(ACTIVE_PLAN_KEY, state.currentPlanId);
-  renderPlanSelect();
-  applyAppSnapshot(snapshots[state.currentPlanId] || blankAppSnapshot(state.plans[0].name));
-  if (bundle.knowledgeBase) void restoreKnowledgeBaseFromBackup(bundle.knowledgeBase);
-}
+function restoreAppState() { return false; }
 
 async function restoreKnowledgeBaseFromBackup(imported = {}) {
   if (!window.KnowledgeBase || !imported?.schemaVersion) return null;
@@ -15979,22 +15676,8 @@ async function importBackup(file) {
     await importSnapshotIntoCloud(importedSnapshot, snapshot.knowledgeBase);
     return;
   }
-  if (snapshot?.dataType === "meu-cronograma-concursos-drive-data") {
-    applyDriveDataSnapshot(snapshot);
-    saveAppStateNow("Backup importado");
-    showToast("Backup com planejamentos importado.");
-    return;
-  }
-  if (!state.currentPlanId) {
-    const plan = createPlanMeta("Backup importado");
-    state.plans.push(plan);
-    state.currentPlanId = plan.id;
-    writePlansIndex();
-  }
-  localStorage.setItem(planStorageKey(state.currentPlanId), text);
-  applyAppSnapshot(snapshot);
-  await restoreKnowledgeBaseFromBackup(snapshot.knowledgeBase);
-  saveAppStateNow("Backup importado");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Conecte-se ao Supabase para importar um backup." });
+  showToast("Conecte-se ao Supabase para importar um backup.");
 }
 
 async function importSnapshotIntoCloud(snapshot, importedKnowledgeBase = null) {
@@ -16030,7 +15713,6 @@ async function importSnapshotIntoCloud(snapshot, importedKnowledgeBase = null) {
   try {
     const record = await window.saveCloudPlan({ id: plan.id, name: planVisibleName(plan), data: snapshot, version: state.cloudPlanVersion });
     updateCloudPlanMeta(record);
-    saveCloudCache(record, snapshot);
     applyAppSnapshot(snapshot);
     await restoreKnowledgeBaseFromBackup(importedKnowledgeBase);
     updateSaveStatus({ state: "saved", destination: "cloud", message: "Backup importado no planejamento atual" });
@@ -16113,18 +15795,8 @@ async function switchPlan(planId) {
       return;
     }
   }
-  saveAppStateNow("Salvo");
-  state.currentPlanId = planId;
-  state.activeStudyPlanId = planId;
-  beginStartupHydration(planId);
-  localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, planId);
-  localStorage.setItem(ACTIVE_PLAN_KEY, planId);
-  renderPlanSelect();
-  const raw = localStorage.getItem(planStorageKey(planId));
-  applyAppSnapshot(raw ? JSON.parse(raw) : blankAppSnapshot());
-  const previousTarget = [...els.tabs].find((button) => button.dataset.tabTarget === previousTab);
-  activateTab(previousTarget?.getAttribute("aria-disabled") === "false" ? previousTab : "continuar");
-  setSaveStatus("Planejamento carregado");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível carregar o planejamento do Supabase." });
+  showToast("Não foi possível carregar o planejamento do Supabase.");
 }
 
 function openNewPlanModal({ returnToPlans = false } = {}) {
@@ -16208,7 +15880,6 @@ async function createNewPlan() {
       state.cloudPlanVersion = meta.version;
       localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
       localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, meta.id);
-      saveCloudCache(record, snapshot);
       closeNewPlanModal({ created: true });
       renderPlanSelect();
       applyAppSnapshot(snapshot);
@@ -16221,20 +15892,8 @@ async function createNewPlan() {
     }
     return;
   }
-  state.plans.push(plan);
-  state.currentPlanId = plan.id;
-  state.activeStudyPlanId = plan.id;
-  writePlansIndex();
-  localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
-  localStorage.setItem(ACTIVE_STUDY_PLAN_KEY, plan.id);
-  localStorage.setItem(planStorageKey(plan.id), JSON.stringify(snapshot));
-  closeNewPlanModal({ created: true });
-  renderPlanSelect();
-  applyAppSnapshot(snapshot);
-  setSetupStep(2, { save: false });
-  saveAppStateNow("Novo concurso criado");
-  scheduleKnowledgeBaseBootstrap();
-  switchTab("conteudo");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível criar o planejamento no Supabase." });
+  showToast("Não foi possível criar o planejamento no Supabase.");
 }
 
 function activePlan() {
@@ -16372,7 +16031,6 @@ async function duplicateCurrentPlan() {
       state.currentPlanId = meta.id;
       state.cloudPlanVersion = meta.version;
       localStorage.setItem(ACTIVE_CLOUD_PLAN_KEY, meta.id);
-      saveCloudCache(record, duplicate);
       closeDuplicatePlanModal();
       renderPlanSelect();
       applyAppSnapshot(duplicate);
@@ -16385,17 +16043,8 @@ async function duplicateCurrentPlan() {
     }
     return;
   }
-  state.plans.push(plan);
-  state.currentPlanId = plan.id;
-  writePlansIndex();
-  localStorage.setItem(ACTIVE_PLAN_KEY, plan.id);
-  localStorage.setItem(planStorageKey(plan.id), JSON.stringify(duplicate));
-  closeDuplicatePlanModal();
-  renderPlanSelect();
-  applyAppSnapshot(duplicate);
-  saveAppStateNow("Planejamento duplicado");
-  showToast("Planejamento duplicado sem desempenho, histórico ou revisões.");
-  switchTab("concurso");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível duplicar o planejamento no Supabase." });
+  showToast("Não foi possível duplicar o planejamento no Supabase.");
 }
 
 async function renameCurrentPlan() {
@@ -16416,8 +16065,8 @@ async function renameCurrentPlan() {
     showToast("Planejamento renomeado.");
     return;
   }
-  writePlansIndex();
-  showToast("Planejamento renomeado.");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível renomear o planejamento no Supabase." });
+  showToast("Não foi possível renomear o planejamento no Supabase.");
 }
 
 function openDeletePlanModal() {
@@ -16458,8 +16107,6 @@ async function deleteCurrentPlan() {
       showToast("Não foi possível excluir o planejamento online.");
       return;
     }
-    localStorage.removeItem(cloudCacheKey(deletedId));
-    localStorage.removeItem(planStorageKey(deletedId));
     const remaining = state.plans.filter((item) => item.id !== deletedId);
     closeDeletePlanModal();
     if (remaining.length) {
@@ -16486,30 +16133,8 @@ async function deleteCurrentPlan() {
     }
     return;
   }
-  localStorage.removeItem(planStorageKey(deletedId));
-  let remaining = state.plans.filter((item) => item.id !== deletedId);
-  let nextPlan = newestPlan(remaining);
-  const wasLastPlan = !nextPlan;
-
-  if (!nextPlan) {
-    nextPlan = createPlanMeta("Novo concurso");
-    nextPlan.customName = nextPlan.name;
-    remaining = [nextPlan];
-    localStorage.setItem(planStorageKey(nextPlan.id), JSON.stringify(blankAppSnapshot(nextPlan.name)));
-  }
-
-  state.plans = remaining;
-  state.currentPlanId = nextPlan.id;
-  writePlansIndex();
-  localStorage.setItem(ACTIVE_PLAN_KEY, nextPlan.id);
-  renderPlanSelect();
-  const raw = localStorage.getItem(planStorageKey(nextPlan.id));
-  closeDeletePlanModal();
-  applyAppSnapshot(raw ? JSON.parse(raw) : blankAppSnapshot(planVisibleName(nextPlan)));
-  saveAppStateNow("Planejamento exclu\u00eddo");
-  showToast("Planejamento exclu\u00eddo.");
-  if (wasLastPlan) openNewPlanModal();
-  else switchTab("continuar");
+  updateSaveStatus({ state: "error", destination: "cloud", message: "Não foi possível excluir o planejamento no Supabase." });
+  showToast("Não foi possível excluir o planejamento no Supabase.");
 }
 
 els.tabs.forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tabTarget, button)));
@@ -18468,21 +18093,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("beforeunload", () => {
   if (!isRestoring && state.currentPlanId) {
     syncFocusedSessionToState();
-    const snapshot = captureAppState();
-    saveLocalSafetyCopy(snapshot);
-    if (cloudIsPrimary()) {
-      try {
-        localStorage.setItem(cloudCacheKey(state.currentPlanId), JSON.stringify({
-          source: "cloud-cache",
-          id: state.currentPlanId,
-          userId: window.authGate?.getAuthenticatedUser?.()?.id || "",
-          name: planVisibleName(activePlan() || {}),
-          version: state.cloudPlanVersion,
-          updatedAt: new Date().toISOString(),
-          data: snapshot,
-        }));
-      } catch {}
-    }
+    if (cloudIsPrimary() && state.hasUnsavedChanges) void flushCloudSave("Salvando antes de sair");
   }
 });
 window.addEventListener("pagehide", () => {
@@ -18530,19 +18141,6 @@ async function startMeuCronogramaApp() {
   renderDailyInputs();
   defaultReferenceWeek();
   renderHistory();
-  // Restaura cache online ou snapshot local antes da consulta remota. Assim,
-  // o F5 não exibe o setup vazio enquanto a nuvem confirma a versão atual.
-  const cloudAvailableAtStartup = cloudIsAvailable();
-  // A versão da cópia local é confirmada em initializeCloudPlanSource(). Antes
-  // disso, manter o shell evita montar um setup antigo e logo em seguida trocar
-  // toda a interface pelo planejamento atual.
-  const restoredFromCloudCache = cloudAvailableAtStartup ? false : restoreAppState({ cacheOnly: true });
-  const restoredImmediately = restoredFromCloudCache || (!cloudAvailableAtStartup && restoreAppState({ preserveDataSource: true, preferCloudCache: false }));
-  if (!restoredImmediately && !cloudAvailableAtStartup) {
-    renderRows();
-    updateContestSummary();
-    activateTab("continuar");
-  }
   renderBackupReminder();
   if (window.lucide) window.lucide.createIcons();
   requestAnimationFrame(() => {
@@ -18550,19 +18148,9 @@ async function startMeuCronogramaApp() {
     animatePanelNumbers(getActiveTabName());
   });
   void initializeCloudPlanSource().then((loadedFromCloud) => {
-    const cloudUnavailable = state.dataSource === "cloud-unavailable";
-    if (!loadedFromCloud && (state.dataSource === "cloud-empty" || !restoredImmediately)) {
-      const restoredLegacy = restoreAppState({ preserveDataSource: cloudUnavailable, preferCloudCache: false });
-      if (!restoredLegacy) {
-        renderRows();
-        updateContestSummary();
-        activateTab("continuar");
-      }
-    }
-    if (!loadedFromCloud && cloudUnavailable) {
+    if (!loadedFromCloud && state.dataSource === "cloud-unavailable") {
       updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     }
-    scheduleLocalMigrationPrompt();
     renderBackupReminder();
     // Base Permanente e histórico do Coach não participam da primeira tela.
     // O primeiro entra no período ocioso; o segundo somente quando o

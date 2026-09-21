@@ -17,9 +17,7 @@ assert.ok(startupPerf.includes('entryTypes: ["longtask"]') && startupPerf.includ
 assert.ok(startupPerf.includes("calls") && startupPerf.includes("avgMs") && startupPerf.includes("renders"), "A medição deve consolidar custo por função e contagem de renderizações.");
 
 const cloudInit = section("async function initializeCloudPlanSource", "async function initializeNewPlanCloudSource");
-assert.ok(cloudInit.includes("currentCacheIsFresh") && cloudInit.includes("return true;"), "Uma cópia de nuvem na mesma versão deve encerrar a confirmação sem nova reidratação.");
-assert.ok(cloudInit.indexOf("currentCacheIsFresh") < cloudInit.indexOf("await loadCloudPlanIntoState"), "O teste da cópia fresca deve acontecer antes da leitura completa da nuvem.");
-assert.ok(cloudInit.includes("const matchingCache = readCloudCache(active.id)") && cloudInit.includes("restoreCloudCacheState(matchingCache)"), "A cópia local só pode ser restaurada depois de sua versão ser confirmada pela lista online.");
+assert.ok(cloudInit.includes("await loadCloudPlanIntoState(active.id") && !cloudInit.includes("restoreCloudCacheState"), "A abertura deve carregar o planejamento diretamente do Supabase, sem cache local.");
 
 const applySnapshot = section("function applyAppSnapshot", "function updateSaveStatus");
 assert.ok(!applySnapshot.includes("refreshStudyAlerts();"), "Alertas derivados não podem bloquear a aplicação do snapshot inicial.");
@@ -35,9 +33,9 @@ assert.ok(tabScheduler.indexOf("firstInteractive") < tabScheduler.indexOf("secon
 
 const appStart = section("async function startMeuCronogramaApp", "window.startMeuCronogramaApp");
 assert.ok(!appStart.includes("loadAICoachHistory"), "O histórico do Coach não pode estar no caminho crítico de entrada.");
-assert.ok(appStart.indexOf("presentStartupHydrationShell(startupTrace)") < appStart.indexOf("restoreAppState({ cacheOnly: true })") && appStart.indexOf("await yieldForPaint({ frames: 1 })") < appStart.indexOf("restoreAppState({ cacheOnly: true })"), "A tela Continuar precisa ser exibida e pintada antes de restaurar o planejamento.");
-assert.ok(appStart.includes("const cloudAvailableAtStartup = cloudIsAvailable()") && appStart.includes("!cloudAvailableAtStartup && restoreAppState"), "Uma cópia local não confirmada não deve abrir o setup antes do planejamento online.");
-assert.ok(index.includes('app.js?v=20260917-cycle-tab-render'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
+assert.ok(appStart.includes("presentStartupHydrationShell(startupTrace)") && appStart.includes("await yieldForPaint({ frames: 1 })"), "A tela Continuar precisa ser exibida e pintada antes do carregamento remoto.");
+assert.ok(!appStart.includes("restoreAppState({ cacheOnly: true })"), "A abertura não pode usar uma cópia local antes do planejamento online.");
+assert.ok(index.includes('app.js?v=20260920-supabase-only'), "A página publicada deve receber uma versão nova do app ao atualizar o shell de abertura.");
 assert.ok(!index.includes('src="./vendor/lucide.min.js"') && !index.includes('src="./vendor/mammoth.browser.min.js"') && !index.includes('src="./vendor/quill.js"'), "Bibliotecas de ícones, DOCX e resumos não devem bloquear a entrada no cronograma.");
 assert.ok(app.includes("function loadOnDemandVendor") && app.includes('"load interface icons"'), "Recursos opcionais devem ser carregados fora da fase crítica da abertura.");
 assert.ok(app.includes("async function ensureMammothReader") && app.includes("const mammoth = await ensureMammothReader()"), "A importação DOCX deve carregar seu leitor apenas quando o usuário escolher um arquivo.");

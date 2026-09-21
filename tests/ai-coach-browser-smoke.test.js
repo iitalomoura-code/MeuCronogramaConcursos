@@ -18,7 +18,7 @@ const moduleFiles = [
   "js/ai-coach-memory.js",
 ];
 
-const appPosition = index.indexOf("app.js?v=20260917-cycle-tab-render");
+const appPosition = index.indexOf("app.js?v=20260920-supabase-only");
 let previousPosition = -1;
 for (const file of moduleFiles) {
   const position = index.indexOf(file);
