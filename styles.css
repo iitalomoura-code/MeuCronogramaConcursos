@@ -1515,7 +1515,9 @@ svg {
 /* Layout */
 .content-area {
   min-width: 0;
+  overflow-x: clip;
   padding: 32px clamp(22px, 3vw, 42px);
+  container: app-content / inline-size;
   view-transition-name: main-content;
 }
 
@@ -12985,7 +12987,8 @@ textarea:focus {
 #tab-evolucao .evolution-cycles-card summary p { margin: 4px 0 0; color: var(--muted); font-size: 13px; font-weight: 400; }
 #tab-evolucao .evolution-completed-archive { padding: 22px; }
 
-@media (max-width: 980px) {
+/* Fallback para navegadores sem container queries: considera a barra lateral. */
+@media (max-width: 1249px) {
   #tab-evolucao .evolution-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #tab-evolucao .evolution-main-grid { grid-template-columns: 1fr; }
   #tab-evolucao .evolution-performance-column { padding: 24px 0 0; border-top: 1px solid var(--divider); border-left: 0; }
@@ -13082,7 +13085,8 @@ textarea:focus {
 .continue-manual-override strong { color: var(--text); }
 .continue-manual-override .text-action { margin-left: auto; min-height: 28px; padding: 0; font-size: 12px; }
 
-@media (min-width: 980px) {
+/* Em viewport amplo a largura real ainda pode ser pequena por causa da sidebar. */
+@media (min-width: 1250px) {
   .continue-layout {
     width: min(100%, 1180px);
     grid-template-columns: minmax(0, 1.55fr) minmax(275px, .72fr);
@@ -13097,7 +13101,7 @@ textarea:focus {
   .continue-context-column { grid-column: 2; }
 }
 
-@media (max-width: 979px) {
+@media (max-width: 1249px) {
   .continue-primary-column,
   .continue-context-column { gap: 22px; }
   .continue-context-column .study-alerts { padding: 18px 0 0; border-width: 1px 0 0; border-radius: 0; background: transparent; }
@@ -13110,6 +13114,134 @@ textarea:focus {
   .continue-context-column .study-alert-actions { width: auto; }
   .continue-manual-override { align-items: flex-start; flex-direction: column; }
   .continue-manual-override .text-action { margin-left: 0; }
+}
+
+/* Layouts que dependem da largura realmente disponível após a barra lateral. */
+.continue-recommendation-subject,
+.continue-alternatives article > div,
+.continue-alternatives article strong,
+.study-alert-item > div,
+.study-alert-item strong,
+#tab-evolucao .evolution-subject-card > div,
+#tab-evolucao .evolution-subject-name,
+#tab-evolucao .attention-subject > div,
+#tab-evolucao .attention-subject strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@container app-content (min-width: 960px) {
+  .continue-layout {
+    width: min(100%, 1180px);
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, .72fr);
+    gap: 30px;
+  }
+
+  .continue-layout > .continue-active-session,
+  .continue-layout > .weekly-closing,
+  .continue-layout > .continue-weekly-details { grid-column: 1 / -1; }
+
+  .continue-primary-column { grid-column: 1; }
+  .continue-context-column { grid-column: 2; }
+}
+
+@container app-content (max-width: 959px) {
+  .continue-layout { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .continue-primary-column,
+  .continue-context-column { gap: 22px; }
+  .continue-context-column .study-alerts {
+    padding: 18px 0 0;
+    border-width: 1px 0 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  #tab-evolucao .evolution-main-grid,
+  #tab-evolucao .evolution-sections { grid-template-columns: minmax(0, 1fr); }
+  #tab-evolucao .evolution-performance-column {
+    padding: 24px 0 0;
+    border-top: 1px solid var(--divider);
+    border-left: 0;
+  }
+  #tab-evolucao .evolution-subject-card {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+  }
+  #tab-evolucao .evolution-subject-card > div:first-child { min-width: 0; }
+  #tab-evolucao .evolution-subject-card .text-action { justify-self: start; }
+  #tab-evolucao .evolution-subject-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+    width: 100%;
+    gap: 10px 16px;
+  }
+}
+
+@container app-content (max-width: 760px) {
+  .continue-card-header,
+  .study-alert-item { align-items: flex-start; flex-direction: column; }
+  .continue-card-header { gap: 12px; }
+  .continue-card-header > * { min-width: 0; max-width: 100%; }
+
+  .continue-meta-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+    gap: 10px;
+  }
+  .continue-meta-grid > div { width: auto; min-width: 0; }
+
+  .continue-alternatives article {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px 12px;
+  }
+  .continue-alternatives article > div { grid-column: 1 / -1; }
+  .continue-alternatives article span,
+  .continue-alternatives article em {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .continue-alternatives article .text-action { grid-column: 2; }
+
+  .study-alert-item { display: flex; gap: 8px; }
+  .study-alert-item > div:first-child,
+  .study-alert-actions { width: 100%; min-width: 0; }
+  .study-alert-actions { justify-content: flex-start; gap: 10px; }
+  .study-alert-actions .text-action { min-height: 44px; }
+
+  #tab-evolucao .evolution-overview-grid,
+  #tab-evolucao .predictive-summary-grid,
+  #tab-evolucao .evolution-pace-grid,
+  #tab-evolucao .evolution-performance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #tab-evolucao .evolution-metric,
+  #tab-evolucao .evolution-card,
+  #tab-evolucao .evolution-main-card { min-width: 0; }
+  #tab-evolucao .evolution-chart-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+  #tab-evolucao .evolution-chart svg { max-width: 100%; }
+}
+
+@container app-content (max-width: 520px) {
+  .continue-recommendation-card { padding: 22px 18px; }
+  .continue-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .continue-actions .primary-button,
+  .continue-actions .ghost-button { width: 100%; min-height: 44px; }
+  .continue-alternatives article { grid-template-columns: minmax(0, 1fr); }
+  .continue-alternatives article .text-action { grid-column: 1; justify-self: start; min-height: 44px; }
+
+  #tab-evolucao .evolution-toolbar,
+  #tab-evolucao .evolution-overview-grid,
+  #tab-evolucao .predictive-summary-grid,
+  #tab-evolucao .evolution-pace-grid,
+  #tab-evolucao .evolution-performance-summary { grid-template-columns: minmax(0, 1fr); }
+  #tab-evolucao .evolution-metric { min-height: 0; padding: 16px; }
+}
+
+@media (pointer: coarse) {
+  #tab-continuar button,
+  #tab-evolucao button { min-height: 44px; }
 }
 
 /* No celular, o modo foco usa a tela inteira e mantém a saída sempre acessível. */
