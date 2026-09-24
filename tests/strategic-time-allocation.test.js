@@ -83,4 +83,17 @@ result = allocator.allocate({ availableMinutes: 120, topics: [] });
 assert.equal(result.allocatedMinutes, 0, "Sem candidatos, nenhum bloco deve ser criado.");
 assert.equal(result.unusedMinutes, 120, "Sem candidatos, toda a capacidade deve permanecer disponível.");
 
+const cguTopics = [
+  "Português", "Direito Administrativo", "Constitucional", "AFO", "Administração Pública", "Auditoria", "Contabilidade", "Finanças", "Inglês", "Discursiva", "Políticas", "Controle", "Legislação",
+].flatMap((materia, index) => [topic(materia, "Base", index < 2 ? .95 - index * .02 : .68 - index * .01, index === 5 ? "recovery" : "practice", 30), topic(materia, "Aprofundamento", index < 2 ? .92 - index * .02 : .64 - index * .01, "practice", 30)]);
+result = allocator.allocate({ availableMinutes: 510, topics: cguTopics, options: { maximumSessions: 17 } });
+const cguBlocksBySubject = result.sessions.reduce((counts, session) => ({ ...counts, [session.materia]: (counts[session.materia] || 0) + 1 }), {});
+const cguRankedCounts = Object.values(cguBlocksBySubject).sort((a, b) => b - a);
+assert.equal(result.sessions.length, 17, "O cenário CGU deve formar 17 sessões úteis.");
+assert.equal(Object.keys(cguBlocksBySubject).length, 13, "A primeira rodada deve cobrir todas as matérias elegíveis.");
+assert.ok(Math.max(...Object.values(cguBlocksBySubject)) <= 3, "O alocador não pode entregar mais de três sessões a uma matéria em ciclo curto.");
+assert.ok((cguRankedCounts[0] + cguRankedCounts[1]) / result.sessions.length <= .55, "As duas matérias mais frequentes não podem dominar a alocação.");
+assert.ok(result.sessions.every((session, index) => !index || session.materia !== result.sessions[index - 1].materia), "A seleção incremental deve manter alternância quando existem alternativas.");
+assert.equal(result.diagnostics.subjectBlockCap, 3, "O diagnóstico deve expor a cota estrutural por matéria.");
+
 console.log("OK - alocação estratégica transforma prioridade existente em blocos úteis sem criar score paralelo ou alterar a origem.");

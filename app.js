@@ -21,8 +21,11 @@ const EVOLUTION_MIN_SAMPLE_QUESTIONS = 10;
 const EVOLUTION_ANALYSIS_SAMPLE_QUESTIONS = 30;
 const EVOLUTION_TREND_MARGIN = 0.03;
 const ALLOWED_BLOCK_MINUTES = [30, 45, 60, 90, 120];
-const MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT = 2;
+const MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT = 1;
 const MAX_RECENT_SHARE_PER_SUBJECT = 0.4;
+const NORMAL_MAX_SUBJECT_SHARE = 0.25;
+const HARD_MAX_SUBJECT_SHARE = 0.30;
+const SMALL_CYCLE_MAX_BLOCKS_PER_SUBJECT = 3;
 const DURATION_HISTORY_MIN_SAMPLES = 2;
 const MAX_RELIABLE_SESSION_MINUTES = 240;
 const CYCLE_RECENCY_WEIGHT = 18;
@@ -7499,11 +7502,14 @@ function estimatedPlanningBlockMinutes(config = scheduleConfig()) {
 }
 
 function cycleAbsenceForSubject(materia = "") {
-  const cycles = (state.cycleHistory || []).filter((cycle) => hasRecordedCycleActivity(cycle?.generatedBlocks));
+  const cycles = (state.cycleHistory || []).filter((cycle) => hasRecordedCycleActivity(cycle?.generatedBlocks) || Array.isArray(cycle?.distribution));
   for (let offset = 0; offset < cycles.length; offset += 1) {
     const cycle = cycles[cycles.length - 1 - offset] || {};
     const blocks = [...(cycle.generatedBlocks || []), ...(cycle.completedHistory || [])];
     if (blocks.some((block) => normalizeForMatch(block.materia) === normalizeForMatch(materia))) return offset;
+    const debt = (cycle.distribution || []).find((item) => normalizeForMatch(item.materia) === normalizeForMatch(materia));
+    if (debt?.rotationDebt || debt?.foraDoCiclo) continue;
+    if (debt) return offset;
   }
   return cycles.length + 1;
 }
@@ -7749,26 +7755,33 @@ function distributeBlocks(materias, totalBlocks, options = {}) {
       strategicPriority: strategic,
     };
   });
-  const totalPriority = scored.reduce((sum, item) => sum + item.prioridade, 0) || scored.length || 1;
   const minimum = totalBlocks >= scored.length ? 1 : 0;
-  let used = minimum * scored.length;
+  const cap = normalSubjectBlockCap(totalBlocks, scored.length);
   const distribution = scored.map((item) => {
     const absenceBonus = Math.min(0.22, cycleAbsenceForSubject(item.materia) * 0.035);
-    const fairWeight = item.prioridade + absenceBonus;
-    const raw = ((totalBlocks - used) * fairWeight) / (totalPriority + distributionRecencyWeight(scored));
-    return { ...item, blocos: minimum + Math.floor(raw), sobra: raw - Math.floor(raw) };
+    return { ...item, blocos: minimum, maxBlocos: cap, fairWeight: item.prioridade + absenceBonus };
   });
 
-  used = distribution.reduce((sum, item) => sum + item.blocos, 0);
-  distribution.sort((a, b) => b.sobra - a.sobra || a.materia.localeCompare(b.materia)).slice(0, Math.max(0, totalBlocks - used)).forEach((item) => {
-    item.blocos += 1;
-  });
+  let remaining = Math.max(0, totalBlocks - distribution.reduce((sum, item) => sum + item.blocos, 0));
+  while (remaining > 0) {
+    const candidates = distribution
+      .filter((item) => item.blocos < item.maxBlocos)
+      .sort((left, right) => (right.fairWeight / (1 + Math.max(0, right.blocos - minimum))) - (left.fairWeight / (1 + Math.max(0, left.blocos - minimum))) || left.materia.localeCompare(right.materia));
+    const chosen = candidates[0];
+    if (!chosen) break;
+    chosen.blocos += 1;
+    remaining -= 1;
+  }
 
-  return distribution.map(({ sobra, ...item }) => ({ ...item, foraDoCiclo: item.blocos === 0 })).sort((a, b) => b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
+  return distribution.map(({ fairWeight, ...item }) => ({ ...item, foraDoCiclo: item.blocos === 0, rotationDebt: item.blocos === 0 })).sort((a, b) => b.prioridade - a.prioridade || a.materia.localeCompare(b.materia));
 }
 
-function distributionRecencyWeight(items = []) {
-  return items.reduce((sum, item) => sum + Math.min(0.22, cycleAbsenceForSubject(item.materia) * 0.035), 0);
+function normalSubjectBlockCap(totalBlocks = 0, activeSubjects = 0) {
+  const blocks = Math.max(0, Number(totalBlocks) || 0);
+  const subjects = Math.max(0, Number(activeSubjects) || 0);
+  if (subjects <= 3) return Math.max(1, blocks);
+  if (subjects >= 6 && blocks <= 18) return SMALL_CYCLE_MAX_BLOCKS_PER_SUBJECT;
+  return Math.max(2, Math.ceil(blocks * NORMAL_MAX_SUBJECT_SHARE));
 }
 
 function buildAlternatingQueue(distribution, analysis, options = {}) {
@@ -7783,18 +7796,22 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
   const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
 
   while (queue.length < totalBlocks && pool.length) {
-    const activePool = pool.filter((item) => item.topicCursor < item.studyUnits.length);
+    const activePool = pool.filter((item) => item.remaining > 0 && item.topicCursor < item.studyUnits.length);
     if (!activePool.length) break;
-    const recentSubjects = queue.slice(-Math.max(3, activePool.length * 2)).map((item) => item.materia);
+    // Cobertura é uma fase própria: enquanto ainda houver matérias sem exposição,
+    // uma repetição não concorre com elas. Prioridade decide a ordem dentro da fase.
+    const coveragePool = activePool.filter((item) => item.exposures === 0);
+    const rotationPool = coveragePool.length ? coveragePool : activePool;
+    const recentSubjects = queue.slice(-Math.max(3, rotationPool.length * 2)).map((item) => item.materia);
     const lastSubject = queue.length ? queue[queue.length - 1].materia : "";
     const recentSequence = queue.slice(-MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT);
     const consecutive = recentSequence.length === MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT && recentSequence.every((item) => item.materia === lastSubject) ? lastSubject : "";
-    const candidates = activePool.map((item) => {
+    const candidates = rotationPool.map((item) => {
       const recentCount = recentSubjects.filter((materia) => materia === item.materia).length;
       const recentShare = recentSubjects.length ? recentCount / recentSubjects.length : 0;
       const urgent = subjectHasUrgentReview(item.materia);
-      const excludedBySequence = activePool.length > 2 && consecutive === item.materia && !urgent;
-      const excludedByShare = activePool.length > 2 && recentSubjects.length >= 3 && recentShare > MAX_RECENT_SHARE_PER_SUBJECT && !urgent;
+      const excludedBySequence = rotationPool.length > 2 && consecutive === item.materia && !urgent;
+      const excludedByShare = rotationPool.length > 2 && recentSubjects.length >= 3 && recentShare > MAX_RECENT_SHARE_PER_SUBJECT && !urgent;
       const rotation = Math.min(32, cycleAbsenceForSubject(item.materia) * CYCLE_RECENCY_WEIGHT) + (item.exposures === 0 ? CURRENT_CYCLE_COVERAGE_WEIGHT : 0);
       const quota = item.remaining > 0 ? 22 : 0;
       const concentrationPenalty = recentShare > MAX_RECENT_SHARE_PER_SUBJECT ? 34 : recentCount * 5;
@@ -7938,18 +7955,6 @@ function fittedDurationMinutes(estimate, remainingMinutes) {
   return [...ALLOWED_BLOCK_MINUTES].reverse().find((minutes) => minutes <= remainingMinutes) || 0;
 }
 
-function weeklyAllocationRanks() {
-  const cycle = weeklyStudyCycleSummary() || state.weeklyStudyCycle;
-  const plan = weeklyStudyCycleApi()?.allocate?.({
-    cycle,
-    topics: strategicPlanningTopics(),
-    // A janela semanal nasce sem execução fictícia. Execuções reais passam a
-    // influenciar o próximo ciclo pelo histórico já existente.
-    recentAllocations: [],
-  });
-  return new Map((plan?.sessions || []).map((session) => [weeklyTopicKey(session.materia, session.assunto), Number(session.rank) || Number.MAX_SAFE_INTEGER]));
-}
-
 function createAdaptiveCycleBlocks(materias, config, analysis) {
   // Metas-base ocupam somente a capacidade planejada. A reserva semanal fica
   // deliberadamente livre para revisoes, reforcos e recuperacoes adaptativas.
@@ -7962,8 +7967,6 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
   const queue = buildAlternatingQueue(plannedDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
-  const allocationRanks = weeklyAllocationRanks();
-  queue.sort((left, right) => (allocationRanks.get(weeklyTopicKey(left.materia, left.assunto)) || Number.MAX_SAFE_INTEGER) - (allocationRanks.get(weeklyTopicKey(right.materia, right.assunto)) || Number.MAX_SAFE_INTEGER) || Number(right.prioridade || 0) - Number(left.prioridade || 0));
   const blocks = [];
   let remainingMinutes = capacityMinutes;
 
@@ -8026,8 +8029,50 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     ...item,
     blocos: actualCounts.get(item.materia) || 0,
     foraDoCiclo: !(actualCounts.get(item.materia) || 0),
+    rotationDebt: !(actualCounts.get(item.materia) || 0),
   }));
-  return { blocks: integrateReviewNeedsIntoCycle(blocks), distribution, remainingMinutes };
+  const integratedBlocks = integrateReviewNeedsIntoCycle(blocks);
+  const fairness = cycleFairnessDiagnostics(integratedBlocks, activeSubjects);
+  if (isDevelopmentRuntime()) console.debug("[Meu Cronograma · ciclo] diagnóstico de diversidade", fairness);
+  return { blocks: integratedBlocks, distribution, remainingMinutes, fairness };
+}
+
+function cycleFairnessDiagnostics(blocks = [], activeSubjects = []) {
+  const base = (blocks || []).filter((block) => !isStrategicPlanSessionBlock(block));
+  const subjects = [...new Set((activeSubjects || []).map((subject) => subject.materia || subject).filter(Boolean))];
+  const blocksBySubject = {};
+  const minutesBySubject = {};
+  const daysBySubject = new Map();
+  let longestSubjectSequence = 0;
+  let lastSubject = "";
+  let sequence = 0;
+  base.forEach((block) => {
+    const subject = block.materia || "";
+    if (!subject) return;
+    blocksBySubject[subject] = (blocksBySubject[subject] || 0) + 1;
+    minutesBySubject[subject] = (minutesBySubject[subject] || 0) + Math.max(0, Math.round((Number(block.duracao) || 0) * 60));
+    if (block.plannedDay) {
+      const days = daysBySubject.get(subject) || new Set();
+      days.add(block.plannedDay);
+      daysBySubject.set(subject, days);
+    }
+    sequence = subject === lastSubject ? sequence + 1 : 1;
+    lastSubject = subject;
+    longestSubjectSequence = Math.max(longestSubjectSequence, sequence);
+  });
+  const totalMinutes = Object.values(minutesBySubject).reduce((sum, value) => sum + value, 0);
+  const shareBySubject = Object.fromEntries(Object.entries(minutesBySubject).map(([subject, minutes]) => [subject, totalMinutes ? minutes / totalMinutes : 0]));
+  const ranked = Object.entries(shareBySubject).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const maxBlocks = normalSubjectBlockCap(base.length, subjects.length);
+  const uncoveredSubjects = subjects.filter((subject) => !blocksBySubject[subject]);
+  const repeatedSubjectsByDay = [...daysBySubject.entries()].filter(([subject, days]) => (blocksBySubject[subject] || 0) > days.size).map(([subject]) => subject);
+  const fairnessViolations = [];
+  if (subjects.length >= 6 && base.length >= subjects.length && uncoveredSubjects.length) fairnessViolations.push("minimum-coverage");
+  if (subjects.length >= 4 && Object.values(blocksBySubject).some((count) => count > maxBlocks)) fairnessViolations.push("subject-block-cap");
+  if (subjects.length >= 4 && ranked.some(([, share]) => share > HARD_MAX_SUBJECT_SHARE)) fairnessViolations.push("subject-minute-cap");
+  if (subjects.length >= 3 && longestSubjectSequence > 1) fairnessViolations.push("consecutive-subject");
+  if (subjects.length >= 4 && ranked.slice(0, 2).reduce((sum, [, share]) => sum + share, 0) > .55) fairnessViolations.push("top-two-concentration");
+  return { totalBlocks: base.length, totalMinutes, activeSubjects: subjects.length, coveredSubjects: subjects.length - uncoveredSubjects.length, uncoveredSubjects, blocksBySubject, minutesBySubject, shareBySubject, topTwoCombinedShare: ranked.slice(0, 2).reduce((sum, [, share]) => sum + share, 0), longestSubjectSequence, repeatedSubjectsByDay, fairnessViolations, exceptions: base.filter((block) => block.fairnessException).map((block) => ({ materia: block.materia, assunto: block.assunto, reason: block.fairnessException })) };
 }
 
 function cycleNeedKey(item = {}) {
@@ -8064,6 +8109,7 @@ function cycleNeedCandidate({ materia = "", assunto = "", need = "", reason = ""
     reinforcementIntegrated: need === "reinforcement",
     integratedNeeds: [need],
     adaptiveReason: reason,
+    diagnosisLevel: diagnosis?.level || "",
     studyPressure: pressure,
     sourceBlockId,
   };
@@ -8107,6 +8153,19 @@ function integrateCycleNeed(candidate, { blocks = state.generatedBlocks, allowRe
   }
   if (candidate.integratedNeeds?.includes("review")) return { applied: false, deferred: true, reason: "review-without-space" };
 
+  const activeSubjects = (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject));
+  const fairness = cycleFairnessDiagnostics(blocks, activeSubjects);
+  const subjectBlocks = Number(fairness.blocksBySubject[candidate.materia] || 0);
+  const subjectMinutes = Number(fairness.minutesBySubject[candidate.materia] || 0);
+  const candidateMinutes = Math.round((Number(candidate.duracao) || 0) * 60);
+  const normalCap = normalSubjectBlockCap(fairness.totalBlocks, fairness.activeSubjects);
+  const projectedShare = (subjectMinutes + candidateMinutes) / Math.max(1, fairness.totalMinutes);
+  const exceptional = candidate.diagnosisLevel === "critical";
+  if (!exceptional && fairness.activeSubjects >= 4 && (subjectBlocks >= normalCap || (subjectBlocks && projectedShare > HARD_MAX_SUBJECT_SHARE))) {
+    recordCycleAdaptation({ ...candidate, type: "deferred", reason: "subject-concentration" });
+    return { applied: false, deferred: true, reason: "subject-concentration" };
+  }
+
   const gate = capacityPlanning().capIntracycleAdaptations(blocks, [candidate]);
   if (!gate.accepted.length) {
     recordCycleAdaptation({ ...candidate, type: "deferred", reason: "adaptive-limit" });
@@ -8123,7 +8182,7 @@ function integrateCycleNeed(candidate, { blocks = state.generatedBlocks, allowRe
   }
   const position = blocks.indexOf(replacement);
   const kept = { bloco: replacement.bloco, id: replacement.id || "", ciclo: replacement.ciclo || "" };
-  blocks[position] = { ...replacement, ...candidate, ...kept, replacedBlock: { materia: replacement.materia, assunto: replacement.assunto }, category: "adaptive" };
+  blocks[position] = { ...replacement, ...candidate, ...kept, fairnessException: exceptional ? "intervenção crítica comprovada" : "", replacedBlock: { materia: replacement.materia, assunto: replacement.assunto }, category: "adaptive" };
   recordCycleAdaptation({ ...candidate, type: "replaced", replaced: { materia: replacement.materia, assunto: replacement.assunto }, targetBlockId: kept.id || kept.bloco });
   return { applied: true, replaced: true, block: blocks[position] };
 }
@@ -8147,10 +8206,12 @@ function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
   const daily = config.capacidade?.dailyHours || config.horasPorDia || {};
   const margin = Number(config.capacidade?.safetyMargin) || 1;
   const remaining = Object.fromEntries(DAYS.map(([key]) => [key, Math.round(Math.max(0, Number(daily[key]) || 0) * margin * 60)]));
+  const subjectsByDay = Object.fromEntries(DAYS.map(([key]) => [key, new Set()]));
   let cursor = 0;
   blocks.forEach((block) => {
     const minutes = Math.round((Number(block.duracao) || 0) * 60);
-    const available = DAYS.slice(cursor).find(([key]) => remaining[key] >= minutes) || DAYS.find(([key]) => remaining[key] >= minutes);
+    const orderedDays = [...DAYS.slice(cursor), ...DAYS.slice(0, cursor)];
+    const available = orderedDays.find(([key]) => remaining[key] >= minutes && (!block.materia || !subjectsByDay[key].has(block.materia))) || orderedDays.find(([key]) => remaining[key] >= minutes);
     if (!available) {
       block.plannedDay = "";
       return;
@@ -8158,6 +8219,7 @@ function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
     const dayIndex = DAYS.findIndex(([key]) => key === available[0]);
     block.plannedDay = available[0];
     remaining[available[0]] -= minutes;
+    if (block.materia) subjectsByDay[available[0]].add(block.materia);
     cursor = Math.min(DAYS.length - 1, dayIndex);
   });
   return blocks;
@@ -8244,7 +8306,11 @@ async function reconcileCurrentCycle() {
     return;
   }
   const topics = strategicPlanningTopics();
-  const options = { coverage: strategicCycleCoverage(), activeFocusBlockId: activeFocusCycleBlockId() };
+  const options = {
+    coverage: strategicCycleCoverage(),
+    activeFocusBlockId: activeFocusCycleBlockId(),
+    maxBlocksPerSubject: normalSubjectBlockCap(cycleBlocks.length, (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).length),
+  };
   const preview = engine.preview({ blocks: state.generatedBlocks, topics, options });
   strategicCyclePreviewUI = { preview, generatedAt: new Date().toISOString() };
   if (!preview.changes.length) {

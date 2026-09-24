@@ -76,6 +76,14 @@ function block(entry, extra = {}) {
 }
 
 {
+  const existing = [block(topic("Contabilidade", "Base", .72, "building"), { bloco: 1 }), block(topic("Contabilidade", "Avançado", .71, "building"), { bloco: 2 }), block(topic("A", "Baixo", .10, "maintenance"), { bloco: 3 })];
+  const incoming = topic("Contabilidade", "Recuperação", .96, "recovery");
+  const preview = reconciliation.preview({ blocks: existing, topics: [...existing, incoming], options: { maxBlocksPerSubject: 2 } });
+  assert.equal(preview.changes.length, 0, "A reavaliação não pode adicionar uma terceira sessão à matéria já no teto.");
+  assert.ok(preview.deferred.some((item) => item.reason === "subject-concentration"), "A concentração bloqueada precisa ficar auditável no preview.");
+}
+
+{
   const existing = topic("A", "Existente", .2, "maintenance");
   const duplicate = topic("B", "Duplicado", .9, "recovery");
   const flexible = topic("C", "Flexível", .2, "maintenance");

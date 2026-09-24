@@ -63,12 +63,19 @@
     const deferred = [];
     const usedSlots = new Set();
     const subjectChanges = new Map();
+    const subjectBlocks = new Map(cycleEntries.map(({ block }) => normalized(block.materia)).filter(Boolean).map((subject) => [subject, 0]));
+    cycleEntries.forEach(({ block }) => {
+      const subject = normalized(block.materia);
+      subjectBlocks.set(subject, (subjectBlocks.get(subject) || 0) + 1);
+    });
+    const maxBlocksPerSubject = Number(options.maxBlocksPerSubject) || Number.POSITIVE_INFINITY;
 
     for (const incomingTopic of candidates) {
       if (changes.length >= maxChanges) { deferred.push({ incoming: descriptor(incomingTopic), reason: "change-limit" }); continue; }
       const incoming = descriptor(incomingTopic);
       const subjectCount = subjectChanges.get(normalized(incoming.materia)) || 0;
       if (subjectCount >= config.maxChangesPerSubject) { deferred.push({ incoming, reason: "subject-limit" }); continue; }
+      if ((subjectBlocks.get(normalized(incoming.materia)) || 0) >= maxBlocksPerSubject) { deferred.push({ incoming, reason: "subject-concentration" }); continue; }
       const possibleSlots = flexible.filter(({ sourceIndex }) => !usedSlots.has(sourceIndex)).map(({ block, sourceIndex }) => ({ block, sourceIndex, topic: topicByKey.get(topicKey(block)) || block })).sort((left, right) => score(left.topic) - score(right.topic) || left.sourceIndex - right.sourceIndex);
       const target = possibleSlots.find(({ topic }) => {
         const outgoing = descriptor(topic);
@@ -83,8 +90,10 @@
       changes.push({ type: "replace", slotIndex: target.sourceIndex, slotKey: String(target.block.id || target.block.bloco || target.sourceIndex), outgoing: { ...outgoing, durationMinutes: minutes(target.block) }, incoming: { ...incoming, durationMinutes: minutes(target.block) }, scoreDelta: delta, reason: [`conteúdo de entrada está em ${incoming.category || incoming.learningState || "prioridade estratégica maior"}`, "prioridade estratégica atual significativamente maior", "bloco substituído ainda não foi iniciado", "capacidade total do ciclo foi preservada"] });
       usedSlots.add(target.sourceIndex);
       subjectChanges.set(normalized(incoming.materia), subjectCount + 1);
+      subjectBlocks.set(normalized(outgoing.materia), Math.max(0, (subjectBlocks.get(normalized(outgoing.materia)) || 0) - 1));
+      subjectBlocks.set(normalized(incoming.materia), (subjectBlocks.get(normalized(incoming.materia)) || 0) + 1);
     }
-    return { status: changes.length ? "changes" : "coherent", capacityMinutes, protectedMinutes, flexibleMinutes: flexible.reduce((total, { block }) => total + minutes(block), 0), changes, kept: flexible.filter(({ sourceIndex }) => !usedSlots.has(sourceIndex)).map(({ block }) => descriptor(topicByKey.get(topicKey(block)) || block)), deferred, diagnostics: { flexibleSlots: flexible.length, conservativeCoverage, maxChanges, coverage: Number.isFinite(coverage) ? coverage : null }, summary: changes.length ? [`${changes.length} troca${changes.length === 1 ? "" : "s"} sugerida${changes.length === 1 ? "" : "s"}`, "Carga total preservada"] : ["Seu ciclo atual continua coerente com a estratégia.", "Nenhuma troca relevante é necessária agora."], fingerprint: fingerprint(changes) };
+    return { status: changes.length ? "changes" : "coherent", capacityMinutes, protectedMinutes, flexibleMinutes: flexible.reduce((total, { block }) => total + minutes(block), 0), changes, kept: flexible.filter(({ sourceIndex }) => !usedSlots.has(sourceIndex)).map(({ block }) => descriptor(topicByKey.get(topicKey(block)) || block)), deferred, diagnostics: { flexibleSlots: flexible.length, conservativeCoverage, maxChanges, maxBlocksPerSubject, coverage: Number.isFinite(coverage) ? coverage : null }, summary: changes.length ? [`${changes.length} troca${changes.length === 1 ? "" : "s"} sugerida${changes.length === 1 ? "" : "s"}`, "Carga total preservada"] : ["Seu ciclo atual continua coerente com a estratégia.", "Nenhuma troca relevante é necessária agora."], fingerprint: fingerprint(changes) };
   }
 
   function copyCanonicalProgramUnit(item = {}) {

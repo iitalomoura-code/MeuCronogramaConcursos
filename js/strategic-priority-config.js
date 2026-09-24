@@ -49,9 +49,11 @@
     timeAllocation: Object.freeze({
       minimumSessionMinutes: 20,
       sameTopicDecay: Object.freeze([1, .78, .58, .42]),
-      sameSubjectDecay: .94,
-      concentrationSoftCap: .5,
+      sameSubjectDecay: .84,
+      concentrationSoftCap: .25,
       concentrationDecay: .72,
+      normalSubjectShare: .25,
+      hardSubjectShare: .30,
       maintenanceMultiplier: .72,
       recoveryMultiplier: 1.08,
       maximumSessions: 12,

@@ -73,12 +73,31 @@
     const decay = context.settings.sameTopicDecay || [1, .78, .58, .42];
     const marginalMultiplier = Number(decay[Math.min(repetitionIndex, decay.length - 1)]) || decay.at(-1) || .42;
     const subjectMultiplier = subjectRepetitions ? Math.pow(Number(context.settings.sameSubjectDecay) || .94, subjectRepetitions) : 1;
-    const concentrationCap = context.availableMinutes * (Number(context.settings.concentrationSoftCap) || .5);
-    const allocatedToTopic = context.topicMinutes.get(topicKey) || 0;
-    const exceedsSoftCap = allocatedToTopic >= concentrationCap && context.candidateCount > 1 && context.availableMinutes > topic.session.idealDuration;
+    const concentrationCap = context.availableMinutes * (Number(context.settings.concentrationSoftCap) || .25);
+    const allocatedToSubject = context.subjectMinutes.get(subjectKey) || 0;
+    const exceedsSoftCap = allocatedToSubject >= concentrationCap && context.subjectCount > 1 && context.availableMinutes > topic.session.idealDuration;
     const concentrationMultiplier = exceedsSoftCap ? Number(context.settings.concentrationDecay) || .72 : 1;
     const effectiveOpportunity = topic.strategicScore * stateMultiplier(topic.learningState, context.settings) * marginalMultiplier * subjectMultiplier * concentrationMultiplier;
-    return { effectiveOpportunity, repetitionIndex, marginalMultiplier, subjectMultiplier, concentrationMultiplier };
+    return { effectiveOpportunity, repetitionIndex, subjectRepetitions, marginalMultiplier, subjectMultiplier, concentrationMultiplier, allocatedToSubject };
+  }
+
+  function subjectBlockCap(context) {
+    if (context.subjectCount <= 3) return Number.POSITIVE_INFINITY;
+    if (context.subjectCount >= 6 && context.maximumSessions <= 18) return 3;
+    return Math.max(2, Math.ceil(context.maximumSessions * (Number(context.settings.normalSubjectShare) || .25)));
+  }
+
+  function isCoverageCandidate(candidate, context) {
+    return context.coverageOpen && !context.sessionSubjects.has(candidate.topic.materia.toLocaleLowerCase());
+  }
+
+  function fitsSubjectLimit(candidate, context) {
+    const subjectKey = candidate.topic.materia.toLocaleLowerCase();
+    const currentBlocks = context.subjectCounts.get(subjectKey) || 0;
+    const currentMinutes = context.subjectMinutes.get(subjectKey) || 0;
+    const hardShare = Number(context.settings.hardSubjectShare) || .30;
+    const projectedShare = (currentMinutes + candidate.topic.session.idealDuration) / Math.max(1, context.availableMinutes);
+    return currentBlocks < subjectBlockCap(context) && (currentBlocks === 0 || projectedShare <= hardShare);
   }
 
   function compareCandidates(left, right) {
@@ -109,25 +128,34 @@
       return { availableMinutes: available, allocatedMinutes: 0, unusedMinutes: available, sessions: [], deferred: normalizedTopics, explanation: [], diagnostics: { candidateCount: normalizedTopics.length, minimumSessionMinutes: Number(settings.minimumSessionMinutes) || 20 } };
     }
     const counts = countsFromRecent(recentAllocations);
+    const subjectCount = new Set(normalizedTopics.map((topic) => topic.materia.toLocaleLowerCase())).size;
     const context = {
       ...counts,
       topicMinutes: counts.topicMinutes,
       subjectMinutes: counts.subjectMinutes,
       availableMinutes: available,
       candidateCount: normalizedTopics.length,
+      subjectCount,
+      sessionSubjects: new Set(),
+      maximumSessions: 0,
+      coverageOpen: false,
       settings,
     };
     const sessions = [];
     let remaining = available;
     const capacitySessionLimit = Math.ceil(available / Number(settings.minimumSessionMinutes));
     const maximumSessions = Math.max(1, Math.min(Number(settings.maximumSessions) || 12, capacitySessionLimit));
+    context.maximumSessions = maximumSessions;
     while (remaining >= Number(settings.minimumSessionMinutes) && sessions.length < maximumSessions) {
       const candidates = normalizedTopics
         .map((topic) => ({ topic, utility: candidateUtility(topic, context) }))
         .filter((candidate) => candidate.utility.effectiveOpportunity >= Number(settings.minimumOpportunity || .06))
         .filter((candidate) => remaining >= candidate.topic.session.minimumDuration)
         .sort(compareCandidates);
-      const selected = candidates[0];
+      context.coverageOpen = context.sessionSubjects.size < Math.min(subjectCount, maximumSessions);
+      const coverageCandidates = candidates.filter((candidate) => isCoverageCandidate(candidate, context));
+      const normalCandidates = candidates.filter((candidate) => fitsSubjectLimit(candidate, context));
+      const selected = (coverageCandidates.length ? coverageCandidates : normalCandidates)[0] || candidates[0];
       if (!selected) break;
       const durationMinutes = remaining >= selected.topic.session.idealDuration ? selected.topic.session.idealDuration : remaining;
       if (durationMinutes < selected.topic.session.minimumDuration) break;
@@ -144,6 +172,9 @@
         marginalMultiplier: selected.utility.marginalMultiplier,
         subjectMultiplier: selected.utility.subjectMultiplier,
         concentrationMultiplier: selected.utility.concentrationMultiplier,
+        fairnessException: !isCoverageCandidate(selected, context) && !fitsSubjectLimit(selected, context)
+          ? "não havia alternativa dentro da cota da matéria"
+          : "",
         idealDuration: selected.topic.session.idealDuration,
         minimumDuration: selected.topic.session.minimumDuration,
         rationale: rationaleFor(selected.topic, selected.utility, durationMinutes),
@@ -154,6 +185,8 @@
       context.topicCounts.set(topicKey, (context.topicCounts.get(topicKey) || 0) + 1);
       context.subjectCounts.set(subjectKey, (context.subjectCounts.get(subjectKey) || 0) + 1);
       context.topicMinutes.set(topicKey, (context.topicMinutes.get(topicKey) || 0) + durationMinutes);
+      context.subjectMinutes.set(subjectKey, (context.subjectMinutes.get(subjectKey) || 0) + durationMinutes);
+      context.sessionSubjects.add(subjectKey);
       remaining -= durationMinutes;
     }
     const allocatedMinutes = sessions.reduce((total, session) => total + session.durationMinutes, 0);
@@ -166,7 +199,7 @@
       sessions,
       deferred,
       explanation: sessions.length ? ["A capacidade foi organizada em sessões pedagógicas úteis, priorizando a melhor oportunidade marginal a cada escolha."] : ["Não havia tempo ou candidato suficiente para formar uma sessão útil agora."],
-      diagnostics: { candidateCount: normalizedTopics.length, maximumSessions, minimumSessionMinutes: Number(settings.minimumSessionMinutes) || 20 },
+      diagnostics: { candidateCount: normalizedTopics.length, subjectCount, maximumSessions, minimumSessionMinutes: Number(settings.minimumSessionMinutes) || 20, subjectBlockCap: subjectBlockCap(context) },
     };
   }
 

@@ -8,7 +8,7 @@ const ContinueRecommendation = require("../js/continue-recommendation.js");
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 
 assert.ok(app.includes("const ALLOWED_BLOCK_MINUTES = [30, 45, 60, 90, 120]"), "As durações permitidas devem ser centralizadas.");
-assert.ok(app.includes("const MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT = 2"), "O limite de repetição consecutiva deve existir.");
+assert.ok(app.includes("const MAX_CONSECUTIVE_BLOCKS_PER_SUBJECT = 1"), "O limite de repetição consecutiva deve existir.");
 assert.ok(app.includes("const MAX_RECENT_SHARE_PER_SUBJECT = 0.4"), "O limite de concentração recente deve existir.");
 assert.ok(app.includes("function estimateBlockDuration"), "A estimativa central de duração deve existir.");
 assert.ok(app.includes("function createAdaptiveCycleBlocks"), "A geração por capacidade em minutos deve existir.");
@@ -23,7 +23,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject };`;
 const noop = () => {};
 const context = {
   console,
@@ -125,5 +125,42 @@ assert.deepStrictEqual(runtime.rankedContinueEntries().map((entry) => entry.bloc
 runtime.continueRecommendationFilters.activity = "";
 recommendation = runtime.buildContinueRecommendation();
 assert.ok(recommendation.alternatives.every((entry, index, list) => list.findIndex((item) => item.block.materia === entry.block.materia) === index), "Alternativas iniciais devem priorizar matérias diferentes.");
+
+// Cenário CGU: duas matérias muito fortes não podem ocupar um ciclo inteiro
+// quando a capacidade comporta uma primeira exposição das 13 ativas.
+const cguSubjects = [
+  "Língua Portuguesa", "Direito Administrativo", "Direito Constitucional", "AFO", "Administração Pública",
+  "Auditoria", "Contabilidade", "Finanças Públicas", "Língua Inglesa", "Discursiva", "Políticas Públicas", "Controle Interno", "Legislação CGU",
+].map((materia, index) => {
+  const assuntos = [`${materia} base`, `${materia} aprofundamento`];
+  return { materia, assuntos, temas: assuntos.map((assunto) => ({ materia, assunto, titulo: assunto, conteudosOriginais: ["conteúdo operacional"], blocosSugeridos: 1 })), peso: index < 2 ? 5 : index < 6 ? 4 : 3, dominio: index < 2 ? 4 : 3 };
+});
+runtime.state.planningBase.materias = cguSubjects;
+runtime.state.rows = cguSubjects.flatMap((subject) => subject.assuntos.map((assunto, index) => ({ materia: subject.materia, assunto, estudar: "Sim", tamanhoEstimado: index ? "Médio" : "Curto", blocosSugeridos: 1 })));
+runtime.state.generatedBlocks = [];
+runtime.state.completedHistory = [];
+runtime.state.cycleHistory = [];
+runtime.state.cycleResults = [];
+runtime.state.reviews = [];
+const cguCycle = runtime.createAdaptiveCycleBlocks(cguSubjects, { capacidade: { plannedMinutes: 1020 }, horasSemanaCronograma: 17, duracaoBloco: 1 }, {});
+const cguFairness = runtime.cycleFairnessDiagnostics(cguCycle.blocks, cguSubjects);
+const cguRepeat = cguCycle.blocks.findIndex((block, index) => index && block.materia === cguCycle.blocks[index - 1].materia);
+assert.equal(cguFairness.totalBlocks, 17, "O cenário CGU deve usar os 17 blocos previstos.");
+assert.equal(cguFairness.coveredSubjects, 13, "Com 17 blocos, todas as 13 matérias ativas precisam receber a primeira exposição.");
+assert.ok((cguFairness.blocksBySubject["Língua Portuguesa"] || 0) <= 3, "Português não pode monopolizar o ciclo.");
+assert.ok((cguFairness.blocksBySubject["Direito Administrativo"] || 0) <= 3, "Direito Administrativo não pode monopolizar o ciclo.");
+assert.ok(cguFairness.topTwoCombinedShare <= .55, "As duas matérias mais frequentes não podem dominar a semana.");
+assert.equal(cguRepeat, -1, "Matérias iguais não podem ficar consecutivas quando há alternativas.");
+assert.deepStrictEqual(runtime.createAdaptiveCycleBlocks(cguSubjects, { capacidade: { plannedMinutes: 1020 }, horasSemanaCronograma: 17, duracaoBloco: 1 }, {}).blocks.map((block) => [block.materia, block.assunto, block.duracao]), cguCycle.blocks.map((block) => [block.materia, block.assunto, block.duracao]), "A mesma entrada CGU deve gerar a mesma composição.");
+
+const smallCapacityDistribution = runtime.distributeBlocks(cguSubjects, 5, { adaptive: true });
+assert.equal(smallCapacityDistribution.filter((item) => item.rotationDebt).length, 8, "Capacidade menor registra quais matérias ficam para a próxima rotação.");
+runtime.state.cycleHistory = [{ distribution: smallCapacityDistribution, generatedBlocks: [] }];
+assert.ok(runtime.cycleAbsenceForSubject(smallCapacityDistribution.find((item) => item.rotationDebt).materia) > runtime.cycleAbsenceForSubject(smallCapacityDistribution.find((item) => !item.rotationDebt).materia), "A dívida de rotação deve aumentar a chance da matéria omitida no ciclo seguinte.");
+
+const sameDay = runtime.assignBlocksToDailyCapacity([
+  { materia: "Português", duracao: 1 }, { materia: "Português", duracao: 1 }, { materia: "Direito", duracao: 1 },
+], { capacidade: { safetyMargin: 1, dailyHours: { segunda: 2, terca: 1, quarta: 0, quinta: 0, sexta: 0, sabado: 0, domingo: 0 } } });
+assert.notEqual(sameDay[0].plannedDay, sameDay[1].plannedDay, "Repetições da mesma matéria devem ir para dias diferentes quando houver alternativa de capacidade.");
 
 console.log("OK - ciclo adaptativo usa cobertura, rotação, duração discreta e filtros da tela Continuar.");
