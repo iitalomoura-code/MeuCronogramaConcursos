@@ -2,7 +2,7 @@
 
 (function initStrategicCycleReconciliation(global) {
   const DEFAULTS = Object.freeze({ replacementMinScoreDelta: .12, structuralMinScoreDelta: .08, maxReplacementShare: .25, maxChangesPerPass: 3, maxChangesPerSubject: 1, lowCoverageThreshold: .35, lowCoverageExtraDelta: .06 });
-  const PROGRAM_UNIT_FIELDS = Object.freeze(["materia", "subarea", "titulo", "assunto", "descricao", "conteudosOriginais", "section", "outlineNumber", "outlineLevel", "structureSource", "sourceBlockType", "origemEdital", "programUnitKey", "metaId", "metaTitulo", "metaConteudos", "metaPartKey", "metaRequiredBlocks", "conteudoBloco", "tamanhoEstimado", "blocosSugeridos", "dificuldadeEstimada", "ordem", "pedagogicalStage", "pedagogicalBand", "pedagogicalReason", "pedagogicalException", "pedagogicalPrerequisiteKeys", "pedagogicalHistory"]);
+  const PROGRAM_UNIT_FIELDS = Object.freeze(["materia", "subarea", "titulo", "assunto", "descricao", "conteudosOriginais", "section", "outlineNumber", "outlineLevel", "structureSource", "sourceBlockType", "origemEdital", "programUnitKey", "metaId", "metaTitulo", "metaConteudos", "metaPartKey", "metaRequiredBlocks", "conteudoBloco", "tamanhoEstimado", "blocosSugeridos", "dificuldadeEstimada", "ordem", "pedagogicalStage", "pedagogicalBand", "pedagogicalReason", "pedagogicalException", "pedagogicalPrerequisiteKeys", "pedagogicalHistory", "pedagogicalEligibleNow", "pedagogicalReservable", "pedagogicalBlocked"]);
 
   function normalized(value = "") { return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " "); }
   function programUnit(item = {}) { return item.programUnit || item.cycleTemplate || item; }

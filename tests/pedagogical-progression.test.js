@@ -9,7 +9,7 @@ const ContinueRecommendation = require("../js/continue-recommendation.js");
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__pedagogicalTest = { state, pedagogicalOrderWithDependencies, pedagogicalFrontier, pedagogicalDependencyKey, reliableTopicHistory, pedagogicalExceptionFor, isPedagogicallyExecutable, assignBlocksToDailyCapacity, rankedContinueEntries };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__pedagogicalTest = { state, pedagogicalOrderWithDependencies, pedagogicalProgression, pedagogicalFrontier, pedagogicalDependencyKey, reliableTopicHistory, pedagogicalExceptionFor, isPedagogicallyExecutable, assignBlocksToDailyCapacity, rankedContinueEntries };`;
 const noop = () => {};
 const context = {
   console, Date, Math, JSON, Set, Map, Array, Object, String, Number, Boolean, RegExp, Error, structuredClone,
@@ -58,8 +58,11 @@ const accountingTopics = [
 reset();
 assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Direito Administrativo", "never-studied"), administrativeTopics).map((item) => item.assunto)], [administrativeTopics[0].assunto], "Direito Administrativo nunca estudado recebe apenas o primeiro fundamento.");
 const basicAdministrative = runtime.pedagogicalFrontier(subject("Direito Administrativo", "basic"), administrativeTopics);
-assert.deepStrictEqual([...basicAdministrative.map((item) => item.assunto)], administrativeTopics.slice(0, 2).map((item) => item.assunto), "Base fraca recebe o fundamento atual e somente o próximo conteúdo da sequência.");
-assert.ok(basicAdministrative[1].pedagogicalPrerequisiteKeys.includes(runtime.pedagogicalDependencyKey(basicAdministrative[0])), "O próximo conteúdo registra o pré-requisito explícito no bloco.");
+assert.deepStrictEqual([...basicAdministrative.map((item) => item.assunto)], [administrativeTopics[0].assunto], "Base fraca mantém apenas o fundamento atual executável.");
+const reservedAdministrative = runtime.pedagogicalProgression(subject("Direito Administrativo", "basic"), administrativeTopics);
+assert.equal(reservedAdministrative.filter((item) => item.pedagogicalEligibleNow).length, 1, "Somente o primeiro fundamento fica executável imediatamente.");
+assert.ok(reservedAdministrative.slice(1).every((item) => item.pedagogicalReservable && item.pedagogicalBlocked), "Conteúdos posteriores podem ser reservados sem serem liberados antes da hora.");
+assert.ok(reservedAdministrative[1].pedagogicalPrerequisiteKeys.includes(runtime.pedagogicalDependencyKey(reservedAdministrative[0])), "O próximo conteúdo reservado registra o pré-requisito explícito no bloco.");
 const unknownAdministrative = runtime.pedagogicalFrontier(subject("Direito Administrativo", "unknown"), administrativeTopics);
 assert.equal(unknownAdministrative[0].pedagogicalReason, "Histórico insuficiente: mantida a sequência inicial");
 assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Direito Administrativo", "advanced"), administrativeTopics).map((item) => item.assunto)], [administrativeTopics[0].assunto], "Autoavaliação avançada sem evidência específica não libera assuntos aleatórios.");
@@ -67,10 +70,10 @@ assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Direito Administ
 assert.deepStrictEqual([...runtime.pedagogicalOrderWithDependencies(subject("Direito Administrativo"), administrativeTopics).map((item) => item.assunto)], administrativeTopics.map((item) => item.assunto), "Serviços Públicos permanece depois dos conteúdos intermediários não reconhecidos pelo mapa relativo.");
 
 assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Contabilidade", "never-studied"), accountingTopics).map((item) => item.assunto)], [accountingTopics[0].assunto], "Contabilidade nunca estudada inicia pelos fundamentos.");
-assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Contabilidade", "basic"), accountingTopics).map((item) => item.assunto)], accountingTopics.slice(0, 2).map((item) => item.assunto), "Base fraca em Contabilidade não pula para demonstrações.");
+assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Contabilidade", "basic"), accountingTopics).map((item) => item.assunto)], [accountingTopics[0].assunto], "Base fraca em Contabilidade não pula para demonstrações.");
 assert.deepStrictEqual([...runtime.pedagogicalOrderWithDependencies(subject("Contabilidade"), accountingTopics).map((item) => item.assunto)], accountingTopics.map((item) => item.assunto), "Contas, fatos e outros conteúdos não reconhecidos conservam a ordem canônica antes das demonstrações.");
 const genericTopics = ["Fundamento A", "Aplicação B", "Avançado C"].map((assunto, index) => ({ assunto, ordem: index + 1 }));
-assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Economia", "basic"), genericTopics).map((item) => item.assunto)], genericTopics.slice(0, 2).map((item) => item.assunto), "Matéria sem mapa explícito usa a ordem canônica de forma conservadora.");
+assert.deepStrictEqual([...runtime.pedagogicalFrontier(subject("Economia", "basic"), genericTopics).map((item) => item.assunto)], [genericTopics[0].assunto], "Matéria sem mapa explícito usa a ordem canônica de forma conservadora.");
 
 const reliableAttentionDiagnosis = {
   hasContact: true, questions: 30, sessionCount: 3, confidence: .65, accuracy: .72, level: "attention", relevance: .7, daysWithoutContact: 0,
@@ -108,11 +111,22 @@ assert.equal(runtime.isPedagogicallyExecutable(secondBlock), false, "Bloco poste
 assert.deepStrictEqual([...runtime.rankedContinueEntries().map((entry) => entry.block.metaPartKey)], ["1"], "A tela Continuar oculta a parte posterior até o pré-requisito ser concluído.");
 firstBlock.status = "Concluído";
 assert.equal(runtime.isPedagogicallyExecutable(secondBlock), true, "Conclusão do pré-requisito libera o bloco posterior.");
+const thirdBlock = { ...secondBlock, metaPartKey: "3", pedagogicalPrerequisiteKeys: [runtime.pedagogicalDependencyKey(secondBlock)] };
+runtime.state.generatedBlocks = [firstBlock, secondBlock, thirdBlock];
+assert.equal(runtime.isPedagogicallyExecutable(thirdBlock), false, "A conclusão do primeiro não libera indevidamente o terceiro bloco.");
+secondBlock.status = "Concluído";
+assert.equal(runtime.isPedagogicallyExecutable(thirdBlock), true, "A conclusão do segundo libera exatamente o terceiro bloco da cadeia.");
 const dailyBlocks = [
   { ...firstBlock, status: "Não iniciado", duracao: 1 },
   { ...secondBlock, duracao: 1, pedagogicalPrerequisiteKeys: [runtime.pedagogicalDependencyKey(firstBlock)] },
 ];
 runtime.assignBlocksToDailyCapacity(dailyBlocks, { capacidade: { safetyMargin: 1, dailyHours: { segunda: 1, terca: 1, quarta: 0, quinta: 0, sexta: 0, sabado: 0, domingo: 0 } } });
 assert.deepStrictEqual(dailyBlocks.map((block) => block.plannedDay), ["segunda", "terca"], "A distribuição diária coloca o dependente depois do pré-requisito.");
+const unorderedDailyBlocks = [
+  { ...secondBlock, status: "Não iniciado", duracao: 1, pedagogicalPrerequisiteKeys: [runtime.pedagogicalDependencyKey(firstBlock)] },
+  { ...firstBlock, status: "Não iniciado", duracao: 1 },
+];
+runtime.assignBlocksToDailyCapacity(unorderedDailyBlocks, { capacidade: { safetyMargin: 1, dailyHours: { segunda: 1, terca: 1, quarta: 0, quinta: 0, sexta: 0, sabado: 0, domingo: 0 } } });
+assert.deepStrictEqual(unorderedDailyBlocks.map((block) => block.plannedDay), ["terca", "segunda"], "Uma entrada fora de ordem é ordenada topologicamente antes da distribuição diária.");
 
 console.log("OK - progressão pedagógica distingue base, histórico específico, dependências e exceções confiáveis.");

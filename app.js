@@ -8054,44 +8054,44 @@ function pedagogicalExceptionFor(unit = {}, { history: providedHistory = null } 
   return "";
 }
 
-function pedagogicalFrontier(subject = {}, units = []) {
+function pedagogicalProgression(subject = {}, units = []) {
   const ordered = pedagogicalOrderWithDependencies(subject, units);
-  const available = ordered.filter((unit) => {
+  if (!ordered.length) return [];
+  const level = normalizedPedagogicalLevel(subject);
+  const firstExecutable = ordered.find((unit) => {
     const part = Math.max(1, Number(unit.metaPartKey) || 1);
     return part <= 1 || isMetaPartCompleted(unit.metaId, String(part - 1));
-  });
-  if (!available.length) return [];
-  const level = normalizedPedagogicalLevel(subject);
-  const first = available[0];
-  const next = available[1] || null;
-  const nextDependsOnCurrent = Boolean(next?.pedagogicalPrerequisiteKeys?.includes(pedagogicalDependencyKey(first)));
-  return available
-    .map((unit, availableIndex) => {
+  }) || ordered[0];
+  return ordered
+    .map((unit) => {
       const exception = pedagogicalExceptionFor(unit);
-      const current = unit === first;
-      const basicNext = level === "basic" && unit === next && nextDependsOnCurrent;
-      const allowed = current || basicNext || Boolean(exception);
+      const current = unit === firstExecutable;
+      const eligibleNow = current || Boolean(exception);
       const history = reliableTopicHistory(unit);
       return {
         ...unit,
-        pedagogicalBand: exception ? -1 : current ? 0 : 1,
+        pedagogicalBand: exception ? -1 : unit.pedagogicalStage,
         pedagogicalException: exception,
         pedagogicalReason: exception
           ? exception
           : current
             ? level === "unknown" ? "Histórico insuficiente: mantida a sequência inicial" : "Primeiro fundamento pendente desta matéria"
-            : basicNext ? "Próximo conteúdo da sequência"
-              : "Sessão diagnóstica para confirmar domínio",
+            : "Etapa futura reservada; conclua o pré-requisito anterior.",
         pedagogicalHistory: { source: history.source, questions: history.questions, sessions: history.sessions, confidence: history.confidence, accuracy: history.accuracy, masteryLevel: history.masteryLevel, reasons: history.reasons },
         pedagogicalPrerequisiteKeys: exception ? [] : unit.pedagogicalPrerequisiteKeys,
-        pedagogicalEligible: allowed,
+        pedagogicalEligibleNow: eligibleNow,
+        pedagogicalReservable: true,
+        pedagogicalBlocked: !eligibleNow,
       };
-    })
-    .filter((unit) => unit.pedagogicalEligible);
+    });
+}
+
+function pedagogicalFrontier(subject = {}, units = []) {
+  return pedagogicalProgression(subject, units).filter((unit) => unit.pedagogicalEligibleNow);
 }
 
 function rankStudyUnitsByAdaptivePriority(subject, units = []) {
-  return pedagogicalFrontier(subject, units)
+  return pedagogicalProgression(subject, units)
     .map((topic) => {
       const scheduling = schedulingPriorityForTarget({
         materia: subject.materia,
@@ -8188,7 +8188,10 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   if (!activeSubjects.length) return { blocks: [], distribution: [] };
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
-  const queue = buildAlternatingQueue(plannedDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
+  // A cota inicial continua guiando a cobertura. A fila, porém, também recebe
+  // etapas reserváveis para usar os minutos restantes sem antecipar sua execução.
+  const reservationDistribution = distributeBlocks(activeSubjects, Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]), { adaptive: true });
+  const queue = buildAlternatingQueue(reservationDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
   const blocks = [];
   let remainingMinutes = capacityMinutes;
 
@@ -8255,8 +8258,30 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   }));
   const integratedBlocks = integrateReviewNeedsIntoCycle(blocks);
   const fairness = cycleFairnessDiagnostics(integratedBlocks, activeSubjects);
+  const allocatedMinutes = integratedBlocks.reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
+  const blockKeys = new Set(integratedBlocks.map(pedagogicalDependencyKey));
+  const completedDependencies = completedPedagogicalDependencyKeys();
+  const unresolvedDependencies = integratedBlocks
+    .flatMap((block) => block.pedagogicalPrerequisiteKeys || [])
+    .filter((key) => !blockKeys.has(key) && !completedDependencies.has(key));
+  const executableBlocks = integratedBlocks.filter((block) => block.pedagogicalEligibleNow || block.pedagogicalException).length;
+  const reservedBlocks = integratedBlocks.filter((block) => block.pedagogicalReservable && !block.pedagogicalEligibleNow && !block.pedagogicalException).length;
+  const capacityUnderfillReason = remainingMinutes < ALLOWED_BLOCK_MINUTES[0] ? ""
+    : !queue.length ? "não há conteúdos pendentes ou reserváveis"
+      : queue.length <= blocks.length ? "não há conteúdo reservável com duração compatível"
+        : "não houve encaixe possível nas durações permitidas";
+  const diagnostics = {
+    plannedMinutes: capacityMinutes,
+    allocatedMinutes,
+    remainingMinutes,
+    executableBlocks,
+    reservedBlocks,
+    blockedBlocks: reservedBlocks,
+    unresolvedDependencies: [...new Set(unresolvedDependencies)],
+    capacityUnderfillReason,
+  };
   if (isDevelopmentRuntime()) console.debug("[Meu Cronograma · ciclo] diagnóstico de diversidade", fairness);
-  return { blocks: integratedBlocks, distribution, remainingMinutes, fairness };
+  return { blocks: integratedBlocks, distribution, remainingMinutes, fairness, diagnostics };
 }
 
 function cycleFairnessDiagnostics(blocks = [], activeSubjects = []) {
@@ -8430,11 +8455,35 @@ function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
   const remaining = Object.fromEntries(DAYS.map(([key]) => [key, Math.round(Math.max(0, Number(daily[key]) || 0) * margin * 60)]));
   const subjectsByDay = Object.fromEntries(DAYS.map(([key]) => [key, new Set()]));
   const dependencyDays = new Map();
+  const completedDependencies = completedPedagogicalDependencyKeys();
+  const byDependencyKey = new Map(blocks.map((block, index) => [pedagogicalDependencyKey(block), { block, index }]));
+  const unresolved = new Set();
+  const dependencies = new Map(blocks.map((block, index) => [index, new Set((block.pedagogicalPrerequisiteKeys || [])
+    .map((key) => byDependencyKey.get(key)?.index)
+    .filter((value) => Number.isInteger(value)))]));
+  blocks.forEach((block) => (block.pedagogicalPrerequisiteKeys || []).forEach((key) => {
+    if (!byDependencyKey.has(key) && !completedDependencies.has(key)) unresolved.add(block);
+  }));
+  const pending = new Map(blocks.map((block, index) => [index, block]));
+  const orderedBlocks = [];
+  while (pending.size) {
+    const next = [...pending.entries()]
+      .filter(([index]) => [...(dependencies.get(index) || [])].every((dependency) => !pending.has(dependency)))
+      .sort(([left], [right]) => left - right)[0]
+      || [...pending.entries()].sort(([left], [right]) => left - right)[0];
+    pending.delete(next[0]);
+    orderedBlocks.push(next[1]);
+  }
   let cursor = 0;
-  blocks.forEach((block) => {
+  orderedBlocks.forEach((block) => {
+    if (unresolved.has(block)) {
+      block.plannedDay = "";
+      block.pedagogicalAllocationIssue = "pré-requisito não localizado";
+      return;
+    }
     const minutes = Math.round((Number(block.duracao) || 0) * 60);
     const prerequisites = Array.isArray(block.pedagogicalPrerequisiteKeys) ? block.pedagogicalPrerequisiteKeys : [];
-    const earliestDependencyDay = Math.max(-1, ...prerequisites.map((key) => (dependencyDays.get(key) ?? -2) + 1));
+    const earliestDependencyDay = Math.max(-1, ...prerequisites.map((key) => dependencyDays.has(key) ? dependencyDays.get(key) + 1 : completedDependencies.has(key) ? -1 : DAYS.length));
     const orderedDays = [...DAYS.slice(cursor), ...DAYS.slice(0, cursor)].filter(([key]) => DAYS.findIndex(([day]) => day === key) >= earliestDependencyDay);
     const available = orderedDays.find(([key]) => remaining[key] >= minutes && (!block.materia || !subjectsByDay[key].has(block.materia))) || orderedDays.find(([key]) => remaining[key] >= minutes);
     if (!available) {
@@ -8704,6 +8753,9 @@ function blockRow(number, duration, item, type, estimate = {}) {
     pedagogicalException: item.pedagogicalException || "",
     pedagogicalPrerequisiteKeys: Array.isArray(item.pedagogicalPrerequisiteKeys) ? item.pedagogicalPrerequisiteKeys.slice() : [],
     pedagogicalHistory: item.pedagogicalHistory && typeof item.pedagogicalHistory === "object" ? { ...item.pedagogicalHistory } : null,
+    pedagogicalEligibleNow: Boolean(item.pedagogicalEligibleNow),
+    pedagogicalReservable: Boolean(item.pedagogicalReservable),
+    pedagogicalBlocked: Boolean(item.pedagogicalBlocked),
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
     status: "N\u00e3o iniciado",
