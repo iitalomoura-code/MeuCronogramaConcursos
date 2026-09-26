@@ -23,7 +23,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, rankStudyUnitsByAdaptivePriority, invalidateDerivedStudyCaches };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, canAddCycleBlock, fairnessExceptionReason, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, pedagogicalProgression, pedagogicalReconciliationInput, rankStudyUnitsByAdaptivePriority, invalidateDerivedStudyCaches };`;
 const noop = () => {};
 const context = {
   console,
@@ -179,8 +179,10 @@ assert.equal(cguCycle.diagnostics.allocatedMinutes, 1020, "A carga planejada de 
 assert.ok(cguCycle.remainingMinutes < 30, "Não pode sobrar meia hora quando existem conteúdos reserváveis.");
 assert.ok((cguFairness.blocksBySubject["Língua Portuguesa"] || 0) <= 2, "Português não pode monopolizar o ciclo inicial.");
 assert.ok((cguFairness.blocksBySubject["Direito Administrativo"] || 0) <= 2, "Direito Administrativo não pode monopolizar o ciclo inicial.");
+assert.ok(Math.max(...Object.values(cguFairness.blocksBySubject)) <= 3, "O teto normal do cenário CGU vale para toda matéria, não só para as duas mais prioritárias.");
 assert.ok(cguFairness.topTwoCombinedShare <= .55, "As duas matérias mais frequentes não podem dominar a semana.");
 assert.equal(cguRepeat, -1, "Matérias iguais não podem ficar consecutivas quando há alternativas.");
+assert.deepStrictEqual([...cguFairness.fairnessViolations], [], "O cenário CGU normal não pode aceitar violação de fairness.");
 assert.deepStrictEqual(runtime.createAdaptiveCycleBlocks(cguSubjects, { capacidade: { plannedMinutes: 1020 }, horasSemanaCronograma: 17, duracaoBloco: 1 }, {}).blocks.map((block) => [block.materia, block.assunto, block.duracao]), cguCycle.blocks.map((block) => [block.materia, block.assunto, block.duracao]), "A mesma entrada CGU deve gerar a mesma composição.");
 
 const smallCapacityDistribution = runtime.distributeBlocks(cguSubjects, 5, { adaptive: true });
@@ -192,5 +194,41 @@ const sameDay = runtime.assignBlocksToDailyCapacity([
   { materia: "Português", duracao: 1 }, { materia: "Português", duracao: 1 }, { materia: "Direito", duracao: 1 },
 ], { capacidade: { safetyMargin: 1, dailyHours: { segunda: 2, terca: 1, quarta: 0, quinta: 0, sexta: 0, sabado: 0, domingo: 0 } } });
 assert.notEqual(sameDay[0].plannedDay, sameDay[1].plannedDay, "Repetições da mesma matéria devem ir para dias diferentes quando houver alternativa de capacidade.");
+
+function buildFairCycle(subjectCount, topicCount, plannedMinutes, sizeForTopic = () => "Médio") {
+  const subjects = Array.from({ length: subjectCount }, (_, index) => {
+    const materia = `Matéria ${index + 1}`;
+    const assuntos = Array.from({ length: topicCount }, (_, topicIndex) => `${materia} — tema ${topicIndex + 1}`);
+    return { materia, assuntos, temas: assuntos.map((assunto) => ({ materia, assunto, titulo: assunto, conteudosOriginais: ["conteúdo"], blocosSugeridos: 1 })), peso: 3, dominio: 3 };
+  });
+  runtime.state.planningBase.materias = subjects;
+  runtime.state.rows = subjects.flatMap((subject) => subject.assuntos.map((assunto, index) => ({ materia: subject.materia, assunto, estudar: "Sim", tamanhoEstimado: sizeForTopic(index), blocosSugeridos: 1 })));
+  runtime.state.generatedBlocks = [];
+  runtime.state.completedHistory = [];
+  runtime.state.cycleHistory = [];
+  runtime.state.cycleResults = [];
+  runtime.state.reviews = [];
+  return runtime.createAdaptiveCycleBlocks(subjects, { capacidade: { plannedMinutes }, horasSemanaCronograma: plannedMinutes / 60, duracaoBloco: 1 }, {});
+}
+
+const sixSubjectCycle = buildFairCycle(6, 3, 1080);
+const sixSubjectFairness = runtime.cycleFairnessDiagnostics(sixSubjectCycle.blocks, runtime.state.planningBase.materias);
+assert.equal(sixSubjectFairness.totalBlocks, 18, "Seis matérias com 18 horas devem preencher os 18 blocos reais.");
+assert.equal(sixSubjectFairness.coveredSubjects, 6, "As seis matérias devem aparecer antes de repetições.");
+assert.ok(Math.max(...Object.values(sixSubjectFairness.blocksBySubject)) <= 3, "O teto real de três blocos por matéria vale para o ciclo de seis matérias.");
+assert.deepStrictEqual([...sixSubjectFairness.fairnessViolations], [], "Um ciclo normal de seis matérias não pode terminar com violação de fairness.");
+assert.equal(sixSubjectFairness.longestSubjectSequence, 1, "O ciclo de seis matérias deve alternar matérias quando houver opções.");
+
+const mixedDurationCycle = buildFairCycle(8, 5, 720, (index) => ["Curto", "Médio", "Longo", "Médio", "Curto"][index]);
+const mixedDurationFairness = runtime.cycleFairnessDiagnostics(mixedDurationCycle.blocks, runtime.state.planningBase.materias);
+assert.ok(mixedDurationCycle.remainingMinutes < 30, "Durações misturadas devem preencher a capacidade até o menor bloco permitido quando houver candidatos.");
+assert.deepStrictEqual([...mixedDurationFairness.fairnessViolations], [], "Os limites devem considerar os minutos e blocos reais das oito matérias.");
+
+const smallSubjectCycle = buildFairCycle(3, 5, 675);
+assert.equal(smallSubjectCycle.diagnostics.allocatedMinutes, 675, "Com poucas matérias o teto se adapta e não desperdiça capacidade viável.");
+assert.deepStrictEqual([...smallSubjectCycle.fairness.fairnessViolations], [], "Poucas matérias não criam uma divisão impossível por regra rígida.");
+const fairnessException = runtime.canAddCycleBlock([{ materia: "Crítica", duracao: 1 }, { materia: "Crítica", duracao: 1 }, { materia: "Alternativa", duracao: 1 }, { materia: "Alternativa", duracao: 1 }], { materia: "Crítica", duracao: 1 }, [{ materia: "Crítica" }, { materia: "Alternativa" }, { materia: "Outra" }, { materia: "Quarta" }], "deficiência crítica comprovada", 300);
+assert.equal(fairnessException.exception, "deficiência crítica comprovada", "Exceção real de deficiência fica registrada para o bloco que ultrapassa o teto normal.");
+assert.equal(runtime.fairnessExceptionReason({}, { level: "critical" }, {}), "deficiência crítica comprovada", "A exceção permitida deve ter justificativa concreta, nunca apenas peso alto.");
 
 console.log("OK - ciclo adaptativo usa cobertura, rotação, duração discreta e filtros da tela Continuar.");

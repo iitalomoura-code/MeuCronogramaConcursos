@@ -7797,7 +7797,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
   const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
 
   while (queue.length < totalBlocks && pool.length) {
-    const activePool = pool.filter((item) => item.remaining > 0 && item.topicCursor < item.studyUnits.length);
+    const activePool = pool.filter((item) => (item.remaining > 0 || options.allowBeyondQuota) && item.topicCursor < item.studyUnits.length);
     if (!activePool.length) break;
     // Cobertura é uma fase própria: enquanto ainda houver matérias sem exposição,
     // uma repetição não concorre com elas. Prioridade decide a ordem dentro da fase.
@@ -7859,6 +7859,36 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
   }
 
   return queue;
+}
+
+function fairnessExceptionReason(item = {}, diagnosis = {}, reviewContext = {}) {
+  if (reviewContext.overdue?.length) return "revisão vencida urgente";
+  if (diagnosis.errorSignals?.recurrence === "high" || Number(diagnosis.errorSignals?.postInterventionErrors) >= 2) return "erros recorrentes persistentes";
+  if (diagnosis.level === "critical") return "deficiência crítica comprovada";
+  return "";
+}
+
+function canAddCycleBlock(blocks = [], candidate = {}, activeSubjects = [], exceptionReason = "", plannedMinutes = 0) {
+  const subjectCount = activeSubjects.length;
+  if (subjectCount <= 3 || exceptionReason) return { allowed: true, exception: exceptionReason };
+  const subject = candidate.materia || "";
+  const candidateMinutes = Math.round((Number(candidate.duracao) || 0) * 60);
+  const currentMinutes = blocks.reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
+  const currentSubjectBlocks = blocks.filter((block) => block.materia === subject).length;
+  const currentSubjectMinutes = blocks.filter((block) => block.materia === subject).reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
+  const projectedBlocks = blocks.length + 1;
+  const blockCap = normalSubjectBlockCap(projectedBlocks, subjectCount);
+  const expectedMinutes = Math.max(currentMinutes + candidateMinutes, Number(plannedMinutes) || 0);
+  const projectedShare = (currentSubjectMinutes + candidateMinutes) / Math.max(1, expectedMinutes);
+  if (currentSubjectBlocks >= blockCap) return { allowed: false, reason: "subject-block-cap" };
+  if (projectedBlocks >= subjectCount && projectedShare > NORMAL_MAX_SUBJECT_SHARE) return { allowed: false, reason: "subject-minute-cap" };
+  const projectedShares = new Map();
+  blocks.forEach((block) => projectedShares.set(block.materia, (projectedShares.get(block.materia) || 0) + Math.round((Number(block.duracao) || 0) * 60)));
+  projectedShares.set(subject, (projectedShares.get(subject) || 0) + candidateMinutes);
+  const topTwo = [...projectedShares.values()].sort((left, right) => right - left).slice(0, 2).reduce((sum, value) => sum + value, 0) / Math.max(1, expectedMinutes);
+  if (subjectCount >= 4 && projectedBlocks >= subjectCount && topTwo > .55) return { allowed: false, reason: "top-two-concentration" };
+  if (blocks.length && blocks[blocks.length - 1].materia === subject && subjectCount >= 3) return { allowed: false, reason: "consecutive-subject" };
+  return { allowed: true, exception: "" };
 }
 
 function chooseTopicForBlock(subject) {
@@ -8188,11 +8218,15 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   if (!activeSubjects.length) return { blocks: [], distribution: [] };
   const indicativeBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const plannedDistribution = distributeBlocks(activeSubjects, indicativeBlocks, { adaptive: true });
-  // A cota inicial continua guiando a cobertura. A fila, porém, também recebe
-  // etapas reserváveis para usar os minutos restantes sem antecipar sua execução.
-  const reservationDistribution = distributeBlocks(activeSubjects, Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]), { adaptive: true });
-  const queue = buildAlternatingQueue(reservationDistribution, analysis, { totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]) });
+  // A primeira fase respeita a composição esperada em blocos de uma hora. A
+  // segunda apenas oferece candidatos reserváveis; a decisão de incluí-los usa
+  // os limites calculados sobre os blocos e minutos realmente já alocados.
+  const queue = buildAlternatingQueue(plannedDistribution, analysis, {
+    totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]),
+    allowBeyondQuota: true,
+  });
   const blocks = [];
+  const fairnessRejections = [];
   let remainingMinutes = capacityMinutes;
 
   for (const item of queue) {
@@ -8234,6 +8268,12 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     block.studyPressure = pressure;
     block.knowledgeState = capacityPlanning().knowledgeState(diagnosis);
     block.examImportance = subject.examImportance;
+    const fairnessGate = canAddCycleBlock(blocks, block, activeSubjects, fairnessExceptionReason(item, diagnosis, reviewContext), capacityMinutes);
+    if (!fairnessGate.allowed) {
+      fairnessRejections.push(fairnessGate.reason);
+      continue;
+    }
+    if (fairnessGate.exception) block.fairnessException = fairnessGate.exception;
     blocks.push(block);
     remainingMinutes -= durationMinutes;
   }
@@ -8268,6 +8308,7 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   const reservedBlocks = integratedBlocks.filter((block) => block.pedagogicalReservable && !block.pedagogicalEligibleNow && !block.pedagogicalException).length;
   const capacityUnderfillReason = remainingMinutes < ALLOWED_BLOCK_MINUTES[0] ? ""
     : !queue.length ? "não há conteúdos pendentes ou reserváveis"
+      : fairnessRejections.length ? "os candidatos restantes ultrapassariam os limites de concentração"
       : queue.length <= blocks.length ? "não há conteúdo reservável com duração compatível"
         : "não houve encaixe possível nas durações permitidas";
   const diagnostics = {
@@ -8278,6 +8319,7 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     reservedBlocks,
     blockedBlocks: reservedBlocks,
     unresolvedDependencies: [...new Set(unresolvedDependencies)],
+    fairnessRejections: [...new Set(fairnessRejections)],
     capacityUnderfillReason,
   };
   if (isDevelopmentRuntime()) console.debug("[Meu Cronograma · ciclo] diagnóstico de diversidade", fairness);
@@ -8575,22 +8617,26 @@ function reconcileDistributionFromBlocks(blocks = state.generatedBlocks) {
 
 function pedagogicalReconciliationInput(cycleBlocks = [], strategicTopics = []) {
   const unitsByKey = new Map();
-  const frontierByKey = new Map();
-  const allowedBySubject = new Map();
+  const progressionByKey = new Map();
+  const executableKeysBySubject = new Map();
+  const reservableKeysBySubject = new Map();
+  const blockedKeysBySubject = new Map();
   const replacementBySubject = new Map();
   (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).forEach((subject) => {
     const units = operationalStudyUnits(subject, {});
-    const frontier = pedagogicalFrontier(subject, units);
+    const progression = pedagogicalProgression(subject, units);
     const subjectKey = normalizeForMatch(subject.materia);
     units.forEach((unit) => unitsByKey.set(programUnitKey(unit), unit));
-    frontier.forEach((unit) => frontierByKey.set(programUnitKey(unit), unit));
-    allowedBySubject.set(subjectKey, new Set(frontier.map((unit) => programUnitKey(unit))));
-    const prerequisite = frontier.find((unit) => !unit.pedagogicalException && unit.pedagogicalBand === 0);
+    progression.forEach((unit) => progressionByKey.set(programUnitKey(unit), unit));
+    executableKeysBySubject.set(subjectKey, new Set(progression.filter((unit) => unit.pedagogicalEligibleNow || unit.pedagogicalException).map((unit) => programUnitKey(unit))));
+    reservableKeysBySubject.set(subjectKey, new Set(progression.filter((unit) => unit.pedagogicalReservable || unit.pedagogicalException).map((unit) => programUnitKey(unit))));
+    blockedKeysBySubject.set(subjectKey, new Set(progression.filter((unit) => unit.pedagogicalBlocked && !unit.pedagogicalException).map((unit) => programUnitKey(unit))));
+    const prerequisite = progression.find((unit) => unit.pedagogicalEligibleNow && !unit.pedagogicalException && unit.pedagogicalBand === 0);
     if (prerequisite) replacementBySubject.set(subjectKey, prerequisite);
   });
   const topics = strategicTopics.map((topic) => {
     const key = programUnitKey(topic.programUnit || topic);
-    const unit = frontierByKey.get(key) || unitsByKey.get(key);
+    const unit = progressionByKey.get(key) || unitsByKey.get(key);
     return unit ? {
       ...topic,
       programUnit: { ...(topic.programUnit || {}), ...unit, programUnitKey: key },
@@ -8604,15 +8650,16 @@ function pedagogicalReconciliationInput(cycleBlocks = [], strategicTopics = []) 
   const replacements = cycleBlocks.flatMap((block) => {
     const subjectKey = normalizeForMatch(block.materia);
     const outgoingKey = programUnitKey(block);
-    const allowed = allowedBySubject.get(subjectKey);
+    const reservable = reservableKeysBySubject.get(subjectKey);
     const prerequisite = replacementBySubject.get(subjectKey);
     const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
-    if (!allowed?.size || !unitsByKey.has(outgoingKey) || allowed.has(outgoingKey) || block.pedagogicalException || activity.includes("revis")) return [];
+    if (!reservable?.size || reservable.has(outgoingKey) || block.pedagogicalException || activity.includes("revis") || isProtectedCycleBlock(block)) return [];
     const incomingKey = prerequisite ? programUnitKey(prerequisite) : "";
     if (!incomingKey || incomingKey === outgoingKey || !topicKeys.has(incomingKey)) return [];
-    return [{ outgoingKey, incomingKey, reason: "tema avançado substituído pelo pré-requisito pendente da mesma matéria" }];
+    return [{ outgoingKey, incomingKey, reason: "tema incompatível substituído pelo pré-requisito pendente da mesma matéria", rewriteDependents: true }];
   });
-  return { topics, replacements };
+  const validCandidateKeys = [...new Set([...progressionByKey.values()].filter((unit) => unit.pedagogicalEligibleNow || unit.pedagogicalReservable || unit.pedagogicalException).map((unit) => programUnitKey(unit)))];
+  return { topics, replacements, progressionByKey, executableKeysBySubject, reservableKeysBySubject, blockedKeysBySubject, validCandidateKeys };
 }
 
 async function reconcileCurrentCycle() {
@@ -8624,11 +8671,16 @@ async function reconcileCurrentCycle() {
   }
   const pedagogical = pedagogicalReconciliationInput(cycleBlocks, strategicPlanningTopics());
   const topics = pedagogical.topics;
+  const activeSubjectCount = (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).length;
+  const cycleMinutes = cycleBlocks.reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
   const options = {
     coverage: strategicCycleCoverage(),
     activeFocusBlockId: activeFocusCycleBlockId(),
-    maxBlocksPerSubject: normalSubjectBlockCap(cycleBlocks.length, (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).length),
+    maxBlocksPerSubject: normalSubjectBlockCap(cycleBlocks.length, activeSubjectCount),
+    maxMinutesPerSubject: activeSubjectCount >= 4 ? Math.floor(cycleMinutes * HARD_MAX_SUBJECT_SHARE) : Number.POSITIVE_INFINITY,
+    completedDependencyKeys: [...completedPedagogicalDependencyKeys()],
     pedagogicalReplacements: pedagogical.replacements,
+    pedagogical: { validCandidateKeys: pedagogical.validCandidateKeys },
   };
   const preview = engine.preview({ blocks: state.generatedBlocks, topics, options });
   strategicCyclePreviewUI = { preview, generatedAt: new Date().toISOString() };
@@ -8650,10 +8702,10 @@ async function reconcileCurrentCycle() {
     return;
   }
   const freshPedagogical = pedagogicalReconciliationInput(cycleBlocks, strategicPlanningTopics());
-  const result = engine.applyPreview({ blocks: state.generatedBlocks, preview, topics: freshPedagogical.topics, options: { ...options, pedagogicalReplacements: freshPedagogical.replacements } });
+  const result = engine.applyPreview({ blocks: state.generatedBlocks, preview, topics: freshPedagogical.topics, options: { ...options, pedagogicalReplacements: freshPedagogical.replacements, pedagogical: { validCandidateKeys: freshPedagogical.validCandidateKeys } } });
   if (result.stale || !result.applied) {
     strategicCyclePreviewUI = { preview: result.preview, generatedAt: new Date().toISOString() };
-    showToast("O ciclo mudou desde esta análise. Reavaliei os ajustes.");
+    showToast(result.integrityFailure ? "A troca foi recusada para preservar a cadeia pedagógica." : "O ciclo mudou desde esta análise. Reavaliei os ajustes.");
     return;
   }
   state.generatedBlocks = result.blocks;

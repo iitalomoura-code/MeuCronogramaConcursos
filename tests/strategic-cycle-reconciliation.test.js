@@ -225,4 +225,35 @@ function block(entry, extra = {}) {
   assert.equal(protectedPreview.changes.length, 0, "Bloco iniciado não pode ser substituído pela reavaliação pedagógica.");
 }
 
+{
+  const a = { ...topic("Direito Administrativo", "A", .40, "building"), pedagogicalEligibleNow: true, pedagogicalReservable: true, pedagogicalBlocked: false, pedagogicalPrerequisiteKeys: [] };
+  const b = { ...topic("Direito Administrativo", "B", .42, "building"), pedagogicalEligibleNow: false, pedagogicalReservable: true, pedagogicalBlocked: true, pedagogicalPrerequisiteKeys: [a.programUnitKey], pedagogicalReason: "Etapa futura reservada" };
+  const c = { ...topic("Direito Administrativo", "C", .44, "building"), pedagogicalEligibleNow: false, pedagogicalReservable: true, pedagogicalBlocked: true, pedagogicalPrerequisiteKeys: [b.programUnitKey], pedagogicalReason: "Etapa futura reservada" };
+  const blocks = [block(a, { bloco: 1 }), block(b, { bloco: 2 }), block(c, { bloco: 3 })];
+  const coherent = reconciliation.preview({ blocks, topics: [a, b, c], options: { pedagogical: { validCandidateKeys: [a.programUnitKey, b.programUnitKey, c.programUnitKey] } } });
+  assert.equal(coherent.changes.length, 0, "Reservas B e C coerentes não podem ser trocadas só por ainda estarem bloqueadas.");
+  assert.ok(coherent.kept.every((item) => item.programUnitKey !== b.programUnitKey && item.programUnitKey !== c.programUnitKey), "Reservas ficam fora do conjunto flexível estratégico.");
+
+  const b2 = { ...topic("Direito Administrativo", "B2", .80, "recovery"), pedagogicalEligibleNow: false, pedagogicalReservable: true, pedagogicalBlocked: true, pedagogicalPrerequisiteKeys: [a.programUnitKey], pedagogicalReason: "Substituição da segunda etapa" };
+  const preview = reconciliation.preview({ blocks, topics: [a, b, c, b2], options: { pedagogicalReplacements: [{ outgoingKey: b.programUnitKey, incomingKey: b2.programUnitKey, allowReserved: true, rewriteDependents: true, reason: "substituição válida da mesma posição" }], pedagogical: { validCandidateKeys: [a.programUnitKey, b.programUnitKey, b2.programUnitKey, c.programUnitKey] } } });
+  assert.equal(preview.changes.length, 1, "Uma troca explícita pode substituir uma reserva pela mesma posição pedagógica.");
+  const applied = reconciliation.applyPreview({ blocks, preview, topics: [a, b, c, b2], options: { pedagogicalReplacements: [{ outgoingKey: b.programUnitKey, incomingKey: b2.programUnitKey, allowReserved: true, rewriteDependents: true }], pedagogical: { validCandidateKeys: [a.programUnitKey, b.programUnitKey, b2.programUnitKey, c.programUnitKey] } } });
+  assert.equal(applied.applied, true, "A troca válida deve passar pela validação de dependências.");
+  assert.equal(applied.blocks[1].programUnitKey, b2.programUnitKey, "B é substituído por B2 sem alterar o slot.");
+  assert.deepEqual(applied.blocks[2].pedagogicalPrerequisiteKeys, [b2.programUnitKey], "C passa a depender de B2, sem referência órfã a B.");
+  assert.deepEqual(applied.validation.orphanedDependencies, [], "A cadeia reconstruída não pode ter dependências órfãs.");
+  assert.deepEqual(applied.validation.dependencyCycles, [], "A cadeia reconstruída não pode ter ciclos.");
+
+  const incompatible = topic("Outra", "Avançado incompatível", .99, "recovery");
+  const strategic = reconciliation.preview({ blocks: [block(a)], topics: [a, incompatible], options: { pedagogical: { validCandidateKeys: [a.programUnitKey] } } });
+  assert.equal(strategic.changes.length, 0, "Candidato estratégico fora da progressão executável ou reservável é bloqueado.");
+
+  const cyclicB2 = { ...b2, pedagogicalPrerequisiteKeys: [c.programUnitKey] };
+  const cyclicPreview = reconciliation.preview({ blocks, topics: [a, b, c, cyclicB2], options: { pedagogicalReplacements: [{ outgoingKey: b.programUnitKey, incomingKey: cyclicB2.programUnitKey, allowReserved: true, rewriteDependents: true }] } });
+  const cyclic = reconciliation.applyPreview({ blocks, preview: cyclicPreview, topics: [a, b, c, cyclicB2], options: { pedagogicalReplacements: [{ outgoingKey: b.programUnitKey, incomingKey: cyclicB2.programUnitKey, allowReserved: true, rewriteDependents: true }] } });
+  assert.equal(cyclic.applied, false, "Troca que forma um ciclo entre dependências deve ser recusada.");
+  assert.equal(cyclic.integrityFailure, true, "A recusa por integridade precisa ser explícita.");
+  assert.ok(cyclic.validation.dependencyCycles.length, "O ciclo detectado fica disponível para auditoria.");
+}
+
 console.log("OK - reconciliação estratégica preserva capacidade, proteção, diversidade e estabilidade do ciclo.");

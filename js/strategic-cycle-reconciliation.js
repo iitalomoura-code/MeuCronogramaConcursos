@@ -23,6 +23,60 @@
       || Boolean(active && (String(block.id || "") === active || String(block.bloco || "") === active));
   }
 
+  function isReserved(block = {}) {
+    return Boolean(block.pedagogicalReservable && !block.pedagogicalEligibleNow && !block.pedagogicalException);
+  }
+
+  function replacementValidation(blocks = [], options = {}) {
+    const source = Array.isArray(blocks) ? blocks : [];
+    const completed = new Set(options.completedDependencyKeys || []);
+    const keys = new Set(source.map((block) => topicKey(block)).filter(Boolean));
+    const prerequisites = new Map(source.map((block) => [topicKey(block), (block.pedagogicalPrerequisiteKeys || []).filter(Boolean)]));
+    const orphanedDependencies = [];
+    const invalidReservedBlocks = [];
+    const executableWithoutPrerequisite = [];
+    source.forEach((block) => {
+      const key = topicKey(block);
+      const missing = (prerequisites.get(key) || []).filter((dependency) => !keys.has(dependency) && !completed.has(dependency));
+      if (missing.length) {
+        orphanedDependencies.push({ key, missing });
+        if (isReserved(block)) invalidReservedBlocks.push(key);
+      }
+      if (block.pedagogicalEligibleNow && missing.length) executableWithoutPrerequisite.push(key);
+    });
+    const visiting = new Set();
+    const visited = new Set();
+    const dependencyCycles = [];
+    const visit = (key, trail = []) => {
+      if (visiting.has(key)) {
+        dependencyCycles.push([...trail, key]);
+        return;
+      }
+      if (visited.has(key)) return;
+      visiting.add(key);
+      (prerequisites.get(key) || []).filter((dependency) => keys.has(dependency)).forEach((dependency) => visit(dependency, [...trail, key]));
+      visiting.delete(key);
+      visited.add(key);
+    };
+    [...keys].forEach((key) => visit(key));
+    const subjectBlocks = new Map();
+    const subjectMinutes = new Map();
+    source.forEach((block) => {
+      const subject = normalized(block.materia);
+      subjectBlocks.set(subject, (subjectBlocks.get(subject) || 0) + 1);
+      subjectMinutes.set(subject, (subjectMinutes.get(subject) || 0) + minutes(block));
+    });
+    const maxBlocksPerSubject = Number(options.maxBlocksPerSubject) || Number.POSITIVE_INFINITY;
+    const maxMinutesPerSubject = Number(options.maxMinutesPerSubject) || Number.POSITIVE_INFINITY;
+    const subjectBlockCapViolations = [...subjectBlocks.entries()].filter(([, count]) => count > maxBlocksPerSubject).map(([subject]) => subject);
+    const subjectMinuteCapViolations = [...subjectMinutes.entries()].filter(([, value]) => value > maxMinutesPerSubject).map(([subject]) => subject);
+    return { orphanedDependencies, dependencyCycles, invalidReservedBlocks, executableWithoutPrerequisite, subjectBlockCapViolations, subjectMinuteCapViolations };
+  }
+
+  function hasValidationViolations(validation = {}) {
+    return Object.values(validation).some((value) => Array.isArray(value) && value.length);
+  }
+
   // Same evidence semantics used by StrategicAdvisor: confidence, questions, or completed sessions.
   function hasLocalEvidence(item = {}) {
     const diagnosis = item.diagnosis || {};
@@ -51,13 +105,16 @@
     const activeFocusBlockId = options.activeFocusBlockId || "";
     const cycleEntries = sourceBlocks.map((block, sourceIndex) => ({ block, sourceIndex })).filter(({ block }) => !block.strategicPlanSessionOnly);
     const protectedBlocks = cycleEntries.filter(({ block }) => isProtected(block, activeFocusBlockId));
-    const flexible = cycleEntries.filter(({ block }) => !isProtected(block, activeFocusBlockId) && status(block).includes("nao iniciado"));
+    // Uma reserva pedagógica é capacidade já comprometida com uma sequência. Ela
+    // só pode mudar por uma troca pedagógica explícita que reconstrua a cadeia.
+    const flexible = cycleEntries.filter(({ block }) => !isProtected(block, activeFocusBlockId) && !isReserved(block) && status(block).includes("nao iniciado"));
     const occupied = new Set(cycleEntries.map(({ block }) => topicKey(block)));
     const capacityMinutes = cycleEntries.reduce((total, { block }) => total + minutes(block), 0);
     const protectedMinutes = protectedBlocks.reduce((total, { block }) => total + minutes(block), 0);
     const coverage = Number(options.coverage ?? options.strategyCoverage ?? 1);
     const conservativeCoverage = Number.isFinite(coverage) && coverage < config.lowCoverageThreshold;
-    const maxChanges = flexible.length ? Math.min(config.maxChangesPerPass, Math.max(1, Math.floor(flexible.length * config.maxReplacementShare))) : 0;
+    const requestedPedagogicalChanges = Array.isArray(options.pedagogicalReplacements) ? options.pedagogicalReplacements : [];
+    const maxChanges = flexible.length || requestedPedagogicalChanges.length ? Math.min(config.maxChangesPerPass, Math.max(1, Math.floor(Math.max(1, flexible.length) * config.maxReplacementShare))) : 0;
     const changes = [];
     const deferred = [];
     const usedSlots = new Set();
@@ -72,26 +129,27 @@
     // A reavaliação pedagógica só mexe em um bloco ainda não iniciado que está
     // além da fronteira. Não depende de diferença de score, porque a sequência
     // é uma pré-condição para a prioridade estratégica.
-    const pedagogicalReplacements = Array.isArray(options.pedagogicalReplacements) ? options.pedagogicalReplacements : [];
+    const pedagogicalReplacements = requestedPedagogicalChanges;
     for (const replacement of pedagogicalReplacements) {
       if (changes.length >= maxChanges) { deferred.push({ incoming: { programUnitKey: replacement.incomingKey || "" }, reason: "change-limit" }); continue; }
       const outgoingKey = String(replacement.outgoingKey || "");
       const incomingKey = String(replacement.incomingKey || "");
       const incomingTopic = topicByKey.get(incomingKey);
-      const target = flexible.find(({ block, sourceIndex }) => !usedSlots.has(sourceIndex) && topicKey(block) === outgoingKey);
+      const target = cycleEntries.find(({ block, sourceIndex }) => !usedSlots.has(sourceIndex) && topicKey(block) === outgoingKey && !isProtected(block, activeFocusBlockId) && status(block).includes("nao iniciado") && (!isReserved(block) || replacement.allowReserved));
       if (!target || !incomingTopic || occupied.has(incomingKey)) {
         deferred.push({ incoming: incomingTopic ? descriptor(incomingTopic) : { programUnitKey: incomingKey }, reason: !target ? "pedagogical-slot-unavailable" : !incomingTopic ? "pedagogical-topic-unavailable" : "pedagogical-topic-already-present" });
         continue;
       }
       const outgoing = descriptor(topicByKey.get(outgoingKey) || target.block);
       const incoming = descriptor(incomingTopic);
-      changes.push({ type: "pedagogical-replace", slotIndex: target.sourceIndex, slotKey: String(target.block.id || target.block.bloco || target.sourceIndex), outgoing: { ...outgoing, durationMinutes: minutes(target.block) }, incoming: { ...incoming, durationMinutes: minutes(target.block) }, scoreDelta: incoming.strategicScore - outgoing.strategicScore, reason: [replacement.reason || "conteúdo avançado ainda bloqueado pela sequência pedagógica", "bloco substituído ainda não foi iniciado", "capacidade total do ciclo foi preservada"] });
+      changes.push({ type: "pedagogical-replace", slotIndex: target.sourceIndex, slotKey: String(target.block.id || target.block.bloco || target.sourceIndex), outgoing: { ...outgoing, durationMinutes: minutes(target.block) }, incoming: { ...incoming, durationMinutes: minutes(target.block) }, dependencyRewrite: replacement.rewriteDependents === false ? null : { from: outgoingKey, to: incomingKey }, scoreDelta: incoming.strategicScore - outgoing.strategicScore, reason: [replacement.reason || "conteúdo avançado ainda bloqueado pela sequência pedagógica", "bloco substituído ainda não foi iniciado", "capacidade total do ciclo foi preservada"] });
       usedSlots.add(target.sourceIndex);
       occupied.delete(outgoingKey);
       occupied.add(incomingKey);
     }
 
-    const candidates = sourceTopics.filter((topic) => !occupied.has(topicKey(topic))).filter(isStrategicCandidate).sort((left, right) => score(right) - score(left) || topicKey(left).localeCompare(topicKey(right)));
+    const validCandidateKeys = new Set(options.pedagogical?.validCandidateKeys || []);
+    const candidates = sourceTopics.filter((topic) => !occupied.has(topicKey(topic))).filter((topic) => !validCandidateKeys.size || validCandidateKeys.has(topicKey(topic))).filter(isStrategicCandidate).sort((left, right) => score(right) - score(left) || topicKey(left).localeCompare(topicKey(right)));
 
     for (const incomingTopic of candidates) {
       if (changes.length >= maxChanges) { deferred.push({ incoming: descriptor(incomingTopic), reason: "change-limit" }); continue; }
@@ -154,11 +212,19 @@
       const incomingTopic = byKey.get(change.incoming.programUnitKey);
       if (!incomingTopic || next.some((block, currentIndex) => currentIndex !== index && topicKey(block) === change.incoming.programUnitKey)) return { applied: false, stale: true, blocks: source.map((block) => ({ ...block })), preview: fresh };
       next[index] = buildReplacementBlock({ slot, incomingTopic, outgoing: change.outgoing });
+      if (change.dependencyRewrite?.from && change.dependencyRewrite?.to) {
+        next.forEach((block, dependentIndex) => {
+          if (dependentIndex === index || !Array.isArray(block.pedagogicalPrerequisiteKeys)) return;
+          block.pedagogicalPrerequisiteKeys = block.pedagogicalPrerequisiteKeys.map((key) => key === change.dependencyRewrite.from ? change.dependencyRewrite.to : key);
+        });
+      }
     }
-    return { applied: true, stale: false, blocks: next, preview: reconciliationPreview };
+    const validation = replacementValidation(next, options);
+    if (hasValidationViolations(validation)) return { applied: false, stale: false, integrityFailure: true, validation, blocks: source.map((block) => ({ ...block })), preview: reconciliationPreview };
+    return { applied: true, stale: false, blocks: next, preview: reconciliationPreview, validation };
   }
 
-  const api = { DEFAULTS, preview, applyPreview, topicKey, isProtected, isStrategicCandidate, hasLocalEvidence, buildReplacementBlock };
+  const api = { DEFAULTS, preview, applyPreview, topicKey, isProtected, isReserved, isStrategicCandidate, hasLocalEvidence, buildReplacementBlock, replacementValidation };
   global.StrategicCycleReconciliation = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

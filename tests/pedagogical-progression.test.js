@@ -9,7 +9,7 @@ const ContinueRecommendation = require("../js/continue-recommendation.js");
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__pedagogicalTest = { state, pedagogicalOrderWithDependencies, pedagogicalProgression, pedagogicalFrontier, pedagogicalDependencyKey, reliableTopicHistory, pedagogicalExceptionFor, isPedagogicallyExecutable, assignBlocksToDailyCapacity, rankedContinueEntries };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__pedagogicalTest = { state, pedagogicalOrderWithDependencies, pedagogicalProgression, pedagogicalFrontier, pedagogicalReconciliationInput, pedagogicalDependencyKey, reliableTopicHistory, pedagogicalExceptionFor, isPedagogicallyExecutable, assignBlocksToDailyCapacity, rankedContinueEntries };`;
 const noop = () => {};
 const context = {
   console, Date, Math, JSON, Set, Map, Array, Object, String, Number, Boolean, RegExp, Error, structuredClone,
