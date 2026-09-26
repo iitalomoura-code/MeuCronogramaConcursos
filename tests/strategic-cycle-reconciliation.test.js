@@ -208,4 +208,21 @@ function block(entry, extra = {}) {
   assert.equal(result.blocks[0].status, "Não iniciado", "A saída não é convertida em conclusão ou falha.");
 }
 
+{
+  const foundation = topic("Contabilidade", "Fundamentos e estrutura conceitual", .20, "maintenance");
+  const advanced = topic("Contabilidade", "Demonstrações financeiras", .75, "building");
+  const other = topic("Português", "Sintaxe", .45, "building");
+  const blocks = [block(advanced, { bloco: 1, duracao: 1 }), block(other, { bloco: 2, duracao: .75 })];
+  const options = { pedagogicalReplacements: [{ outgoingKey: advanced.programUnitKey, incomingKey: foundation.programUnitKey, reason: "pré-requisito pendente" }] };
+  const preview = reconciliation.preview({ blocks, topics: [foundation, advanced, other], options });
+  assert.equal(preview.changes.length, 1, "Reavaliação deve substituir conteúdo avançado bloqueado pelo pré-requisito pendente.");
+  assert.equal(preview.changes[0].type, "pedagogical-replace");
+  assert.equal(preview.changes[0].incoming.assunto, "Fundamentos e estrutura conceitual");
+  const applied = reconciliation.applyPreview({ blocks, preview, topics: [foundation, advanced, other], options });
+  assert.equal(applied.blocks[0].assunto, "Fundamentos e estrutura conceitual");
+  assert.equal(applied.blocks[0].duracao, 1, "A troca pedagógica preserva a capacidade original do bloco.");
+  const protectedPreview = reconciliation.preview({ blocks: [block(advanced, { status: "Em andamento" })], topics: [foundation, advanced], options });
+  assert.equal(protectedPreview.changes.length, 0, "Bloco iniciado não pode ser substituído pela reavaliação pedagógica.");
+}
+
 console.log("OK - reconciliação estratégica preserva capacidade, proteção, diversidade e estabilidade do ciclo.");

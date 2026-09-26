@@ -7376,6 +7376,7 @@ function operationalStudyUnits(item, analysis) {
         structureSource: topic.structureSource || "",
         sourceBlockType: topic.sourceBlockType || "",
         origemEdital: topic.origemEdital || {},
+        ordem: Number(topic.ordem) || 0,
         metaId,
         metaTitulo: titleOf(topic),
         metaConteudos: contents,
@@ -7868,10 +7869,132 @@ function chooseTopicForBlock(subject) {
   return typeof current === "string" ? { assunto: current } : current;
 }
 
+// A prioridade estratégica decide entre conteúdos que já podem entrar no ciclo.
+// Ela não pode, sozinha, transformar um conteúdo avançado no primeiro contato da matéria.
+const PEDAGOGICAL_SEQUENCE_RULES = Object.freeze([
+  {
+    subject: "direito administrativo",
+    stages: [
+      /estado|governo|administracao publica/,
+      /organizacao administrativa/,
+      /administracao indireta|entidade.{0,20}indireta|terceiro setor/,
+      /servicos publicos/,
+    ],
+  },
+  {
+    subject: "contabilidade",
+    stages: [
+      /fundamento|estrutura conceitual|objetivo|principio/,
+      /patrimonio|elemento.{0,20}patrimonial|reconhecimento|mensuracao/,
+      /registro|procedimento|lancamento|escrituracao/,
+      /demonstrac|avancad/,
+    ],
+  },
+]);
+
+function pedagogicalOutlineParts(value = "") {
+  const parts = String(value || "").split(".").map((part) => Number(part));
+  return parts.length && parts.every((part) => Number.isFinite(part)) ? parts : [];
+}
+
+function pedagogicalUnitOrder(left = {}, right = {}) {
+  const leftOrder = Number(left.ordem) || Number.MAX_SAFE_INTEGER;
+  const rightOrder = Number(right.ordem) || Number.MAX_SAFE_INTEGER;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+  const leftOutline = pedagogicalOutlineParts(left.outlineNumber);
+  const rightOutline = pedagogicalOutlineParts(right.outlineNumber);
+  const outlineLength = Math.max(leftOutline.length, rightOutline.length);
+  for (let index = 0; index < outlineLength; index += 1) {
+    const difference = (leftOutline[index] ?? -1) - (rightOutline[index] ?? -1);
+    if (difference) return difference;
+  }
+  const originalDifference = Number(left.originalIndex) - Number(right.originalIndex);
+  if (originalDifference) return originalDifference;
+  return String(left.metaPartKey || "1").localeCompare(String(right.metaPartKey || "1"), "pt-BR", { numeric: true });
+}
+
+function pedagogicalRuleForSubject(materia = "") {
+  const normalized = normalizeForMatch(materia);
+  return PEDAGOGICAL_SEQUENCE_RULES.find((rule) => normalized.includes(rule.subject)) || null;
+}
+
+function pedagogicalStageForUnit(unit = {}, rule = null, fallbackStage = 0) {
+  if (!rule) return fallbackStage;
+  const searchable = normalizeForMatch([
+    unit.assunto, unit.titulo, unit.descricao, ...(Array.isArray(unit.conteudosOriginais) ? unit.conteudosOriginais : []), unit.conteudoBloco,
+  ].filter(Boolean).join(" "));
+  const mapped = rule.stages.findIndex((pattern) => pattern.test(searchable));
+  // Conteúdos não reconhecidos pelo mapa entram depois da sequência conhecida,
+  // mantendo a ordem do edital em vez de serem descartados.
+  return mapped >= 0 ? mapped : rule.stages.length + fallbackStage;
+}
+
+function pedagogicalEvidenceSatisfiesPrerequisite(unit = {}) {
+  const diagnosis = masteryDiagnosisForTarget(unit);
+  const evidence = diagnosis.initialEvidence || initialDiagnosisEvidence(unit.materia, unit.assunto, unit.subarea);
+  const questions = Math.max(Number(diagnosis.questions) || 0, Number(evidence.questions) || 0);
+  const confidence = Math.max(Number(diagnosis.confidence) || 0, window.InitialDiagnosisEngine?.historyConfidence?.(evidence) || 0);
+  const historyLevel = normalizeForMatch(diagnosis.historyInheritance?.level || "");
+  return Boolean(diagnosis.hasContact) && (
+    ["adequate", "strong"].includes(diagnosis.level)
+    || (questions >= 10 && confidence >= .25 && Number(diagnosis.accuracy) >= .7)
+    || ["strong", "advanced", "intermediate"].includes(historyLevel)
+  );
+}
+
+function pedagogicalExceptionFor(unit = {}) {
+  const review = reviewAttentionFor(unit.materia, unit.assunto);
+  if (review.overdue.length) return "revisão vencida de conteúdo já previsto";
+  const diagnosis = masteryDiagnosisForTarget(unit);
+  const errors = diagnosis.errorSignals || errorSignalsForTarget(unit.materia, unit.assunto, unit.subarea);
+  const inheritedLevel = normalizeForMatch(diagnosis.historyInheritance?.level || "");
+  const hasReliableHistory = Boolean(diagnosis.hasContact) || ["strong", "advanced", "intermediate"].includes(inheritedLevel);
+  if (hasReliableHistory && (errors.recurrence === "high" || Number(errors.postInterventionErrors) >= 2)) return "erros recorrentes no histórico de estudo";
+  if (hasReliableHistory && ["critical", "deficiency"].includes(diagnosis.level)) return "recuperação apontada pelo histórico de estudo";
+  return "";
+}
+
+function pedagogicalFrontier(subject = {}, units = []) {
+  const rule = pedagogicalRuleForSubject(subject.materia);
+  const ordered = units
+    .map((unit, originalIndex) => ({ ...(typeof unit === "string" ? { assunto: unit } : unit), materia: subject.materia, originalIndex }))
+    .sort(pedagogicalUnitOrder)
+    .map((unit, canonicalIndex) => ({ ...unit, canonicalIndex, pedagogicalStage: pedagogicalStageForUnit(unit, rule, canonicalIndex) }));
+  const available = ordered.filter((unit) => {
+    const part = Math.max(1, Number(unit.metaPartKey) || 1);
+    return part <= 1 || isMetaPartCompleted(unit.metaId, String(part - 1));
+  });
+  if (!available.length) return [];
+  const firstStage = Math.min(...available.map((unit) => unit.pedagogicalStage));
+  const currentBand = available.filter((unit) => unit.pedagogicalStage === firstStage);
+  const hasVerifiedBridge = currentBand.length > 0 && currentBand.every(pedagogicalEvidenceSatisfiesPrerequisite);
+  const informedLevel = initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel || subject.familiarity || "unknown";
+  const mayOpenOneExtraBand = ["intermediate", "advanced"].includes(informedLevel) && hasVerifiedBridge;
+  const lastAllowedStage = firstStage + (mayOpenOneExtraBand ? 2 : 1);
+  return available
+    .map((unit) => {
+      const exception = pedagogicalExceptionFor(unit);
+      const band = unit.pedagogicalStage - firstStage;
+      const current = band === 0;
+      return {
+        ...unit,
+        pedagogicalBand: exception ? -1 : band,
+        pedagogicalException: exception,
+        pedagogicalReason: exception
+          ? `exceção pedagógica: ${exception}`
+          : current
+            ? "primeiro fundamento pendente na sequência pedagógica"
+            : band === 1
+              ? "próximo passo da sequência, reservado após o fundamento atual"
+              : "avanço liberado por diagnóstico ou histórico confiável",
+      };
+    })
+    .filter((unit) => unit.pedagogicalException || unit.pedagogicalStage <= lastAllowedStage);
+}
+
 function rankStudyUnitsByAdaptivePriority(subject, units = []) {
-  return units
-    .map((unit, index) => {
-      const topic = typeof unit === "string" ? { assunto: unit } : unit;
+  return pedagogicalFrontier(subject, units)
+    .map((topic) => {
       const scheduling = schedulingPriorityForTarget({
         materia: subject.materia,
         assunto: topic.assunto,
@@ -7890,7 +8013,6 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
       });
       return {
         ...topic,
-        originalIndex: index,
         adaptiveScore: scheduling.adjusted,
         adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive.adjustment,
         adaptiveReason: adaptive.reason,
@@ -7901,11 +8023,13 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
       };
     })
     .sort((a, b) =>
+      a.pedagogicalBand - b.pedagogicalBand ||
+      a.pedagogicalStage - b.pedagogicalStage ||
       Number(b.strategicPriority?.score || 0) - Number(a.strategicPriority?.score || 0) ||
       b.incidenceAdjustment - a.incidenceAdjustment ||
       b.adaptiveAdjustment - a.adaptiveAdjustment ||
       b.adaptiveScore - a.adaptiveScore ||
-      a.originalIndex - b.originalIndex
+      pedagogicalUnitOrder(a, b)
     );
 }
 
@@ -8298,6 +8422,48 @@ function reconcileDistributionFromBlocks(blocks = state.generatedBlocks) {
   }).sort((left, right) => right.blocos - left.blocos || left.materia.localeCompare(right.materia));
 }
 
+function pedagogicalReconciliationInput(cycleBlocks = [], strategicTopics = []) {
+  const unitsByKey = new Map();
+  const frontierByKey = new Map();
+  const allowedBySubject = new Map();
+  const replacementBySubject = new Map();
+  (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).forEach((subject) => {
+    const units = operationalStudyUnits(subject, {});
+    const frontier = pedagogicalFrontier(subject, units);
+    const subjectKey = normalizeForMatch(subject.materia);
+    units.forEach((unit) => unitsByKey.set(programUnitKey(unit), unit));
+    frontier.forEach((unit) => frontierByKey.set(programUnitKey(unit), unit));
+    allowedBySubject.set(subjectKey, new Set(frontier.map((unit) => programUnitKey(unit))));
+    const prerequisite = frontier.find((unit) => !unit.pedagogicalException && unit.pedagogicalBand === 0);
+    if (prerequisite) replacementBySubject.set(subjectKey, prerequisite);
+  });
+  const topics = strategicTopics.map((topic) => {
+    const key = programUnitKey(topic.programUnit || topic);
+    const unit = frontierByKey.get(key) || unitsByKey.get(key);
+    return unit ? {
+      ...topic,
+      programUnit: { ...(topic.programUnit || {}), ...unit, programUnitKey: key },
+      pedagogicalStage: unit.pedagogicalStage,
+      pedagogicalBand: unit.pedagogicalBand,
+      pedagogicalReason: unit.pedagogicalReason,
+      pedagogicalException: unit.pedagogicalException,
+    } : topic;
+  });
+  const topicKeys = new Set(topics.map((topic) => programUnitKey(topic.programUnit || topic)));
+  const replacements = cycleBlocks.flatMap((block) => {
+    const subjectKey = normalizeForMatch(block.materia);
+    const outgoingKey = programUnitKey(block);
+    const allowed = allowedBySubject.get(subjectKey);
+    const prerequisite = replacementBySubject.get(subjectKey);
+    const activity = normalizeForMatch(block.tipoAtividade || block.atividadeSugerida || block.tipo || "");
+    if (!allowed?.size || !unitsByKey.has(outgoingKey) || allowed.has(outgoingKey) || block.pedagogicalException || activity.includes("revis")) return [];
+    const incomingKey = prerequisite ? programUnitKey(prerequisite) : "";
+    if (!incomingKey || incomingKey === outgoingKey || !topicKeys.has(incomingKey)) return [];
+    return [{ outgoingKey, incomingKey, reason: "tema avançado substituído pelo pré-requisito pendente da mesma matéria" }];
+  });
+  return { topics, replacements };
+}
+
 async function reconcileCurrentCycle() {
   const engine = window.StrategicCycleReconciliation;
   const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
@@ -8305,11 +8471,13 @@ async function reconcileCurrentCycle() {
     await dialogAlert("Gere um ciclo antes de reavaliar a composição estratégica.", { title: "Reavaliar ciclo" });
     return;
   }
-  const topics = strategicPlanningTopics();
+  const pedagogical = pedagogicalReconciliationInput(cycleBlocks, strategicPlanningTopics());
+  const topics = pedagogical.topics;
   const options = {
     coverage: strategicCycleCoverage(),
     activeFocusBlockId: activeFocusCycleBlockId(),
     maxBlocksPerSubject: normalSubjectBlockCap(cycleBlocks.length, (state.planningBase?.materias || []).filter((subject) => subjectIsActive(subject)).length),
+    pedagogicalReplacements: pedagogical.replacements,
   };
   const preview = engine.preview({ blocks: state.generatedBlocks, topics, options });
   strategicCyclePreviewUI = { preview, generatedAt: new Date().toISOString() };
@@ -8330,7 +8498,8 @@ async function reconcileCurrentCycle() {
     strategicCyclePreviewUI = null;
     return;
   }
-  const result = engine.applyPreview({ blocks: state.generatedBlocks, preview, topics: strategicPlanningTopics(), options });
+  const freshPedagogical = pedagogicalReconciliationInput(cycleBlocks, strategicPlanningTopics());
+  const result = engine.applyPreview({ blocks: state.generatedBlocks, preview, topics: freshPedagogical.topics, options: { ...options, pedagogicalReplacements: freshPedagogical.replacements } });
   if (result.stale || !result.applied) {
     strategicCyclePreviewUI = { preview: result.preview, generatedAt: new Date().toISOString() };
     showToast("O ciclo mudou desde esta análise. Reavaliei os ajustes.");
@@ -8427,6 +8596,10 @@ function blockRow(number, duration, item, type, estimate = {}) {
     incidenceAdjustment: Number(item.incidenceAdjustment) || 0,
     initialDiagnosisAdjustment: Number(item.initialDiagnosisAdjustment) || 0,
     rotationReason: item.rotationReason || "",
+    pedagogicalStage: Number.isFinite(item.pedagogicalStage) ? item.pedagogicalStage : null,
+    pedagogicalBand: Number.isFinite(item.pedagogicalBand) ? item.pedagogicalBand : null,
+    pedagogicalReason: item.pedagogicalReason || "",
+    pedagogicalException: item.pedagogicalException || "",
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
     status: "N\u00e3o iniciado",
@@ -9911,6 +10084,7 @@ function explainStudySuggestion(block, context = {}) {
     context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
   }
   if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
+  if (block.pedagogicalReason) factors.push(block.pedagogicalReason);
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
@@ -9943,7 +10117,7 @@ function explainStudySuggestion(block, context = {}) {
   }
   if (!factors.length && priority.percent >= 60) factors.push("tema prioritário para a prova");
   if (!factors.length) return { text: "Este é o próximo bloco pendente do ciclo atual.", factors: [] };
-  return { text: factors.slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
+  return { text: [...new Set(factors)].slice(0, 3).join("; ") + ".", factors: [...new Set(factors)].slice(0, 3) };
 }
 
 function continueRecommendationHelpers() {

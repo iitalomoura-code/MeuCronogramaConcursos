@@ -23,7 +23,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, rankStudyUnitsByAdaptivePriority };`;
 const noop = () => {};
 const context = {
   console,
@@ -125,6 +125,30 @@ assert.deepStrictEqual(runtime.rankedContinueEntries().map((entry) => entry.bloc
 runtime.continueRecommendationFilters.activity = "";
 recommendation = runtime.buildContinueRecommendation();
 assert.ok(recommendation.alternatives.every((entry, index, list) => list.findIndex((item) => item.block.materia === entry.block.materia) === index), "Alternativas iniciais devem priorizar matérias diferentes.");
+
+// A prioridade estratégica só desempata conteúdos dentro da fronteira pedagógica.
+runtime.state.planningBase.materias = [{ materia: "Direito Administrativo", assuntos: [], peso: 5, dominio: 3, familiarity: "never-studied" }];
+runtime.state.rows = [];
+runtime.state.generatedBlocks = [];
+runtime.state.completedHistory = [];
+runtime.state.cycleHistory = [];
+runtime.state.cycleResults = [];
+runtime.state.reviews = [];
+const administrativeSequence = [
+  { assunto: "Serviços Públicos", ordem: 4, blocosSugeridos: 1 },
+  { assunto: "Estado, Governo e Administração Pública", ordem: 1, blocosSugeridos: 1 },
+  { assunto: "Organização Administrativa", ordem: 2, blocosSugeridos: 1 },
+  { assunto: "Entidades da Administração Indireta e Terceiro Setor", ordem: 3, blocosSugeridos: 1 },
+];
+const administrativeFrontier = runtime.pedagogicalFrontier(runtime.state.planningBase.materias[0], administrativeSequence);
+assert.deepStrictEqual(administrativeFrontier.map((unit) => unit.assunto), ["Estado, Governo e Administração Pública", "Organização Administrativa"], "A fronteira inicial não pode pular fundamentos administrativos, mesmo quando temas posteriores forem mais prioritários.");
+assert.ok(administrativeFrontier.every((unit) => unit.pedagogicalReason), "Cada tema da fronteira precisa registrar a razão pedagógica.");
+const administrativeRank = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], administrativeSequence);
+assert.equal(administrativeRank[0].assunto, "Estado, Governo e Administração Pública", "Pontuação estratégica não pode inverter a base e o próximo passo pedagógico.");
+runtime.state.reviews = [{ materia: "Direito Administrativo", assunto: "Serviços Públicos", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" }];
+const exceptionalFrontier = runtime.pedagogicalFrontier(runtime.state.planningBase.materias[0], administrativeSequence);
+assert.ok(exceptionalFrontier.some((unit) => unit.assunto === "Serviços Públicos" && unit.pedagogicalException.includes("revisão vencida")), "Revisão vencida permanece uma exceção explícita e auditável.");
+runtime.state.reviews = [];
 
 // Cenário CGU: duas matérias muito fortes não podem ocupar um ciclo inteiro
 // quando a capacidade comporta uma primeira exposição das 13 ativas.

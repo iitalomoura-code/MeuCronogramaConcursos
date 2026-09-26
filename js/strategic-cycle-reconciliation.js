@@ -2,7 +2,7 @@
 
 (function initStrategicCycleReconciliation(global) {
   const DEFAULTS = Object.freeze({ replacementMinScoreDelta: .12, structuralMinScoreDelta: .08, maxReplacementShare: .25, maxChangesPerPass: 3, maxChangesPerSubject: 1, lowCoverageThreshold: .35, lowCoverageExtraDelta: .06 });
-  const PROGRAM_UNIT_FIELDS = Object.freeze(["materia", "subarea", "titulo", "assunto", "descricao", "conteudosOriginais", "section", "outlineNumber", "outlineLevel", "structureSource", "sourceBlockType", "origemEdital", "programUnitKey", "metaId", "metaTitulo", "metaConteudos", "metaPartKey", "metaRequiredBlocks", "conteudoBloco", "tamanhoEstimado", "blocosSugeridos", "dificuldadeEstimada"]);
+  const PROGRAM_UNIT_FIELDS = Object.freeze(["materia", "subarea", "titulo", "assunto", "descricao", "conteudosOriginais", "section", "outlineNumber", "outlineLevel", "structureSource", "sourceBlockType", "origemEdital", "programUnitKey", "metaId", "metaTitulo", "metaConteudos", "metaPartKey", "metaRequiredBlocks", "conteudoBloco", "tamanhoEstimado", "blocosSugeridos", "dificuldadeEstimada", "ordem", "pedagogicalStage", "pedagogicalBand", "pedagogicalReason", "pedagogicalException"]);
 
   function normalized(value = "") { return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " "); }
   function programUnit(item = {}) { return item.programUnit || item.cycleTemplate || item; }
@@ -53,7 +53,6 @@
     const protectedBlocks = cycleEntries.filter(({ block }) => isProtected(block, activeFocusBlockId));
     const flexible = cycleEntries.filter(({ block }) => !isProtected(block, activeFocusBlockId) && status(block).includes("nao iniciado"));
     const occupied = new Set(cycleEntries.map(({ block }) => topicKey(block)));
-    const candidates = sourceTopics.filter((topic) => !occupied.has(topicKey(topic))).filter(isStrategicCandidate).sort((left, right) => score(right) - score(left) || topicKey(left).localeCompare(topicKey(right)));
     const capacityMinutes = cycleEntries.reduce((total, { block }) => total + minutes(block), 0);
     const protectedMinutes = protectedBlocks.reduce((total, { block }) => total + minutes(block), 0);
     const coverage = Number(options.coverage ?? options.strategyCoverage ?? 1);
@@ -69,6 +68,30 @@
       subjectBlocks.set(subject, (subjectBlocks.get(subject) || 0) + 1);
     });
     const maxBlocksPerSubject = Number(options.maxBlocksPerSubject) || Number.POSITIVE_INFINITY;
+
+    // A reavaliação pedagógica só mexe em um bloco ainda não iniciado que está
+    // além da fronteira. Não depende de diferença de score, porque a sequência
+    // é uma pré-condição para a prioridade estratégica.
+    const pedagogicalReplacements = Array.isArray(options.pedagogicalReplacements) ? options.pedagogicalReplacements : [];
+    for (const replacement of pedagogicalReplacements) {
+      if (changes.length >= maxChanges) { deferred.push({ incoming: { programUnitKey: replacement.incomingKey || "" }, reason: "change-limit" }); continue; }
+      const outgoingKey = String(replacement.outgoingKey || "");
+      const incomingKey = String(replacement.incomingKey || "");
+      const incomingTopic = topicByKey.get(incomingKey);
+      const target = flexible.find(({ block, sourceIndex }) => !usedSlots.has(sourceIndex) && topicKey(block) === outgoingKey);
+      if (!target || !incomingTopic || occupied.has(incomingKey)) {
+        deferred.push({ incoming: incomingTopic ? descriptor(incomingTopic) : { programUnitKey: incomingKey }, reason: !target ? "pedagogical-slot-unavailable" : !incomingTopic ? "pedagogical-topic-unavailable" : "pedagogical-topic-already-present" });
+        continue;
+      }
+      const outgoing = descriptor(topicByKey.get(outgoingKey) || target.block);
+      const incoming = descriptor(incomingTopic);
+      changes.push({ type: "pedagogical-replace", slotIndex: target.sourceIndex, slotKey: String(target.block.id || target.block.bloco || target.sourceIndex), outgoing: { ...outgoing, durationMinutes: minutes(target.block) }, incoming: { ...incoming, durationMinutes: minutes(target.block) }, scoreDelta: incoming.strategicScore - outgoing.strategicScore, reason: [replacement.reason || "conteúdo avançado ainda bloqueado pela sequência pedagógica", "bloco substituído ainda não foi iniciado", "capacidade total do ciclo foi preservada"] });
+      usedSlots.add(target.sourceIndex);
+      occupied.delete(outgoingKey);
+      occupied.add(incomingKey);
+    }
+
+    const candidates = sourceTopics.filter((topic) => !occupied.has(topicKey(topic))).filter(isStrategicCandidate).sort((left, right) => score(right) - score(left) || topicKey(left).localeCompare(topicKey(right)));
 
     for (const incomingTopic of candidates) {
       if (changes.length >= maxChanges) { deferred.push({ incoming: descriptor(incomingTopic), reason: "change-limit" }); continue; }
