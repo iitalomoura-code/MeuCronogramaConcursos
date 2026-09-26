@@ -23,7 +23,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, rankStudyUnitsByAdaptivePriority };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, rankStudyUnitsByAdaptivePriority, invalidateDerivedStudyCaches };`;
 const noop = () => {};
 const context = {
   console,
@@ -141,13 +141,15 @@ const administrativeSequence = [
   { assunto: "Entidades da Administração Indireta e Terceiro Setor", ordem: 3, blocosSugeridos: 1 },
 ];
 const administrativeFrontier = runtime.pedagogicalFrontier(runtime.state.planningBase.materias[0], administrativeSequence);
-assert.deepStrictEqual(administrativeFrontier.map((unit) => unit.assunto), ["Estado, Governo e Administração Pública", "Organização Administrativa"], "A fronteira inicial não pode pular fundamentos administrativos, mesmo quando temas posteriores forem mais prioritários.");
+assert.deepStrictEqual([...administrativeFrontier.map((unit) => unit.assunto)], ["Estado, Governo e Administração Pública"], "Quem nunca estudou deve receber somente o primeiro fundamento pendente.");
 assert.ok(administrativeFrontier.every((unit) => unit.pedagogicalReason), "Cada tema da fronteira precisa registrar a razão pedagógica.");
 const administrativeRank = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], administrativeSequence);
 assert.equal(administrativeRank[0].assunto, "Estado, Governo e Administração Pública", "Pontuação estratégica não pode inverter a base e o próximo passo pedagógico.");
 runtime.state.reviews = [{ materia: "Direito Administrativo", assunto: "Serviços Públicos", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" }];
+runtime.state.completedHistory = [{ materia: "Direito Administrativo", assunto: "Serviços Públicos", status: "Concluído", questoes: 20, acertos: 12, tempoEstudado: 1 }];
+runtime.invalidateDerivedStudyCaches();
 const exceptionalFrontier = runtime.pedagogicalFrontier(runtime.state.planningBase.materias[0], administrativeSequence);
-assert.ok(exceptionalFrontier.some((unit) => unit.assunto === "Serviços Públicos" && unit.pedagogicalException.includes("revisão vencida")), "Revisão vencida permanece uma exceção explícita e auditável.");
+assert.ok(exceptionalFrontier.some((unit) => unit.assunto === "Serviços Públicos" && unit.pedagogicalException.toLowerCase().includes("revisão vencida")), "Revisão vencida permanece uma exceção explícita e auditável.");
 runtime.state.reviews = [];
 
 // Cenário CGU: duas matérias muito fortes não podem ocupar um ciclo inteiro
@@ -169,10 +171,10 @@ runtime.state.reviews = [];
 const cguCycle = runtime.createAdaptiveCycleBlocks(cguSubjects, { capacidade: { plannedMinutes: 1020 }, horasSemanaCronograma: 17, duracaoBloco: 1 }, {});
 const cguFairness = runtime.cycleFairnessDiagnostics(cguCycle.blocks, cguSubjects);
 const cguRepeat = cguCycle.blocks.findIndex((block, index) => index && block.materia === cguCycle.blocks[index - 1].materia);
-assert.equal(cguFairness.totalBlocks, 17, "O cenário CGU deve usar os 17 blocos previstos.");
-assert.equal(cguFairness.coveredSubjects, 13, "Com 17 blocos, todas as 13 matérias ativas precisam receber a primeira exposição.");
-assert.ok((cguFairness.blocksBySubject["Língua Portuguesa"] || 0) <= 3, "Português não pode monopolizar o ciclo.");
-assert.ok((cguFairness.blocksBySubject["Direito Administrativo"] || 0) <= 3, "Direito Administrativo não pode monopolizar o ciclo.");
+assert.equal(cguFairness.totalBlocks, 13, "Sem histórico confiável, o cenário CGU deve reservar apenas o primeiro fundamento de cada matéria.");
+assert.equal(cguFairness.coveredSubjects, 13, "Todas as 13 matérias ativas precisam receber a primeira exposição antes de qualquer avanço.");
+assert.ok((cguFairness.blocksBySubject["Língua Portuguesa"] || 0) <= 1, "Português não pode monopolizar o ciclo inicial.");
+assert.ok((cguFairness.blocksBySubject["Direito Administrativo"] || 0) <= 1, "Direito Administrativo não pode monopolizar o ciclo inicial.");
 assert.ok(cguFairness.topTwoCombinedShare <= .55, "As duas matérias mais frequentes não podem dominar a semana.");
 assert.equal(cguRepeat, -1, "Matérias iguais não podem ficar consecutivas quando há alternativas.");
 assert.deepStrictEqual(runtime.createAdaptiveCycleBlocks(cguSubjects, { capacidade: { plannedMinutes: 1020 }, horasSemanaCronograma: 17, duracaoBloco: 1 }, {}).blocks.map((block) => [block.materia, block.assunto, block.duracao]), cguCycle.blocks.map((block) => [block.materia, block.assunto, block.duracao]), "A mesma entrada CGU deve gerar a mesma composição.");

@@ -83,6 +83,12 @@
     const priority = helpers.priorityInfo?.(block.prioridadeBase ?? block.prioridade) || { percent: 0 };
     const factors = [];
     const strategic = context.strategic?.strategic || context.strategic || null;
+    if (block.pedagogicalReason) factors.push(block.pedagogicalReason);
+    if (block.pedagogicalHistory?.source && /Ponto fraco|Assunto com histórico/.test(block.pedagogicalReason || "")) {
+      const history = block.pedagogicalHistory;
+      const evidence = history.questions ? `${history.questions} questões` : history.sessions ? `${history.sessions} sessões` : "registros específicos";
+      factors.push(`${history.source}: ${evidence}`);
+    }
     if (strategic?.reasons?.length) strategic.reasons.slice(0, 2).forEach((reason) => factors.push(reason));
     if (context.weeklyReinforcement?.reasons?.length) context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
     if (context.diagnosticRecovery?.level === "critical") factors.push("tema crítico na fila de recuperação");

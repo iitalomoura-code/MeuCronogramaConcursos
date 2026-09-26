@@ -7871,23 +7871,21 @@ function chooseTopicForBlock(subject) {
 
 // A prioridade estratégica decide entre conteúdos que já podem entrar no ciclo.
 // Ela não pode, sozinha, transformar um conteúdo avançado no primeiro contato da matéria.
-const PEDAGOGICAL_SEQUENCE_RULES = Object.freeze([
+const PEDAGOGICAL_DEPENDENCY_RULES = Object.freeze([
   {
     subject: "direito administrativo",
-    stages: [
-      /estado|governo|administracao publica/,
-      /organizacao administrativa/,
-      /administracao indireta|entidade.{0,20}indireta|terceiro setor/,
-      /servicos publicos/,
+    dependencies: [
+      { before: /^(estado|governo|administracao publica)/, after: /organizacao administrativa/ },
+      { before: /organizacao administrativa/, after: /administracao indireta|entidade.{0,20}indireta|terceiro setor/ },
+      { before: /administracao indireta|entidade.{0,20}indireta|terceiro setor/, after: /servicos publicos/ },
     ],
   },
   {
     subject: "contabilidade",
-    stages: [
-      /fundamento|estrutura conceitual|objetivo|principio/,
-      /patrimonio|elemento.{0,20}patrimonial|reconhecimento|mensuracao/,
-      /registro|procedimento|lancamento|escrituracao/,
-      /demonstrac|avancad/,
+    dependencies: [
+      { before: /fundamento|estrutura conceitual|objetivo|principio/, after: /patrimonio|elemento.{0,20}patrimonial|reconhecimento|mensuracao/ },
+      { before: /patrimonio|elemento.{0,20}patrimonial|reconhecimento|mensuracao/, after: /registro|procedimento|lancamento|escrituracao/ },
+      { before: /registro|procedimento|lancamento|escrituracao/, after: /demonstrac|avancad/ },
     ],
   },
 ]);
@@ -7915,81 +7913,181 @@ function pedagogicalUnitOrder(left = {}, right = {}) {
 
 function pedagogicalRuleForSubject(materia = "") {
   const normalized = normalizeForMatch(materia);
-  return PEDAGOGICAL_SEQUENCE_RULES.find((rule) => normalized.includes(rule.subject)) || null;
+  return PEDAGOGICAL_DEPENDENCY_RULES.find((rule) => normalized.includes(rule.subject)) || null;
 }
 
-function pedagogicalStageForUnit(unit = {}, rule = null, fallbackStage = 0) {
-  if (!rule) return fallbackStage;
-  const searchable = normalizeForMatch([
+function pedagogicalSearchText(unit = {}) {
+  return normalizeForMatch([
     unit.assunto, unit.titulo, unit.descricao, ...(Array.isArray(unit.conteudosOriginais) ? unit.conteudosOriginais : []), unit.conteudoBloco,
   ].filter(Boolean).join(" "));
-  const mapped = rule.stages.findIndex((pattern) => pattern.test(searchable));
-  // Conteúdos não reconhecidos pelo mapa entram depois da sequência conhecida,
-  // mantendo a ordem do edital em vez de serem descartados.
-  return mapped >= 0 ? mapped : rule.stages.length + fallbackStage;
+}
+
+function pedagogicalDependencyKey(unit = {}) {
+  return [programUnitKey(unit), unit.metaId || "", String(unit.metaPartKey || "1")].join("::");
+}
+
+function pedagogicalOrderWithDependencies(subject = {}, units = []) {
+  const canonical = units
+    .map((unit, originalIndex) => ({ ...(typeof unit === "string" ? { assunto: unit } : unit), materia: subject.materia, originalIndex }))
+    .sort(pedagogicalUnitOrder)
+    .map((unit, canonicalIndex) => ({ ...unit, canonicalIndex }));
+  const rule = pedagogicalRuleForSubject(subject.materia);
+  const edges = [];
+  (rule?.dependencies || []).forEach((dependency) => {
+    const sources = canonical.filter((unit) => dependency.before.test(pedagogicalSearchText(unit)));
+    const targets = canonical.filter((unit) => dependency.after.test(pedagogicalSearchText(unit)));
+    sources.forEach((source) => targets.forEach((target) => {
+      if (source !== target) edges.push([source.canonicalIndex, target.canonicalIndex]);
+    }));
+  });
+  const incoming = new Map(canonical.map((unit) => [unit.canonicalIndex, new Set()]));
+  const outgoing = new Map(canonical.map((unit) => [unit.canonicalIndex, new Set()]));
+  edges.forEach(([source, target]) => {
+    if (outgoing.get(source).has(target)) return;
+    outgoing.get(source).add(target);
+    incoming.get(target).add(source);
+  });
+  const remaining = new Map(canonical.map((unit) => [unit.canonicalIndex, unit]));
+  const ordered = [];
+  while (remaining.size) {
+    const next = [...remaining.values()]
+      .filter((unit) => [...incoming.get(unit.canonicalIndex)].every((source) => !remaining.has(source)))
+      .sort((left, right) => left.canonicalIndex - right.canonicalIndex)[0]
+      // Uma regra malformada não pode destruir a ordem do edital: o desempate
+      // conservador mantém a próxima unidade canônica disponível.
+      || [...remaining.values()].sort((left, right) => left.canonicalIndex - right.canonicalIndex)[0];
+    remaining.delete(next.canonicalIndex);
+    ordered.push(next);
+  }
+  return ordered.map((unit, index) => {
+    const explicit = [...incoming.get(unit.canonicalIndex)]
+      .map((source) => canonical.find((candidate) => candidate.canonicalIndex === source))
+      .filter(Boolean)
+      .map(pedagogicalDependencyKey);
+    const previous = ordered[index - 1];
+    // O edital é a ordem segura por padrão. Dependências conhecidas apenas
+    // acrescentam restrições relativas; elas nunca deslocam o desconhecido ao fim.
+    const prerequisiteKeys = [...new Set([
+      ...(previous ? [pedagogicalDependencyKey(previous)] : []),
+      ...explicit,
+    ])];
+    return { ...unit, pedagogicalStage: index, pedagogicalPrerequisiteKeys: prerequisiteKeys };
+  });
+}
+
+function normalizedPedagogicalLevel(subject = {}) {
+  const raw = initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel || subject.familiarity || subject.initialDiagnosis || "unknown";
+  const normalized = normalizeForMatch(String(raw));
+  if (normalized.includes("nunca")) return "never-studied";
+  if (normalized.includes("bas") || normalized.includes("fraca")) return "basic";
+  if (normalized.includes("intermedi")) return "intermediate";
+  if (normalized.includes("avanc")) return "advanced";
+  return "unknown";
+}
+
+function reliableTopicHistory(unit = {}, { diagnosis: providedDiagnosis = null, evidence: providedEvidence = null } = {}) {
+  const diagnosis = providedDiagnosis || masteryDiagnosisForTarget(unit);
+  const evidence = providedEvidence || diagnosis.initialEvidence || initialDiagnosisEvidence(unit.materia, unit.assunto, unit.subarea);
+  const inherited = diagnosis.historyInheritance || {};
+  const source = inherited.sources?.[0] || null;
+  const currentQuestions = Math.max(Number(diagnosis.questions) || 0, Number(evidence.questions) || 0);
+  const currentSessions = Math.max(Number(diagnosis.sessionCount) || 0, Number(evidence.sessions) || 0);
+  const currentConfidence = Math.max(Number(diagnosis.confidence) || 0, window.InitialDiagnosisEngine?.historyConfidence?.(evidence) || 0);
+  const currentReliable = Boolean(diagnosis.hasContact) && (
+    (currentQuestions >= 10 && currentConfidence >= .25)
+    || (currentSessions >= 2 && currentConfidence >= .35)
+  );
+  const inheritedQuestions = Number(source?.questions) || 0;
+  const inheritedSessions = Number(source?.sessions) || 0;
+  const inheritedConfidence = Number(source?.confidence) || Number(inherited.confidence) || 0;
+  const inheritedReliable = Boolean(source)
+    && source.matchConfidence === "high"
+    && source.matchDirection === "equivalent"
+    && inheritedConfidence >= .42
+    && (inheritedQuestions >= 10 || inheritedSessions >= 2 || Number(source.hours) >= 1);
+  const usesCurrent = currentReliable;
+  const questions = usesCurrent ? currentQuestions : inheritedQuestions;
+  const sessions = usesCurrent ? currentSessions : inheritedSessions;
+  const confidence = usesCurrent ? currentConfidence : inheritedConfidence;
+  const accuracy = usesCurrent && Number.isFinite(diagnosis.accuracy) ? Number(diagnosis.accuracy) : Number.isFinite(source?.accuracy) ? Number(source.accuracy) : null;
+  const masteryLevel = usesCurrent ? diagnosis.level : !inheritedReliable ? "insufficient"
+    : accuracy !== null && accuracy < .6 ? "deficiency"
+      : accuracy !== null && accuracy < .85 ? "attention"
+        : accuracy !== null ? "strong" : "adequate";
+  const reasons = usesCurrent
+    ? [`${questions} questões ou registros específicos deste assunto`, `confiança de ${Math.round(confidence * 100)}%`]
+    : inheritedReliable
+      ? [`histórico herdado com correspondência alta`, `${questions} questões ou ${sessions} sessões equivalentes`]
+      : ["histórico específico insuficiente"];
+  return {
+    reliable: currentReliable || inheritedReliable,
+    source: usesCurrent ? "histórico específico deste cronograma" : inheritedReliable ? "histórico herdado com correspondência alta" : "sem histórico específico confiável",
+    questions,
+    sessions,
+    confidence,
+    accuracy,
+    masteryLevel,
+    inherited: inheritedReliable,
+    reasons,
+    diagnosis,
+  };
 }
 
 function pedagogicalEvidenceSatisfiesPrerequisite(unit = {}) {
-  const diagnosis = masteryDiagnosisForTarget(unit);
-  const evidence = diagnosis.initialEvidence || initialDiagnosisEvidence(unit.materia, unit.assunto, unit.subarea);
-  const questions = Math.max(Number(diagnosis.questions) || 0, Number(evidence.questions) || 0);
-  const confidence = Math.max(Number(diagnosis.confidence) || 0, window.InitialDiagnosisEngine?.historyConfidence?.(evidence) || 0);
-  const historyLevel = normalizeForMatch(diagnosis.historyInheritance?.level || "");
-  return Boolean(diagnosis.hasContact) && (
-    ["adequate", "strong"].includes(diagnosis.level)
-    || (questions >= 10 && confidence >= .25 && Number(diagnosis.accuracy) >= .7)
-    || ["strong", "advanced", "intermediate"].includes(historyLevel)
-  );
+  const history = reliableTopicHistory(unit);
+  return history.reliable && history.accuracy !== null && history.accuracy >= .7 && ["adequate", "strong", "attention"].includes(history.masteryLevel);
 }
 
-function pedagogicalExceptionFor(unit = {}) {
+function pedagogicalExceptionFor(unit = {}, { history: providedHistory = null } = {}) {
   const review = reviewAttentionFor(unit.materia, unit.assunto);
-  if (review.overdue.length) return "revisão vencida de conteúdo já previsto";
-  const diagnosis = masteryDiagnosisForTarget(unit);
+  if (review.overdue.length) return "Revisão vencida de conteúdo já estudado";
+  const history = providedHistory || reliableTopicHistory(unit);
+  const diagnosis = history.diagnosis;
   const errors = diagnosis.errorSignals || errorSignalsForTarget(unit.materia, unit.assunto, unit.subarea);
-  const inheritedLevel = normalizeForMatch(diagnosis.historyInheritance?.level || "");
-  const hasReliableHistory = Boolean(diagnosis.hasContact) || ["strong", "advanced", "intermediate"].includes(inheritedLevel);
-  if (hasReliableHistory && (errors.recurrence === "high" || Number(errors.postInterventionErrors) >= 2)) return "erros recorrentes no histórico de estudo";
-  if (hasReliableHistory && ["critical", "deficiency"].includes(diagnosis.level)) return "recuperação apontada pelo histórico de estudo";
+  const incidence = historicalIncidenceForTarget(unit);
+  const relevant = Number(diagnosis.relevance) >= .42 || Boolean(incidence.applied && incidence.normalized >= .5);
+  if (!history.reliable) return "";
+  if (errors.recurrence === "high" || Number(errors.postInterventionErrors) >= 2) return "Ponto fraco identificado em seu histórico: erros recorrentes";
+  if (["critical", "deficiency"].includes(history.masteryLevel)) return "Ponto fraco identificado em seu histórico: desempenho baixo";
+  if (history.masteryLevel === "attention" && history.accuracy !== null && history.accuracy < .85 && relevant) return "Ponto fraco identificado em seu histórico: atenção com evidência confiável";
+  if (Number(diagnosis.daysWithoutContact) >= 21 && relevant) return "Assunto com histórico confiável e muito tempo sem contato";
   return "";
 }
 
 function pedagogicalFrontier(subject = {}, units = []) {
-  const rule = pedagogicalRuleForSubject(subject.materia);
-  const ordered = units
-    .map((unit, originalIndex) => ({ ...(typeof unit === "string" ? { assunto: unit } : unit), materia: subject.materia, originalIndex }))
-    .sort(pedagogicalUnitOrder)
-    .map((unit, canonicalIndex) => ({ ...unit, canonicalIndex, pedagogicalStage: pedagogicalStageForUnit(unit, rule, canonicalIndex) }));
+  const ordered = pedagogicalOrderWithDependencies(subject, units);
   const available = ordered.filter((unit) => {
     const part = Math.max(1, Number(unit.metaPartKey) || 1);
     return part <= 1 || isMetaPartCompleted(unit.metaId, String(part - 1));
   });
   if (!available.length) return [];
-  const firstStage = Math.min(...available.map((unit) => unit.pedagogicalStage));
-  const currentBand = available.filter((unit) => unit.pedagogicalStage === firstStage);
-  const hasVerifiedBridge = currentBand.length > 0 && currentBand.every(pedagogicalEvidenceSatisfiesPrerequisite);
-  const informedLevel = initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel || subject.familiarity || "unknown";
-  const mayOpenOneExtraBand = ["intermediate", "advanced"].includes(informedLevel) && hasVerifiedBridge;
-  const lastAllowedStage = firstStage + (mayOpenOneExtraBand ? 2 : 1);
+  const level = normalizedPedagogicalLevel(subject);
+  const first = available[0];
+  const next = available[1] || null;
+  const nextDependsOnCurrent = Boolean(next?.pedagogicalPrerequisiteKeys?.includes(pedagogicalDependencyKey(first)));
   return available
-    .map((unit) => {
+    .map((unit, availableIndex) => {
       const exception = pedagogicalExceptionFor(unit);
-      const band = unit.pedagogicalStage - firstStage;
-      const current = band === 0;
+      const current = unit === first;
+      const basicNext = level === "basic" && unit === next && nextDependsOnCurrent;
+      const allowed = current || basicNext || Boolean(exception);
+      const history = reliableTopicHistory(unit);
       return {
         ...unit,
-        pedagogicalBand: exception ? -1 : band,
+        pedagogicalBand: exception ? -1 : current ? 0 : 1,
         pedagogicalException: exception,
         pedagogicalReason: exception
-          ? `exceção pedagógica: ${exception}`
+          ? exception
           : current
-            ? "primeiro fundamento pendente na sequência pedagógica"
-            : band === 1
-              ? "próximo passo da sequência, reservado após o fundamento atual"
-              : "avanço liberado por diagnóstico ou histórico confiável",
+            ? level === "unknown" ? "Histórico insuficiente: mantida a sequência inicial" : "Primeiro fundamento pendente desta matéria"
+            : basicNext ? "Próximo conteúdo da sequência"
+              : "Sessão diagnóstica para confirmar domínio",
+        pedagogicalHistory: { source: history.source, questions: history.questions, sessions: history.sessions, confidence: history.confidence, accuracy: history.accuracy, masteryLevel: history.masteryLevel, reasons: history.reasons },
+        pedagogicalPrerequisiteKeys: exception ? [] : unit.pedagogicalPrerequisiteKeys,
+        pedagogicalEligible: allowed,
       };
     })
-    .filter((unit) => unit.pedagogicalException || unit.pedagogicalStage <= lastAllowedStage);
+    .filter((unit) => unit.pedagogicalEligible);
 }
 
 function rankStudyUnitsByAdaptivePriority(subject, units = []) {
@@ -8331,10 +8429,13 @@ function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
   const margin = Number(config.capacidade?.safetyMargin) || 1;
   const remaining = Object.fromEntries(DAYS.map(([key]) => [key, Math.round(Math.max(0, Number(daily[key]) || 0) * margin * 60)]));
   const subjectsByDay = Object.fromEntries(DAYS.map(([key]) => [key, new Set()]));
+  const dependencyDays = new Map();
   let cursor = 0;
   blocks.forEach((block) => {
     const minutes = Math.round((Number(block.duracao) || 0) * 60);
-    const orderedDays = [...DAYS.slice(cursor), ...DAYS.slice(0, cursor)];
+    const prerequisites = Array.isArray(block.pedagogicalPrerequisiteKeys) ? block.pedagogicalPrerequisiteKeys : [];
+    const earliestDependencyDay = Math.max(-1, ...prerequisites.map((key) => (dependencyDays.get(key) ?? -2) + 1));
+    const orderedDays = [...DAYS.slice(cursor), ...DAYS.slice(0, cursor)].filter(([key]) => DAYS.findIndex(([day]) => day === key) >= earliestDependencyDay);
     const available = orderedDays.find(([key]) => remaining[key] >= minutes && (!block.materia || !subjectsByDay[key].has(block.materia))) || orderedDays.find(([key]) => remaining[key] >= minutes);
     if (!available) {
       block.plannedDay = "";
@@ -8344,6 +8445,7 @@ function assignBlocksToDailyCapacity(blocks = [], config = scheduleConfig()) {
     block.plannedDay = available[0];
     remaining[available[0]] -= minutes;
     if (block.materia) subjectsByDay[available[0]].add(block.materia);
+    dependencyDays.set(pedagogicalDependencyKey(block), dayIndex);
     cursor = Math.min(DAYS.length - 1, dayIndex);
   });
   return blocks;
@@ -8600,6 +8702,8 @@ function blockRow(number, duration, item, type, estimate = {}) {
     pedagogicalBand: Number.isFinite(item.pedagogicalBand) ? item.pedagogicalBand : null,
     pedagogicalReason: item.pedagogicalReason || "",
     pedagogicalException: item.pedagogicalException || "",
+    pedagogicalPrerequisiteKeys: Array.isArray(item.pedagogicalPrerequisiteKeys) ? item.pedagogicalPrerequisiteKeys.slice() : [],
+    pedagogicalHistory: item.pedagogicalHistory && typeof item.pedagogicalHistory === "object" ? { ...item.pedagogicalHistory } : null,
     tipo: type,
     meta: type === "Revis\u00e3o" ? "Revisar este tema + 8 quest\u00f5es" : "Estudar este tema + 10 quest\u00f5es",
     status: "N\u00e3o iniciado",
@@ -9166,6 +9270,20 @@ function pendingCycleEntries() {
     .filter(({ block }) => !isStrategicPlanSessionBlock(block) && isPendingBlock(block));
 }
 
+function completedPedagogicalDependencyKeys() {
+  return new Set([
+    ...historicalCompletedBlocks(),
+    ...state.generatedBlocks.filter((block) => normalizeStatus(block.status) === "Concluído"),
+  ].map((block) => pedagogicalDependencyKey(block)));
+}
+
+function isPedagogicallyExecutable(block = {}) {
+  const prerequisites = Array.isArray(block.pedagogicalPrerequisiteKeys) ? block.pedagogicalPrerequisiteKeys.filter(Boolean) : [];
+  if (!prerequisites.length || block.pedagogicalException) return true;
+  const completed = completedPedagogicalDependencyKeys();
+  return prerequisites.every((key) => completed.has(key));
+}
+
 function activeCycleSubjectNames() {
   return [...new Set((state.planningBase?.materias || []).filter((subject) => availableStudyUnits(subject, {}).length).map((subject) => subject.materia))];
 }
@@ -9673,7 +9791,7 @@ function continueSuggestionScore(entry) {
 }
 
 function continueDerivedSnapshot() {
-  const entries = pendingCycleEntries();
+  const entries = pendingCycleEntries().filter(({ block }) => isPedagogicallyExecutable(block));
   const phase = currentExamPhaseState();
   const signature = [
     state.generatedBlocks.map((block, index) => [block.id || index, block.status, block.prioridade, block.duracao, block.questoes, block.acertos, block.reprogramacoes, block.tempoEstudado].join(":")),
@@ -10085,6 +10203,10 @@ function explainStudySuggestion(block, context = {}) {
   }
   if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
   if (block.pedagogicalReason) factors.push(block.pedagogicalReason);
+  if (block.pedagogicalHistory?.source && /Ponto fraco|Assunto com histórico/.test(block.pedagogicalReason || "")) {
+    const history = block.pedagogicalHistory;
+    factors.push(`${history.source}: ${history.questions ? `${history.questions} questões` : history.sessions ? `${history.sessions} sessões` : "registros específicos"}`);
+  }
   if (review.hasAttention) factors.push("revisão merece atenção antes de avançar");
   if (normalizeStatus(block.status) === "Em andamento") factors.push("tema em andamento");
   if (normalizeStatus(block.status) === "Reprogramar") factors.push("tema reprogramado, com retorno gradual ao ciclo");
@@ -10876,6 +10998,10 @@ async function openReviewFocusedStudy(review) {
 
 async function openFocusedStudy(index, context = { context: "estudo" }) {
   if (!state.generatedBlocks[index]) return;
+  if (!context.standaloneReview && !["revisao", "diagnostico"].includes(context.context || "") && !isPedagogicallyExecutable(state.generatedBlocks[index])) {
+    showToast("Conclua o pré-requisito deste conteúdo antes de iniciar este bloco.");
+    return;
+  }
   clearOrphanedFocusedSession();
   const existing = normalizeActiveFocusSession(state.activeFocusSession);
   if (existing && resolveFocusedBlockIndex(existing) === index) {
