@@ -452,7 +452,7 @@
   function compactProviderValue(value, key = "") {
     if (typeof value === "string") return value.length > PROVIDER_TEXT_LIMIT ? `${value.slice(0, PROVIDER_TEXT_LIMIT - 3)}...` : value;
     if (Array.isArray(value)) {
-      const keepAll = key === "topics" || key === "subjects" || key === "plannedDistribution" || key === "executionDistribution";
+      const keepAll = key === "topics" || key === "subjects" || key === "plannedDistribution" || key === "executionDistribution" || key === "candidates";
       const items = keepAll ? value : value.slice(0, PROVIDER_LIST_LIMIT);
       return items.map((item) => compactProviderValue(item));
     }

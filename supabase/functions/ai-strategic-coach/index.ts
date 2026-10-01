@@ -7,7 +7,7 @@ const MAX_SNAPSHOT_BYTES = 500 * 1024;
 const PROVIDER_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-const COACH_MODES = ["cycle-review", "progress-check", "question"];
+const COACH_MODES = ["cycle-review", "progress-check", "question", "cycle-composition"];
 const MAX_QUESTION_CHARS = 2000;
 
 const CORS_HEADERS = {
@@ -47,6 +47,11 @@ se a evidência atual contradizer a revisão anterior, atualize a conclusão.
 Para perguntas sobre evolução, priorize deltaSinceLastCoachReview e o snapshot atual.
 Não limite consultas a uma por ciclo. Em question, preencha answerToQuestion;
 em progress-check, preencha sinceLastReview; em cycle-review, preencha cycleEvaluation.
+Em cycle-composition, preencha nextCycleStrategy com recomendações somente para os itens de nextCycleComposition.candidates.
+A recomendação é uma sugestão sujeita à validação local: não crie matéria, tema, dado ou pré-requisito.
+Copie subject, topic, subarea, evidence e dependencies exatamente do candidato escolhido; respeite baseLevel, executableNow e blocked.
+Para matéria nova ou com base fraca, comece por START_FOUNDATION ou CONTINUE_THEORY no primeiro tema executável.
+Use ADVANCE somente se o candidato permitir e houver histórico forte. Não imponha quantidade de blocos acima da capacidade.
 Não transforme a resposta em enumeração de estados dos tópicos: o motor já os classifica.
 Use esses fatos para sintetizar trade-offs, evolução, retorno esperado do tempo e decisões estratégicas.
 Prefira explicar o que concentrar, manter ou não priorizar agora e por quê.
@@ -168,6 +173,29 @@ const reviewSchema = {
         resolvedRisks: { type: "array", items: { type: "string" } },
       },
     },
+    nextCycleStrategy: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["summary", "recommendations"],
+      properties: {
+        summary: { type: "string" },
+        recommendations: {
+          type: "array", maxItems: 24,
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["subject", "topic", "subarea", "action", "sessionType", "priority", "suggestedBlocks", "suggestedMinutes", "justification", "evidence", "confidence", "dependencies"],
+            properties: {
+              subject: { type: "string" }, topic: { type: "string" }, subarea: { type: "string" },
+              action: { type: "string", enum: ["START_FOUNDATION", "CONTINUE_THEORY", "PRACTICE", "REVIEW", "REMEDIATE_GAP", "ADVANCE", "MAINTAIN"] },
+              sessionType: { type: "string", enum: ["Teoria e questões", "Questões", "Revisão", "Teoria", "Retomada"] },
+              priority: { type: "string", enum: ["high", "medium", "low"] },
+              suggestedBlocks: { type: "integer", minimum: 1, maximum: 3 }, suggestedMinutes: { type: "integer", minimum: 30, maximum: 120 },
+              justification: { type: "string" }, evidence: { type: "array", items: { type: "string" } }, confidence: { type: "string", enum: ["high", "medium", "low"] }, dependencies: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
+    },
     cycleEvaluation: {
       type: ["object", "null"],
       additionalProperties: false,
@@ -256,12 +284,28 @@ function validateCoachRequest(body) {
   return Boolean(coachRequestOptions(body));
 }
 
-function validateReview(review) {
+function validNextCycleStrategy(value) {
+  if (!isObject(value) || typeof value.summary !== "string" || !Array.isArray(value.recommendations) || value.recommendations.length > 24) return false;
+  const actions = ["START_FOUNDATION", "CONTINUE_THEORY", "PRACTICE", "REVIEW", "REMEDIATE_GAP", "ADVANCE", "MAINTAIN"];
+  const sessions = ["Teoria e questões", "Questões", "Revisão", "Teoria", "Retomada"];
+  return value.recommendations.every((item) => isObject(item)
+    && ["subject", "topic", "subarea", "action", "sessionType", "priority", "suggestedBlocks", "suggestedMinutes", "justification", "evidence", "confidence", "dependencies"].every((field) => item[field] !== undefined)
+    && typeof item.subject === "string" && typeof item.topic === "string" && typeof item.subarea === "string" && typeof item.justification === "string"
+    && actions.includes(item.action) && sessions.includes(item.sessionType)
+    && ["high", "medium", "low"].includes(item.priority) && ["high", "medium", "low"].includes(item.confidence)
+    && Number.isInteger(item.suggestedBlocks) && item.suggestedBlocks >= 1 && item.suggestedBlocks <= 3
+    && Number.isInteger(item.suggestedMinutes) && item.suggestedMinutes >= 30 && item.suggestedMinutes <= 120
+    && Array.isArray(item.evidence) && item.evidence.every((entry) => typeof entry === "string")
+    && Array.isArray(item.dependencies) && item.dependencies.every((entry) => typeof entry === "string"));
+}
+
+function validateReview(review, mode = DEFAULT_COACH_MODE) {
   if (!isObject(review) || !isObject(review.periodDiagnosis)) return false;
   const requiredArrays = ["facts", "interpretation", "recommendation", "advances", "bottlenecks", "priorities", "maintenance", "avoidForNow", "uncertainties", "strategicNotes"];
   if (requiredArrays.some((field) => !Array.isArray(review[field]))) return false;
   if (!review.periodDiagnosis.summary || !["high", "medium", "low"].includes(review.periodDiagnosis.confidence)) return false;
   if (review.priorities.length > 3) return false;
+  if (mode === "cycle-composition" && !validNextCycleStrategy(review.nextCycleStrategy)) return false;
   if (review.answerToQuestion !== undefined && review.answerToQuestion !== null && (!isObject(review.answerToQuestion)
     || typeof review.answerToQuestion.directAnswer !== "string"
     || !Array.isArray(review.answerToQuestion.supportingFacts)
@@ -508,10 +552,11 @@ export function createCoachHandler({ authClient, providerFetch = fetch, env = nu
       }
       return errorResponse(502, "AI_PROVIDER_NETWORK_ERROR");
     }
-    if (!validateReview(review)
+    if (!validateReview(review, requestOptions.mode)
       || (requestOptions.mode === "question" && !review.answerToQuestion)
       || (requestOptions.mode === "progress-check" && !review.sinceLastReview)
-      || (requestOptions.mode === "cycle-review" && !review.cycleEvaluation)) {
+      || (requestOptions.mode === "cycle-review" && !review.cycleEvaluation)
+      || (requestOptions.mode === "cycle-composition" && !review.nextCycleStrategy)) {
       safeProviderLog(logger, {
         stage: "provider-schema-validation",
         model: AI_COACH_MODEL,

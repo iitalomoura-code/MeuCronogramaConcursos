@@ -112,6 +112,7 @@ const state = {
   errors: [],
   interventionHistory: [],
   strategicAdvisorSnapshots: [],
+  nextCycleStrategyAudit: null,
   notebook: {},
   activeFocusSession: null,
   adaptiveSelection: null,
@@ -6447,6 +6448,64 @@ async function buildCurrentAIStrategicSnapshotAsync({ now = new Date().toISOStri
   return buildAIStrategicSnapshotFromTopics({ now, rollingWindow, planningTopics, topics });
 }
 
+function nextCycleStrategyEvidence(unit = {}, history = {}, diagnosis = {}) {
+  const evidence = ["base-declared", "pedagogical-order", "exam-priority"];
+  if (history.reliable) evidence.push("validated-history");
+  if (Number(diagnosis.questions) > 0 || Number(diagnosis.sessionCount) > 0) evidence.push("recent-performance");
+  if (diagnosis.errorSignals?.recurrence === "high" || Number(diagnosis.errorSignals?.postInterventionErrors) > 0) evidence.push("recurring-errors");
+  if (reviewAttentionFor(unit.materia, unit.assunto).hasAttention) evidence.push("review-due");
+  if (historicalIncidenceForTarget(unit).applied) evidence.push("exam-incidence");
+  return evidence;
+}
+
+function nextCycleStrategyCandidates(analysis) {
+  const seen = new Set();
+  return (state.planningBase?.materias || []).map(subjectPlanningCapacity).filter((subject) => subjectIsActive(subject))
+    .flatMap((subject) => pedagogicalProgression(subject, operationalStudyUnits(subject, analysis)).map((unit) => {
+      const key = programUnitKey(unit);
+      if (seen.has(key)) return null;
+      seen.add(key);
+      const diagnosis = masteryDiagnosisForTarget(unit);
+      const history = reliableTopicHistory(unit, { diagnosis });
+      return { key, subject: subject.materia, topic: unit.assunto, subarea: unit.subarea || "", baseLevel: normalizedPedagogicalLevel(subject), executableNow: Boolean(unit.pedagogicalEligibleNow), reservable: Boolean(unit.pedagogicalReservable), blocked: Boolean(unit.pedagogicalBlocked), prerequisiteKeys: Array.isArray(unit.pedagogicalPrerequisiteKeys) ? unit.pedagogicalPrerequisiteKeys.slice() : [], evidenceKeys: nextCycleStrategyEvidence(unit, history, diagnosis), pedagogicalStage: Number(unit.pedagogicalStage) || 0, history: { reliable: history.reliable, accuracy: history.accuracy, questions: history.questions, sessions: history.sessions, masteryLevel: history.masteryLevel }, performance: { questions: Number(diagnosis.questions) || 0, accuracy: Number.isFinite(diagnosis.accuracy) ? diagnosis.accuracy : null, level: diagnosis.level || "unknown", errorRecurrence: diagnosis.errorSignals?.recurrence || "none" } };
+    })).filter(Boolean);
+}
+
+function nextCycleStrategyFallback(reason = "") {
+  return { source: "fallback", summary: "", accepted: [], rejected: reason ? [{ key: "", reason }] : [], requestedMinutes: 0, fallbackRequired: true };
+}
+
+function nextCycleStrategyAudit(strategy = {}, providerSnapshot = null, failure = "") {
+  return { version: 1, analyzedAt: new Date().toISOString(), source: strategy.source || "fallback", summary: strategy.summary || "", accepted: (strategy.accepted || []).map(({ key, subject, topic, action, sessionType, priority, confidence, evidence }) => ({ key, subject, topic, action, sessionType, priority, confidence, evidence })), rejected: (strategy.rejected || []).slice(0, 24), requestedMinutes: Number(strategy.requestedMinutes) || 0, snapshotSignature: String(providerSnapshot?.signature?.value || providerSnapshot?.signature || ""), failure: failure || "" };
+}
+
+async function prepareNextCycleAIStrategy({ config, analysis }) {
+  const fallbackAndAudit = (reason, providerSnapshot = null) => {
+    const fallback = nextCycleStrategyFallback(reason);
+    state.nextCycleStrategyAudit = nextCycleStrategyAudit(fallback, providerSnapshot, reason);
+    return fallback;
+  };
+  if (!window.AIStrategicSnapshot?.compactForProvider || !window.AIStrategicCoachClient?.composeNextCycle || !window.AICycleStrategy?.validateStrategy) return fallbackAndAudit("ai-unavailable");
+  const candidates = nextCycleStrategyCandidates(analysis);
+  if (!candidates.length) return fallbackAndAudit("no-candidates");
+  const snapshot = await buildCurrentAIStrategicSnapshotAsync({ now: new Date().toISOString() });
+  if (!snapshot) return fallbackAndAudit("snapshot-unavailable");
+  const capacityMinutes = Math.max(0, Math.round(Number(config.capacidade?.plannedMinutes) || Number(config.horasSemanaCronograma || 0) * 60));
+  snapshot.nextCycleComposition = { capacityMinutes, maxBlocksPerSubject: Math.max(1, Math.ceil(capacityMinutes / 60)), candidates, recentBlocks: state.generatedBlocks.slice(-16).map((block) => ({ subject: block.materia, topic: block.assunto, activityType: block.tipoAtividade, status: block.status })), rules: ["recommend-only", "use-candidate-evidence-keys", "do-not-bypass-prerequisites", "local-engine-is-final-authority"] };
+  const providerSnapshot = window.AIStrategicSnapshot.compactForProvider(snapshot);
+  try {
+    const result = await Promise.race([window.AIStrategicCoachClient.composeNextCycle(providerSnapshot, { studyContextId: aiCoachStudyContextId() }), new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "AI_PROVIDER_TIMEOUT" })), 15_000))]);
+    const strategy = window.AICycleStrategy.validateStrategy(result?.review?.nextCycleStrategy, { candidates, capacityMinutes, maxBlocksPerSubject: snapshot.nextCycleComposition.maxBlocksPerSubject });
+    state.nextCycleStrategyAudit = nextCycleStrategyAudit(strategy, providerSnapshot);
+    return strategy;
+  } catch (error) {
+    const fallback = nextCycleStrategyFallback(error?.code || "provider-failure");
+    state.nextCycleStrategyAudit = nextCycleStrategyAudit(fallback, providerSnapshot, error?.code || "provider-failure");
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") console.warn("A estratégia de IA do próximo ciclo não ficou disponível; o motor local assumiu.", error);
+    return fallback;
+  }
+}
+
 function strategicAdvisorModel() {
   const revision = priorityDerivedCacheRevision();
   if (strategicAdvisorModelCache && strategicAdvisorModelRevision === revision) return strategicAdvisorModelCache;
@@ -7791,7 +7850,7 @@ function buildAlternatingQueue(distribution, analysis, options = {}) {
     remaining: item.blocos,
     exposures: 0,
     topicCursor: 0,
-    studyUnits: rankStudyUnitsByAdaptivePriority(item, operationalStudyUnits(item, analysis)),
+    studyUnits: rankStudyUnitsByAdaptivePriority(item, operationalStudyUnits(item, analysis), options.aiStrategy),
   }));
   const queue = [];
   const totalBlocks = Math.max(0, Number(options.totalBlocks) || distribution.reduce((sum, item) => sum + item.blocos, 0));
@@ -8120,7 +8179,7 @@ function pedagogicalFrontier(subject = {}, units = []) {
   return pedagogicalProgression(subject, units).filter((unit) => unit.pedagogicalEligibleNow);
 }
 
-function rankStudyUnitsByAdaptivePriority(subject, units = []) {
+function rankStudyUnitsByAdaptivePriority(subject, units = [], aiStrategy = null) {
   return pedagogicalProgression(subject, units)
     .map((topic) => {
       const scheduling = schedulingPriorityForTarget({
@@ -8139,6 +8198,12 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         diagnosis: adaptive.mastery,
         incidence: scheduling.incidence,
       });
+      const aiRecommendation = window.AICycleStrategy?.recommendationFor?.(aiStrategy || {}, {
+        materia: subject.materia,
+        assunto: topic.assunto,
+        subarea: topic.subarea || "",
+        key: programUnitKey(topic),
+      }) || null;
       return {
         ...topic,
         adaptiveScore: scheduling.adjusted,
@@ -8148,11 +8213,14 @@ function rankStudyUnitsByAdaptivePriority(subject, units = []) {
         incidenceAdjustment: scheduling.incidenceAdjustment || 0,
         initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
         strategicPriority: strategic,
+        aiCycleRecommendation: aiRecommendation,
+        aiPriorityBoost: Number(aiRecommendation?.priorityBoost) || 0,
       };
     })
     .sort((a, b) =>
       a.pedagogicalBand - b.pedagogicalBand ||
       a.pedagogicalStage - b.pedagogicalStage ||
+      b.aiPriorityBoost - a.aiPriorityBoost ||
       Number(b.strategicPriority?.score || 0) - Number(a.strategicPriority?.score || 0) ||
       b.incidenceAdjustment - a.incidenceAdjustment ||
       b.adaptiveAdjustment - a.adaptiveAdjustment ||
@@ -8185,6 +8253,8 @@ function distributeAcrossSlots(queue, slots) {
 function activityForQueueItem(item = {}) {
   const review = reviewAttentionFor(item.materia, item.assunto);
   if (review.overdue.length) return "Revisão";
+  const aiSession = item.aiCycleRecommendation?.sessionType;
+  if (aiSession && ["Teoria e questões", "Questões", "Revisão", "Teoria", "Retomada"].includes(aiSession)) return aiSession;
   const strategic = item.strategicPriority || strategicPriorityForTarget(item);
   const currentActivity = strategic?.recommendedSession?.label || "Teoria e questões";
   const level = initialDiagnosisRecordFor(item.materia)?.initialKnowledgeLevel || "unknown";
@@ -8207,7 +8277,7 @@ function fittedDurationMinutes(estimate, remainingMinutes) {
   return [...ALLOWED_BLOCK_MINUTES].reverse().find((minutes) => minutes <= remainingMinutes) || 0;
 }
 
-function createAdaptiveCycleBlocks(materias, config, analysis) {
+function createAdaptiveCycleBlocks(materias, config, analysis, { aiStrategy = null } = {}) {
   // Metas-base ocupam somente a capacidade planejada. A reserva semanal fica
   // deliberadamente livre para revisoes, reforcos e recuperacoes adaptativas.
   const capacityMinutes = Math.max(0, Math.round(Number(config.capacidade?.plannedMinutes) || (Number(config.horasSemanaCronograma) || 0) * 60));
@@ -8224,6 +8294,7 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
   const queue = buildAlternatingQueue(plannedDistribution, analysis, {
     totalBlocks: Math.ceil(capacityMinutes / ALLOWED_BLOCK_MINUTES[0]),
     allowBeyondQuota: true,
+    aiStrategy,
   });
   const blocks = [];
   const fairnessRejections = [];
@@ -8252,6 +8323,15 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
       ? estimate
       : { ...estimate, minutes: durationMinutes, hours: duration, reason: [...estimate.reason, "encaixe na carga restante"].slice(0, 3) };
     const block = blockRow(blocks.length + 1, duration, item, activityType, adjustedEstimate);
+    if (item.aiCycleRecommendation) {
+      block.aiCycleRecommendation = {
+        action: item.aiCycleRecommendation.action,
+        confidence: item.aiCycleRecommendation.confidence,
+        justification: item.aiCycleRecommendation.justification,
+        evidence: item.aiCycleRecommendation.evidence.slice(),
+        strategySource: "ai",
+      };
+    }
     const diagnosis = masteryDiagnosisForTarget({ materia: block.materia, assunto: block.assunto, prioridade: block.prioridade });
     const pressure = capacityPlanning().studyPressure({
       importance: subject.examImportance,
@@ -8321,6 +8401,11 @@ function createAdaptiveCycleBlocks(materias, config, analysis) {
     unresolvedDependencies: [...new Set(unresolvedDependencies)],
     fairnessRejections: [...new Set(fairnessRejections)],
     capacityUnderfillReason,
+    aiStrategy: aiStrategy ? {
+      source: aiStrategy.source || "fallback",
+      accepted: aiStrategy.accepted?.length || 0,
+      rejected: aiStrategy.rejected?.length || 0,
+    } : { source: "fallback", accepted: 0, rejected: 0 },
   };
   if (isDevelopmentRuntime()) console.debug("[Meu Cronograma · ciclo] diagnóstico de diversidade", fairness);
   return { blocks: integratedBlocks, distribution, remainingMinutes, fairness, diagnostics };
@@ -8904,7 +8989,10 @@ async function generateSchedule({ completeSetup = false, openContinue = false } 
   const config = scheduleConfig();
   const weeklyCycle = ensureWeeklyStudyCycle();
   const analysis = updateDeadlineDisplays(config);
-  const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis);
+  if (els.scheduleStatus) els.scheduleStatus.textContent = "Analisando seu histórico e preparando o próximo ciclo...";
+  await yieldForPaint({ frames: 1 });
+  const aiStrategy = await prepareNextCycleAIStrategy({ config, analysis });
+  const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis, { aiStrategy });
   state.distribution = cycle.distribution;
   state.generatedBlocks = cycle.blocks.map((block) => ({ ...block, weeklyCycleId: weeklyCycle?.id || "" }));
   state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, weeklyCycle?.id || "");
@@ -8917,6 +9005,9 @@ async function generateSchedule({ completeSetup = false, openContinue = false } 
   switchTab(openContinue ? "continuar" : "cronograma");
   if (analysis.status === "insufficient") {
     els.scheduleStatus.textContent = `${state.generatedBlocks.length} blocos no ciclo com prazo insuficiente`;
+  } else if (els.scheduleStatus) {
+    const recommendations = aiStrategy.accepted?.length || 0;
+    els.scheduleStatus.textContent = recommendations ? `${state.generatedBlocks.length} blocos no ciclo · estratégia do histórico aplicada a ${recommendations} tema${recommendations === 1 ? "" : "s"}` : `${state.generatedBlocks.length} blocos no ciclo · estratégia local aplicada`;
   }
 }
 
@@ -10306,6 +10397,7 @@ function explainStudySuggestion(block, context = {}) {
     context.weeklyReinforcement.reasons.slice(0, 2).forEach((reason) => factors.push(`reforço recomendado: ${reason}`));
   }
   if (context.weeklyAdjustment?.reason) factors.push(context.weeklyAdjustment.reason);
+  if (block.aiCycleRecommendation?.justification) factors.push(block.aiCycleRecommendation.justification);
   if (block.pedagogicalReason) factors.push(block.pedagogicalReason);
   if (block.pedagogicalHistory?.source && /Ponto fraco|Assunto com histórico/.test(block.pedagogicalReason || "")) {
     const history = block.pedagogicalHistory;
@@ -16016,6 +16108,7 @@ function captureAppState({ source = "" } = {}) {
     errors: state.errors,
     interventionHistory: state.interventionHistory,
     strategicAdvisorSnapshots: state.strategicAdvisorSnapshots,
+    nextCycleStrategyAudit: state.nextCycleStrategyAudit,
     notebook: state.notebook,
     activeFocusSession: state.activeFocusSession,
     adaptiveSelection: state.adaptiveSelection,
@@ -16124,6 +16217,7 @@ function applyAppSnapshot(saved = {}) {
    repairedCycleLabels = startupPerfMeasure(startupTrace, "repair cycle labels", () => repairStoredCycleLabels());
   state.errors = Array.isArray(saved.errors) ? saved.errors : [];
   state.interventionHistory = Array.isArray(saved.interventionHistory) ? saved.interventionHistory : [];
+  state.nextCycleStrategyAudit = saved.nextCycleStrategyAudit && typeof saved.nextCycleStrategyAudit === "object" ? saved.nextCycleStrategyAudit : null;
    state.strategicAdvisorSnapshots = startupPerfMeasure(startupTrace, "rehydrate strategic snapshots", () => window.StrategicAdvisorHistory?.rehydrateSnapshots?.(saved.strategicAdvisorSnapshots) || (Array.isArray(saved.strategicAdvisorSnapshots) ? saved.strategicAdvisorSnapshots.slice(-20) : []));
   state.notebook = saved.notebook && typeof saved.notebook === "object" ? saved.notebook : {};
   state.adaptiveSelection = saved.adaptiveSelection?.materia && saved.adaptiveSelection?.assunto ? saved.adaptiveSelection : null;

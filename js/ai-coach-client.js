@@ -4,7 +4,7 @@
   const FUNCTION_NAME = "ai-strategic-coach";
   const DEDUPE_WINDOW_MS = 30_000;
   const DEFAULT_COACH_MODE = "progress-check";
-  const COACH_MODES = ["cycle-review", "progress-check", "question"];
+  const COACH_MODES = ["cycle-review", "progress-check", "question", "cycle-composition"];
   const MAX_QUESTION_CHARS = 2000;
   const inFlight = new Map();
   const recentResults = new Map();
@@ -155,6 +155,10 @@
     return analyze(snapshot, { ...previousContext, mode: "progress-check" });
   }
 
+  async function composeNextCycle(snapshot, previousContext = {}) {
+    return analyze(snapshot, { ...previousContext, mode: "cycle-composition" });
+  }
+
   async function reanalyze(snapshot, previousContext = {}) {
     return checkProgress(snapshot, previousContext);
   }
@@ -163,7 +167,7 @@
     return analyze(snapshot, { ...previousContext, mode: "question", question });
   }
 
-  const api = { analyze, analyzeCycle, checkProgress, reanalyze, ask, validateResponse, translatedMessage };
+  const api = { analyze, analyzeCycle, checkProgress, composeNextCycle, reanalyze, ask, validateResponse, translatedMessage };
   global.AIStrategicCoachClient = api;
   global.requestAIStrategicCoachReview = async function requestAIStrategicCoachReview() {
     if (typeof global.buildCurrentAIStrategicSnapshot !== "function") throw clientError("AI_INVALID_SNAPSHOT", translatedMessage("AI_INVALID_SNAPSHOT"), 422);
