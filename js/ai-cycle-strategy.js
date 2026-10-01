@@ -18,11 +18,36 @@
     return Number((base * (confidence === "high" ? 1 : confidence === "medium" ? .72 : .45)).toFixed(3));
   }
 
-  function baseAllowsAction(candidate = {}, action = "") {
+  function actionCompatible(candidate = {}, action = "", sessionType = "") {
     const base = normalized(candidate.baseLevel || "unknown");
-    if (["never-studied", "basic", "unknown"].includes(base) && action === "ADVANCE") return false;
+    const lowBase = ["never-studied", "basic", "unknown"].includes(base);
+    const hasHistory = Boolean(candidate.history?.reliable || candidate.hasValidatedHistory);
+    const hasTheory = Boolean(candidate.hasTheoryContact || candidate.executableNow && Number(candidate.pedagogicalStage || 0) > 0);
+    const hasGap = Boolean(candidate.hasConfirmedGap || candidate.performance?.errorRecurrence === "high" || ["critical", "deficiency"].includes(candidate.performance?.level));
+    const reviewDue = Boolean(candidate.reviewPending);
+    const initialStage = Number(candidate.pedagogicalStage || 0) === 0;
     if (candidate.blocked && !candidate.reservable) return false;
-    return true;
+    if (action === "REVIEW") return reviewDue;
+    if (action === "REMEDIATE_GAP") return hasGap;
+    if (lowBase) {
+      if (action === "START_FOUNDATION") return initialStage || hasGap;
+      if (action === "CONTINUE_THEORY") return Boolean(candidate.executableNow || hasTheory);
+      if (action === "PRACTICE") return hasTheory && sessionType !== "Teoria";
+      return false;
+    }
+    if (base === "intermediate") {
+      if (action === "ADVANCE") return Boolean(candidate.executableNow && hasHistory);
+      if (action === "MAINTAIN") return hasHistory && Number(candidate.performance?.accuracy || 0) >= .7;
+      if (action === "START_FOUNDATION") return initialStage && hasGap;
+      return ["CONTINUE_THEORY", "PRACTICE"].includes(action);
+    }
+    if (["advanced", "strong"].includes(base)) {
+      if (action === "START_FOUNDATION") return hasGap && initialStage;
+      if (action === "ADVANCE") return Boolean(candidate.executableNow && hasHistory);
+      if (action === "MAINTAIN") return hasHistory;
+      return ["CONTINUE_THEORY", "PRACTICE"].includes(action);
+    }
+    return false;
   }
 
   function validateRecommendation(recommendation = {}, context = {}) {
@@ -36,18 +61,33 @@
     if (!ACTIONS.includes(action)) return { accepted: false, reason: "invalid-action" };
     if (!SESSION_TYPES.includes(sessionType)) return { accepted: false, reason: "invalid-session-type" };
     if (!PRIORITIES.includes(priority) || !PRIORITIES.includes(confidence)) return { accepted: false, reason: "invalid-priority-or-confidence" };
-    if (!baseAllowsAction(candidate, action)) return { accepted: false, reason: "incompatible-with-base-or-progression" };
+    if (!actionCompatible(candidate, action, sessionType)) return { accepted: false, reason: "incompatible-with-base-or-progression" };
     const evidence = Array.isArray(recommendation.evidence) ? recommendation.evidence.map(text).filter(Boolean) : [];
     if (!evidence.length || evidence.some((item) => !candidate.evidenceKeys.has(item))) return { accepted: false, reason: "unsupported-evidence" };
     const dependencies = Array.isArray(recommendation.dependencies) ? recommendation.dependencies.map(text).filter(Boolean) : [];
-    if (dependencies.some((item) => !candidate.prerequisiteKeys.includes(item))) return { accepted: false, reason: "invalid-dependency" };
+    if (dependencies.some((item) => !candidate.prerequisiteKeys.includes(item)) || candidate.prerequisiteKeys.some((item) => !dependencies.includes(item))) return { accepted: false, reason: "invalid-dependency" };
     const suggestedBlocks = clamp(recommendation.suggestedBlocks, 1, 3);
     const suggestedMinutes = clamp(recommendation.suggestedMinutes, 30, 120);
     if (!Number.isFinite(Number(recommendation.suggestedBlocks)) || !Number.isFinite(Number(recommendation.suggestedMinutes))) return { accepted: false, reason: "invalid-capacity" };
+    const original = {
+      subject: text(recommendation.subject || recommendation.materia),
+      subarea: text(recommendation.subarea),
+      topic: text(recommendation.topic || recommendation.assunto || recommendation.titulo),
+      action,
+      sessionType,
+      priority,
+      confidence,
+      suggestedBlocks: Number(recommendation.suggestedBlocks),
+      suggestedMinutes: Number(recommendation.suggestedMinutes),
+      justification: text(recommendation.justification).slice(0, 320),
+      evidence: evidence.slice(),
+      dependencies: dependencies.slice(),
+    };
     return {
       accepted: true,
       value: {
         key: candidate.key,
+        original,
         subject: candidate.subject,
         topic: candidate.topic,
         subarea: candidate.subarea || "",

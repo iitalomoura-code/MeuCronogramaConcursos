@@ -12,7 +12,7 @@ const foundation = {
 const strong = {
   key: "constitucional::controle", subject: "Direito Constitucional", topic: "Controle de constitucionalidade", subarea: "",
   baseLevel: "advanced", executableNow: true, reservable: true, blocked: false,
-  evidenceKeys: ["validated-history", "recent-performance", "exam-priority"], prerequisiteKeys: ["constitucional::principios"],
+  evidenceKeys: ["validated-history", "recent-performance", "exam-priority"], history: { reliable: true }, hasValidatedHistory: true, prerequisiteKeys: ["constitucional::principios"],
 };
 
 function recommendation(candidate, overrides = {}) {
@@ -61,4 +61,24 @@ test("estratégia ausente ou inválida sempre devolve fallback sem mutar candida
   assert.equal(output.source, "fallback");
   assert.equal(output.fallbackRequired, true);
   assert.equal(JSON.stringify(foundation), before);
+});
+
+
+test("aplica a matriz pedagógica para base, histórico, revisão, lacuna e dependências completas", () => {
+  const low = { ...foundation, hasTheoryContact: false, reviewPending: false, hasConfirmedGap: false, pedagogicalStage: 0 };
+  const intermediate = { ...strong, baseLevel: "intermediate", performance: { accuracy: .82 }, pedagogicalStage: 1 };
+  const advanced = { ...strong, baseLevel: "advanced", performance: { accuracy: .9 }, pedagogicalStage: 0, hasConfirmedGap: false };
+  const rejected = strategy.validateStrategy({ recommendations: [
+    recommendation(low, { action: "PRACTICE", sessionType: "Questões" }),
+    recommendation(low, { action: "REVIEW", sessionType: "Revisão" }),
+    recommendation(low, { action: "MAINTAIN", sessionType: "Questões" }),
+    recommendation(advanced, { action: "START_FOUNDATION" }),
+    recommendation(intermediate, { action: "ADVANCE", dependencies: [] }),
+  ] }, { candidates: [low, intermediate, advanced], capacityMinutes: 300, maxBlocksPerSubject: 3 });
+  assert.equal(rejected.accepted.length, 0);
+  assert.ok(rejected.rejected.every((entry) => ["incompatible-with-base-or-progression", "invalid-dependency"].includes(entry.reason)));
+  const accepted = strategy.validateStrategy({ recommendations: [
+    recommendation(intermediate, { action: "ADVANCE", dependencies: ["constitucional::principios"] }),
+  ] }, { candidates: [intermediate], capacityMinutes: 120, maxBlocksPerSubject: 2 });
+  assert.equal(accepted.accepted[0].action, "ADVANCE");
 });

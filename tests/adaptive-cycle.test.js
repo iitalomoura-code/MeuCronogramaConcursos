@@ -4,6 +4,7 @@ const path = require("path");
 const vm = require("vm");
 const StudyDerivedState = require("../js/study-derived-state.js");
 const ContinueRecommendation = require("../js/continue-recommendation.js");
+const AICycleStrategy = require("../js/ai-cycle-strategy.js");
 
 const app = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 
@@ -23,7 +24,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, canAddCycleBlock, fairnessExceptionReason, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, pedagogicalProgression, pedagogicalReconciliationInput, rankStudyUnitsByAdaptivePriority, invalidateDerivedStudyCaches };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, canAddCycleBlock, fairnessExceptionReason, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, pedagogicalProgression, pedagogicalReconciliationInput, rankStudyUnitsByAdaptivePriority, createAICycleBudget, applyAICycleBudgetToDistribution, recordAICycleApplication, nextCycleStrategyLimits, nextCycleStrategyAudit, nextCycleStrategySummary, programUnitKey, invalidateDerivedStudyCaches };`;
 const noop = () => {};
 const context = {
   console,
@@ -34,7 +35,7 @@ const context = {
   requestAnimationFrame: noop,
   localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
   document: { querySelectorAll: () => [], querySelector: () => null, addEventListener: noop, documentElement: { dataset: {}, style: { setProperty: noop } }, body: {} },
-  window: { setTimeout: noop, clearTimeout: noop, setInterval: noop, clearInterval: noop, addEventListener: noop, matchMedia: () => ({ matches: false }), innerWidth: 1200, StudyDerivedState, ContinueRecommendation },
+  window: { setTimeout: noop, clearTimeout: noop, setInterval: noop, clearInterval: noop, addEventListener: noop, matchMedia: () => ({ matches: false }), innerWidth: 1200, StudyDerivedState, ContinueRecommendation, AICycleStrategy },
   Date, Math, JSON, Set, Map, Array, Object, String, Number, Boolean, RegExp, Error, structuredClone,
 };
 vm.createContext(context);
@@ -76,6 +77,32 @@ assert.ok(cycle.blocks.some((block) => block.materia === "Baixa"), "A cobertura 
 assert.ok(cycle.blocks.reduce((sum, block) => sum + block.duracao, 0) <= 3, "O ciclo não pode ultrapassar a carga disponível.");
 assert.ok(cycle.blocks.every((block) => [0.5, 0.75, 1, 1.5, 2].includes(block.duracao)), "A duração deve usar faixas discretas.");
 assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planningBase.materias[1], topic: "Tema longo com vários itens e exceções", activityType: "Revisão", referenceDuration: 1.5 }).minutes, 30, "Revisões curtas devem sugerir 30 minutos.");
+runtime.state.rows[1].conteudosOriginais = ["item um", "item dois", "item três", "item quatro"];
+const aiTargetKey = runtime.programUnitKey({ materia: "Baixa", assunto: "Tema longo com vários itens e exceções" });
+const aiGuidedCycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 3, duracaoBloco: 1.5 }, {}, {
+  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 2, suggestedMinutes: 120, normalizedMinutes: 60, maximumBlocks: 2, sessionType: "Teoria", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
+});
+const aiApplied = aiGuidedCycle.diagnostics.aiApplication.entries[0];
+assert.ok(aiApplied.appliedBlocks >= 1, "Uma recomendação válida deve influenciar blocos reais.");
+assert.ok(aiGuidedCycle.blocks.filter((block) => block.materia === "Baixa").length >= 2, "Dois blocos sugeridos devem alterar a distribuição dentro do teto.");
+assert.ok(aiGuidedCycle.blocks.filter((block) => block.materia === "Baixa").every((block) => [30, 45, 60, 90, 120].includes(block.duracao * 60)), "Minutos sugeridos devem ser normalizados para durações válidas.");
+assert.equal(aiApplied.appliedMinutes, 120, "A preferência de 120 minutos deve chegar aos blocos finais quando couber.");
+assert.ok(aiApplied.adjustmentReason, "A auditoria deve registrar como a recomendação foi aplicada.");
+const validatedForAudit = AICycleStrategy.validateStrategy({ recommendations: [{
+  subject: "Baixa", topic: "Tema longo com vários itens e exceções", action: "CONTINUE_THEORY", sessionType: "Teoria", priority: "high", confidence: "high", suggestedBlocks: 2, suggestedMinutes: 120, justification: "Prioridade validada.", evidence: ["history"], dependencies: [],
+}] }, { candidates: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", baseLevel: "basic", executableNow: true, pedagogicalStage: 1, hasTheoryContact: true, evidenceKeys: ["history"], prerequisiteKeys: [] }], capacityMinutes: 180, maxBlocksPerSubject: 2 });
+const audit = runtime.nextCycleStrategyAudit(validatedForAudit);
+audit.application = aiGuidedCycle.diagnostics.aiApplication;
+assert.strictEqual(audit.accepted[0].original.suggestedMinutes, 120, "A auditoria deve preservar a recomendação original.");
+assert.strictEqual(audit.application.entries[0].appliedMinutes, 120, "A auditoria deve separar minutos aceitos de minutos efetivamente aplicados.");
+assert.ok(runtime.nextCycleStrategySummary(audit.application).includes("histórico"), "O resumo compacto deve identificar a estratégia aplicada sem códigos internos.");
+const constrainedAICycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 1.5, duracaoBloco: 1 }, {}, {
+  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 3, suggestedMinutes: 120, normalizedMinutes: 45, maximumBlocks: 3, sessionType: "Teoria", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
+});
+const constrainedApplication = constrainedAICycle.diagnostics.aiApplication.entries[0];
+assert.ok(constrainedApplication.appliedBlocks < constrainedApplication.suggestedBlocks, "Capacidade limitada deve aplicar somente a parte segura da sugestão.");
+assert.ok(constrainedApplication.fallbackBlocks > 0, "A auditoria deve separar a parte completada pelo fallback.");
+
 
 runtime.state.planningBase.materias = [{ materia: "Única", assuntos: ["Tema único"], peso: 5, dominio: 3 }];
 runtime.state.rows = [{ materia: "Única", assunto: "Tema único", estudar: "Sim", tamanhoEstimado: "Curto", blocosSugeridos: 1 }];
