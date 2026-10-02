@@ -135,19 +135,25 @@
         rejected.push({ key: value.key, reason: "duplicate-recommendation" });
         return;
       }
-      const nextSubjectBlocks = (subjectBlocks.get(value.subject) || 0) + value.suggestedBlocks;
-      if (nextSubjectBlocks > maxBlocksPerSubject) {
-        rejected.push({ key: value.key, reason: "subject-block-cap" });
+      const availableBlocks = Math.max(0, Number(maxBlocksPerSubject) - (subjectBlocks.get(value.subject) || 0));
+      const availableMinutes = Math.max(0, Number(capacityMinutes) - requestedMinutes);
+      const acceptedBlocks = Math.min(value.suggestedBlocks, availableBlocks);
+      const acceptedMinutes = Math.min(value.suggestedMinutes, availableMinutes);
+      if (!acceptedBlocks || !acceptedMinutes) {
+        rejected.push({ key: value.key, reason: availableBlocks ? "capacity-exceeded" : "subject-block-cap" });
         return;
       }
-      if (requestedMinutes + value.suggestedMinutes > Math.max(0, Number(capacityMinutes) || 0)) {
-        rejected.push({ key: value.key, reason: "capacity-exceeded" });
-        return;
-      }
-      seen.add(value.key);
-      subjectBlocks.set(value.subject, nextSubjectBlocks);
-      requestedMinutes += value.suggestedMinutes;
-      accepted.push(value);
+      const adjusted = acceptedBlocks !== value.suggestedBlocks || acceptedMinutes !== value.suggestedMinutes;
+      const acceptedValue = {
+        ...value,
+        suggestedBlocks: acceptedBlocks,
+        suggestedMinutes: acceptedMinutes,
+        validationAdjustment: adjusted ? "limitada pela capacidade ou pelo teto de distribuição" : "",
+      };
+      seen.add(acceptedValue.key);
+      subjectBlocks.set(acceptedValue.subject, (subjectBlocks.get(acceptedValue.subject) || 0) + acceptedBlocks);
+      requestedMinutes += acceptedMinutes;
+      accepted.push(acceptedValue);
     });
     return {
       source: accepted.length ? "ai" : "fallback",

@@ -108,6 +108,7 @@ runtime.state.nextCycleStrategyAudit = { application: { ...aiGuidedCycle.diagnos
 assert.ok(runtime.strategyApplicationForCurrentCycle(), "A reidratação deve restaurar o resumo somente para o ciclo correspondente.");
 runtime.state.generatedBlocks = [];
 assert.equal(runtime.strategyApplicationForCurrentCycle(), null, "A ausência de ciclo deve limpar o resumo estratégico antigo.");
+assert.ok(runtime.nextCycleStrategySummary({ source: "local", entries: [], externalUnavailable: true }).includes("não ficou disponível"), "Falha externa deve manter o resumo local legível, sem código interno.");
 const constrainedAICycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 1.5, duracaoBloco: 1 }, {}, {
   aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 3, suggestedMinutes: 120, normalizedMinutes: 45, maximumBlocks: 3, sessionType: "Revisão", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
 });
@@ -185,11 +186,36 @@ assert.deepStrictEqual([...administrativeFrontier.map((unit) => unit.assunto)], 
 assert.ok(administrativeFrontier.every((unit) => unit.pedagogicalReason), "Cada tema da fronteira precisa registrar a razão pedagógica.");
 const administrativeRank = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], administrativeSequence);
 assert.equal(administrativeRank[0].assunto, "Estado, Governo e Administração Pública", "Pontuação estratégica não pode inverter a base e o próximo passo pedagógico.");
+const blockedPriorityKey = runtime.programUnitKey({ materia: "Direito Administrativo", assunto: "Serviços Públicos" });
+const blockedPriorityRank = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], administrativeSequence, { accepted: [{ key: blockedPriorityKey, priorityBoost: .18 }] });
+assert.equal(blockedPriorityRank[0].assunto, "Estado, Governo e Administração Pública", "Prioridade da IA não pode antecipar assunto bloqueado de matéria nova.");
 runtime.state.reviews = [{ materia: "Direito Administrativo", assunto: "Serviços Públicos", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" }];
 runtime.state.completedHistory = [{ materia: "Direito Administrativo", assunto: "Serviços Públicos", status: "Concluído", questoes: 20, acertos: 12, tempoEstudado: 1 }];
 runtime.invalidateDerivedStudyCaches();
 const exceptionalFrontier = runtime.pedagogicalFrontier(runtime.state.planningBase.materias[0], administrativeSequence);
 assert.ok(exceptionalFrontier.some((unit) => unit.assunto === "Serviços Públicos" && unit.pedagogicalException.toLowerCase().includes("revisão vencida")), "Revisão vencida permanece uma exceção explícita e auditável.");
+runtime.state.reviews = [];
+runtime.state.planningBase.materias = [{ materia: "Direito Avançado", assuntos: [], peso: 4, dominio: 5, familiarity: "advanced" }];
+runtime.state.rows = [];
+runtime.state.initialDiagnosis = [];
+runtime.state.completedHistory = [{ materia: "Direito Avançado", assunto: "Revisão A", status: "Concluído", questoes: 20, acertos: 16, tempoEstudado: 2 }, { materia: "Direito Avançado", assunto: "Revisão B", status: "Concluído", questoes: 20, acertos: 16, tempoEstudado: 2 }];
+const advancedSequence = [
+  { assunto: "Fundamento", ordem: 1, blocosSugeridos: 1 },
+  { assunto: "Revisão A", ordem: 2, blocosSugeridos: 1 },
+  { assunto: "Revisão B", ordem: 3, blocosSugeridos: 1 },
+];
+runtime.state.reviews = [
+  { materia: "Direito Avançado", assunto: "Revisão A", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" },
+  { materia: "Direito Avançado", assunto: "Revisão B", status: "Pendente", dataPrevista: "01/01/2020", tipo: "comum" },
+];
+runtime.invalidateDerivedStudyCaches();
+const priorityKey = runtime.programUnitKey({ materia: "Direito Avançado", assunto: "Revisão B" });
+const locallyRanked = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], advancedSequence);
+const aiRanked = runtime.rankStudyUnitsByAdaptivePriority(runtime.state.planningBase.materias[0], advancedSequence, { accepted: [{ key: priorityKey, priorityBoost: .18 }] });
+const locallyPosition = locallyRanked.findIndex((unit) => unit.assunto === "Revisão B");
+const aiPriorityUnit = aiRanked.find((unit) => unit.assunto === "Revisão B");
+assert.ok(aiPriorityUnit.finalTopicRank < locallyPosition, "A prioridade da IA deve mudar a ordem somente entre assuntos pedagogicamente liberados.");
+assert.equal(aiPriorityUnit.aiPriorityChanged, true, "A mudança de ordem deve ficar marcada para a auditoria do bloco.");
 runtime.state.reviews = [];
 
 // Cenário CGU: duas matérias muito fortes não podem ocupar um ciclo inteiro

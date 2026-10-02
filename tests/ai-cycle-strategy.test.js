@@ -48,11 +48,13 @@ test("impede recomendação sem evidência, excesso de capacidade e concentraç�
   const output = strategy.validateStrategy({ recommendations: [
     recommendation(foundation, { evidence: ["evidencia-inventada"] }),
     recommendation(foundation, { suggestedMinutes: 120, suggestedBlocks: 2 }),
-    recommendation(strong, { suggestedMinutes: 120, suggestedBlocks: 2 }),
+    recommendation(strong, { suggestedMinutes: 120, suggestedBlocks: 2, dependencies: ["constitucional::principios"] }),
   ] }, { candidates: [foundation, strong], capacityMinutes: 180, maxBlocksPerSubject: 1 });
-  assert.equal(output.accepted.length, 0);
+  assert.equal(output.accepted.length, 2);
+  assert.equal(output.accepted[0].suggestedBlocks, 1, "A capacidade por matéria deve limitar a sugestão sem descartar sua parte segura.");
+  assert.equal(output.accepted[1].suggestedMinutes, 60, "A capacidade restante deve limitar minutos sem rejeitar a recomendação inteira.");
+  assert.ok(output.accepted.every((entry) => entry.validationAdjustment), "Os ajustes parciais devem ser auditáveis.");
   assert.ok(output.rejected.some((item) => item.reason === "unsupported-evidence"));
-  assert.ok(output.rejected.some((item) => item.reason === "subject-block-cap"));
 });
 
 test("estratégia ausente ou inválida sempre devolve fallback sem mutar candidatos", () => {
@@ -81,4 +83,17 @@ test("aplica a matriz pedagógica para base, histórico, revisão, lacuna e depe
     recommendation(intermediate, { action: "ADVANCE", dependencies: ["constitucional::principios"] }),
   ] }, { candidates: [intermediate], capacityMinutes: 120, maxBlocksPerSubject: 2 });
   assert.equal(accepted.accepted[0].action, "ADVANCE");
+});
+
+
+test("preserva parte segura de recomendação acima da capacidade", () => {
+  const output = strategy.validateStrategy({ recommendations: [
+    recommendation(foundation, { suggestedBlocks: 3, suggestedMinutes: 120 }),
+  ] }, { candidates: [foundation], capacityMinutes: 60, maxBlocksPerSubject: 1 });
+  assert.equal(output.accepted.length, 1);
+  assert.equal(output.accepted[0].suggestedBlocks, 1);
+  assert.equal(output.accepted[0].suggestedMinutes, 60);
+  assert.equal(output.accepted[0].original.suggestedBlocks, 3);
+  assert.equal(output.accepted[0].original.suggestedMinutes, 120);
+  assert.ok(output.accepted[0].validationAdjustment);
 });

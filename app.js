@@ -6570,7 +6570,7 @@ function recordAICycleApplication(budget = null, blocks = []) {
 }
 
 function nextCycleStrategySummary(application = null) {
-  if (!application?.entries?.length || application.source === "local") return "Ciclo composto pelas regras locais";
+  if (!application?.entries?.length || application.source === "local") return application?.externalUnavailable ? "A estratégia externa não ficou disponível. O ciclo foi composto normalmente pelas regras locais." : "Ciclo composto pelas regras locais.";
   if (application.source === "ai-guided") return "Ciclo orientado pela estratégia da IA e validado pelas regras locais";
   return "Ciclo com orientação parcial da IA e composição validada localmente";
 }
@@ -6583,8 +6583,8 @@ function strategyApplicationForCurrentCycle() {
 
 function renderNextCycleStrategySummary(application = strategyApplicationForCurrentCycle()) {
   if (!els.aiCycleStrategySummary) return;
-  const entries = application?.entries || [];
-  if (!entries.length) { els.aiCycleStrategySummary.hidden = true; els.aiCycleStrategySummary.textContent = ""; return; }
+  if (!application) { els.aiCycleStrategySummary.hidden = true; els.aiCycleStrategySummary.textContent = ""; return; }
+  const entries = application.entries || [];
   const decisions = [nextCycleStrategySummary(application)];
   entries.filter((entry) => entry.materiallyAppliedBlocks).slice(0, 2).forEach((entry) => decisions.push(entry.subject + ": " + entry.justification));
   if (entries.some((entry) => entry.matchedButUnchangedBlocks)) decisions.push("Algumas sugestões coincidiram com decisões que o ciclo local já tomaria.");
@@ -8191,9 +8191,9 @@ function normalizedPedagogicalLevel(subject = {}) {
   const raw = initialDiagnosisRecordFor(subject.materia)?.initialKnowledgeLevel || subject.familiarity || subject.initialDiagnosis || "unknown";
   const normalized = normalizeForMatch(String(raw));
   if (normalized.includes("nunca")) return "never-studied";
-  if (normalized.includes("bas") || normalized.includes("fraca")) return "basic";
-  if (normalized.includes("intermedi")) return "intermediate";
-  if (normalized.includes("avanc")) return "advanced";
+  if (normalized.includes("bas") || normalized.includes("basic") || normalized.includes("fraca")) return "basic";
+  if (normalized.includes("intermedi") || normalized.includes("intermediate")) return "intermediate";
+  if (normalized.includes("avanc") || normalized.includes("advanced")) return "advanced";
   return "unknown";
 }
 
@@ -8303,55 +8303,28 @@ function pedagogicalFrontier(subject = {}, units = []) {
 }
 
 function rankStudyUnitsByAdaptivePriority(subject, units = [], aiStrategy = null, aiBudget = null) {
-  return pedagogicalProgression(subject, units)
+  const baseLevel = normalizedPedagogicalLevel(subject);
+  const lowBase = ["never-studied", "basic", "unknown"].includes(baseLevel);
+  const ranked = pedagogicalProgression(subject, units)
     .map((topic) => {
-      const scheduling = schedulingPriorityForTarget({
-        materia: subject.materia,
-        assunto: topic.assunto,
-        prioridade: subject.prioridade,
-        prioridadeBase: subject.prioridadeBase,
-        initialDiagnosis: subject.initialDiagnosis,
-      });
+      const scheduling = schedulingPriorityForTarget({ materia: subject.materia, assunto: topic.assunto, prioridade: subject.prioridade, prioridadeBase: subject.prioridadeBase, initialDiagnosis: subject.initialDiagnosis });
       const adaptive = scheduling.adaptive;
-      const strategic = strategicPriorityForTarget({
-        materia: subject.materia,
-        assunto: topic.assunto,
-        subarea: topic.subarea || "",
-        subject,
-        diagnosis: adaptive.mastery,
-        incidence: scheduling.incidence,
-      });
-      const aiRecommendation = window.AICycleStrategy?.recommendationFor?.(aiStrategy || {}, {
-        materia: subject.materia,
-        assunto: topic.assunto,
-        subarea: topic.subarea || "",
-        key: programUnitKey(topic),
-      }) || null;
-      const aiBudgetEntry = aiBudget?.byKey?.get(programUnitKey(topic)) || null;
-      return {
-        ...topic,
-        adaptiveScore: scheduling.adjusted,
-        adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive.adjustment,
-        adaptiveReason: adaptive.reason,
-        incidenciaHistorica: scheduling.incidence,
-        incidenceAdjustment: scheduling.incidenceAdjustment || 0,
-        initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0,
-        strategicPriority: strategic,
-        aiCycleRecommendation: aiRecommendation,
-        aiPriorityBoost: Number(aiRecommendation?.priorityBoost) || 0,
-        aiBudgetEntry,
-      };
-    })
-    .sort((a, b) =>
-      a.pedagogicalBand - b.pedagogicalBand ||
-      a.pedagogicalStage - b.pedagogicalStage ||
-      b.aiPriorityBoost - a.aiPriorityBoost ||
-      Number(b.strategicPriority?.score || 0) - Number(a.strategicPriority?.score || 0) ||
-      b.incidenceAdjustment - a.incidenceAdjustment ||
-      b.adaptiveAdjustment - a.adaptiveAdjustment ||
-      b.adaptiveScore - a.adaptiveScore ||
-      pedagogicalUnitOrder(a, b)
-    );
+      const strategic = strategicPriorityForTarget({ materia: subject.materia, assunto: topic.assunto, subarea: topic.subarea || "", subject, diagnosis: adaptive.mastery, incidence: scheduling.incidence });
+      const aiRecommendation = window.AICycleStrategy?.recommendationFor?.(aiStrategy || {}, { materia: subject.materia, assunto: topic.assunto, subarea: topic.subarea || "", key: programUnitKey(topic) }) || null;
+      const priorityEligible = !lowBase && Boolean(topic.pedagogicalEligibleNow || topic.pedagogicalException) && !topic.pedagogicalBlocked;
+      return { ...topic, adaptiveScore: scheduling.adjusted, adaptiveAdjustment: scheduling.adaptiveAdjustment ?? adaptive.adjustment, adaptiveReason: adaptive.reason, incidenciaHistorica: scheduling.incidence, incidenceAdjustment: scheduling.incidenceAdjustment || 0, initialDiagnosisAdjustment: scheduling.diagnosisAdjustment || 0, strategicPriority: strategic, aiCycleRecommendation: aiRecommendation, aiPriorityBoost: priorityEligible ? Number(aiRecommendation?.priorityBoost) || 0 : 0, aiPriorityEligible: priorityEligible, aiBudgetEntry: aiBudget?.byKey?.get(programUnitKey(topic)) || null };
+    });
+  const compareLocal = (a, b) => a.pedagogicalBand - b.pedagogicalBand || a.pedagogicalStage - b.pedagogicalStage || Number(b.strategicPriority?.score || 0) - Number(a.strategicPriority?.score || 0) || b.incidenceAdjustment - a.incidenceAdjustment || b.adaptiveAdjustment - a.adaptiveAdjustment || b.adaptiveScore - a.adaptiveScore || pedagogicalUnitOrder(a, b);
+  const localOrder = [...ranked].sort(compareLocal);
+  const localPositions = new Map(localOrder.map((topic, index) => [programUnitKey(topic), index]));
+  const finalOrder = [...ranked].sort((a, b) => {
+    if (a.aiPriorityEligible && b.aiPriorityEligible && a.pedagogicalBand === b.pedagogicalBand) {
+      const boostOrder = b.aiPriorityBoost - a.aiPriorityBoost;
+      if (boostOrder) return boostOrder;
+    }
+    return compareLocal(a, b);
+  });
+  return finalOrder.map((topic, index) => ({ ...topic, localTopicRank: localPositions.get(programUnitKey(topic)), finalTopicRank: index, aiPriorityChanged: Boolean(topic.aiPriorityEligible && topic.aiPriorityBoost && localPositions.get(programUnitKey(topic)) !== index) }));
 }
 
 function createWeeklySlots(config) {
@@ -8483,6 +8456,7 @@ function createAdaptiveCycleBlocks(materias, config, analysis, { aiStrategy = nu
       changes.push({ type: "distribution", localValue: item.aiBudgetEntry.distributionAddedBlocks ? Math.max(0, (aiBudget.baselineDistribution.get(item.materia) || 0)) : 0, finalValue: (aiBudget.baselineDistribution.get(item.materia) || 0) + item.aiBudgetEntry.distributionAddedBlocks });
       item.aiBudgetEntry.distributionRemaining -= 1;
     }
+    if (item.aiPriorityChanged) changes.push({ type: "topic-priority", localValue: (Number(item.localTopicRank) || 0) + 1, finalValue: (Number(item.finalTopicRank) || 0) + 1 });
     if (item.aiCycleRecommendation && activityType !== localActivityType) changes.push({ type: "activity", localValue: localActivityType, finalValue: activityType });
     if (item.aiBudgetEntry && durationMinutes !== localDurationMinutes) changes.push({ type: "duration", localValue: localDurationMinutes, finalValue: durationMinutes });
     if (changes.length && item.aiBudgetEntry) block.aiCycleInfluence = { recommendationKey: item.aiBudgetEntry.key, changes, justification: item.aiBudgetEntry.justification, authority: "local-rules" };
@@ -9134,13 +9108,13 @@ async function generateSchedule({ completeSetup = false, openContinue = false } 
   state.generatedBlocks = cycle.blocks.map((block) => ({ ...block, weeklyCycleId: weeklyCycle?.id || "" }));
   state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, weeklyCycle?.id || "");
   if (state.nextCycleStrategyAudit) {
-    state.nextCycleStrategyAudit.application = { ...(cycle.diagnostics?.aiApplication || {}), cycleSignature: cycleStrategySignature(state.generatedBlocks) };
+    state.nextCycleStrategyAudit.application = { ...(cycle.diagnostics?.aiApplication || {}), cycleSignature: cycleStrategySignature(state.generatedBlocks), externalUnavailable: Boolean(state.nextCycleStrategyAudit.failure) };
   }
   ensureWeeklyStudyCycle();
   if ((completeSetup || setupIsIncomplete()) && state.generatedBlocks.length) finishSetup();
   setTabEnabled("cronograma", true);
   renderAppViews();
-  renderNextCycleStrategySummary(cycle.diagnostics?.aiApplication);
+  renderNextCycleStrategySummary();
   lockCycle();
   queueStudyAlertsRefresh();
   switchTab(openContinue ? "continuar" : "cronograma");
