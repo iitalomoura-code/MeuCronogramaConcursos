@@ -24,7 +24,7 @@ assert.ok(app.includes("data-continue-filter-activity"), "A tela Continuar deve 
 assert.ok(!app.includes("state.generatedBlocks = rebalanceGoalDurations(distributeAcrossSlots(queue, slots)"), "A geração nova não deve rebalancear todos os blocos pela duração padrão.");
 
 const cut = app.indexOf("els.tabs.forEach((button) => button.addEventListener");
-const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, canAddCycleBlock, fairnessExceptionReason, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, pedagogicalProgression, pedagogicalReconciliationInput, rankStudyUnitsByAdaptivePriority, createAICycleBudget, applyAICycleBudgetToDistribution, recordAICycleApplication, nextCycleStrategyLimits, nextCycleStrategyAudit, nextCycleStrategySummary, programUnitKey, invalidateDerivedStudyCaches };`;
+const runtimeSource = `${app.slice(0, cut)}\nglobalThis.__adaptiveCycleTest = { state, createAdaptiveCycleBlocks, estimateBlockDuration, normalizeReferenceDurationHours, rankedContinueEntries, buildContinueRecommendation, explainStudySuggestion, continueRecommendationFilters, entryDateValue, entryHasRecordedStudyContact, entryContactDateValue, evolutionEntryDate, evolutionEntryFromBlock, alertDaysWithoutContact, distributeBlocks, buildAlternatingQueue, cycleFairnessDiagnostics, normalSubjectBlockCap, canAddCycleBlock, fairnessExceptionReason, assignBlocksToDailyCapacity, cycleAbsenceForSubject, pedagogicalFrontier, pedagogicalProgression, pedagogicalReconciliationInput, rankStudyUnitsByAdaptivePriority, createAICycleBudget, applyAICycleBudgetToDistribution, recordAICycleApplication, nextCycleStrategyLimits, nextCycleStrategyAudit, nextCycleStrategySummary, strategyApplicationForCurrentCycle, cycleStrategySignature, programUnitKey, invalidateDerivedStudyCaches };`;
 const noop = () => {};
 const context = {
   console,
@@ -80,13 +80,13 @@ assert.strictEqual(runtime.estimateBlockDuration({ subject: runtime.state.planni
 runtime.state.rows[1].conteudosOriginais = ["item um", "item dois", "item três", "item quatro"];
 const aiTargetKey = runtime.programUnitKey({ materia: "Baixa", assunto: "Tema longo com vários itens e exceções" });
 const aiGuidedCycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 3, duracaoBloco: 1.5 }, {}, {
-  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 2, suggestedMinutes: 120, normalizedMinutes: 60, maximumBlocks: 2, sessionType: "Teoria", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
+  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 2, suggestedMinutes: 120, normalizedMinutes: 60, maximumBlocks: 2, sessionType: "Revisão", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
 });
 const aiApplied = aiGuidedCycle.diagnostics.aiApplication.entries[0];
-assert.ok(aiApplied.appliedBlocks >= 1, "Uma recomendação válida deve influenciar blocos reais.");
+assert.ok(aiApplied.materiallyAppliedBlocks >= 1, "Uma recomendação que altera duração ou atividade deve influenciar blocos reais.");
 assert.ok(aiGuidedCycle.blocks.filter((block) => block.materia === "Baixa").length >= 2, "Dois blocos sugeridos devem alterar a distribuição dentro do teto.");
 assert.ok(aiGuidedCycle.blocks.filter((block) => block.materia === "Baixa").every((block) => [30, 45, 60, 90, 120].includes(block.duracao * 60)), "Minutos sugeridos devem ser normalizados para durações válidas.");
-assert.equal(aiApplied.appliedMinutes, 120, "A preferência de 120 minutos deve chegar aos blocos finais quando couber.");
+assert.ok(aiApplied.materiallyAppliedMinutes >= 60, "A preferência de duração deve alterar ao menos um bloco final quando couber.");
 assert.ok(aiApplied.adjustmentReason, "A auditoria deve registrar como a recomendação foi aplicada.");
 const validatedForAudit = AICycleStrategy.validateStrategy({ recommendations: [{
   subject: "Baixa", topic: "Tema longo com vários itens e exceções", action: "CONTINUE_THEORY", sessionType: "Teoria", priority: "high", confidence: "high", suggestedBlocks: 2, suggestedMinutes: 120, justification: "Prioridade validada.", evidence: ["history"], dependencies: [],
@@ -94,14 +94,27 @@ const validatedForAudit = AICycleStrategy.validateStrategy({ recommendations: [{
 const audit = runtime.nextCycleStrategyAudit(validatedForAudit);
 audit.application = aiGuidedCycle.diagnostics.aiApplication;
 assert.strictEqual(audit.accepted[0].original.suggestedMinutes, 120, "A auditoria deve preservar a recomendação original.");
-assert.strictEqual(audit.application.entries[0].appliedMinutes, 120, "A auditoria deve separar minutos aceitos de minutos efetivamente aplicados.");
-assert.ok(runtime.nextCycleStrategySummary(audit.application).includes("histórico"), "O resumo compacto deve identificar a estratégia aplicada sem códigos internos.");
+assert.ok(audit.application.entries[0].materiallyAppliedMinutes >= 60, "A auditoria deve separar minutos aceitos de minutos materialmente aplicados.");
+assert.ok(runtime.nextCycleStrategySummary(audit.application).includes("IA"), "O resumo compacto deve identificar a orientação material sem códigos internos.");
+const coincidentCycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 3, duracaoBloco: 1.5 }, {}, {
+  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 1, suggestedMinutes: 90, normalizedMinutes: 90, maximumBlocks: 1, sessionType: "Teoria e questões", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Coincidente.", evidence: [] }] },
+});
+const coincidence = coincidentCycle.diagnostics.aiApplication.entries[0];
+assert.equal(coincidentCycle.diagnostics.aiApplication.source, "local", "Coincidência sem mudança deve preservar a origem local.");
+assert.ok(coincidence.matchedButUnchangedBlocks > 0, "Bloco coincidente deve ser auditado sem atribuição indevida à IA.");
+assert.equal(coincidence.materiallyAppliedBlocks, 0, "Coincidência não é influência material.");
+runtime.state.generatedBlocks = aiGuidedCycle.blocks.map((block) => ({ ...block }));
+runtime.state.nextCycleStrategyAudit = { application: { ...aiGuidedCycle.diagnostics.aiApplication, cycleSignature: runtime.cycleStrategySignature(runtime.state.generatedBlocks) } };
+assert.ok(runtime.strategyApplicationForCurrentCycle(), "A reidratação deve restaurar o resumo somente para o ciclo correspondente.");
+runtime.state.generatedBlocks = [];
+assert.equal(runtime.strategyApplicationForCurrentCycle(), null, "A ausência de ciclo deve limpar o resumo estratégico antigo.");
 const constrainedAICycle = runtime.createAdaptiveCycleBlocks(runtime.state.planningBase.materias, { horasSemanaCronograma: 1.5, duracaoBloco: 1 }, {}, {
-  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 3, suggestedMinutes: 120, normalizedMinutes: 45, maximumBlocks: 3, sessionType: "Teoria", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
+  aiStrategy: { source: "ai", accepted: [{ key: aiTargetKey, subject: "Baixa", topic: "Tema longo com vários itens e exceções", suggestedBlocks: 3, suggestedMinutes: 120, normalizedMinutes: 45, maximumBlocks: 3, sessionType: "Revisão", action: "CONTINUE_THEORY", confidence: "high", priorityBoost: .18, justification: "Prioridade validada.", evidence: [] }] },
 });
 const constrainedApplication = constrainedAICycle.diagnostics.aiApplication.entries[0];
-assert.ok(constrainedApplication.appliedBlocks < constrainedApplication.suggestedBlocks, "Capacidade limitada deve aplicar somente a parte segura da sugestão.");
-assert.ok(constrainedApplication.fallbackBlocks > 0, "A auditoria deve separar a parte completada pelo fallback.");
+assert.ok(constrainedApplication.unmetSuggestedBlocks > 0, "Capacidade limitada deve registrar a parte segura que não coube.");
+assert.ok(constrainedAICycle.diagnostics.aiApplication.localCompositionBlocks >= 0, "A auditoria deve separar a composição local real da sugestão não atendida.");
+assert.equal(constrainedAICycle.diagnostics.aiApplication.source, "hybrid", "Aplicação parcial deve ter origem combinada, não integralmente orientada pela IA.");
 
 
 runtime.state.planningBase.materias = [{ materia: "Única", assuntos: ["Tema único"], peso: 5, dominio: 3 }];

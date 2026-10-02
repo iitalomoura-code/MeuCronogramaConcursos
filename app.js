@@ -3716,6 +3716,7 @@ function markUnconfirmed() {
   state.planningBase = null;
   state.distribution = [];
   state.generatedBlocks = [];
+  state.nextCycleStrategyAudit = null;
   els.confirmationStatus.textContent = "Aguardando revis\u00e3o";
   els.confirmationStatus.classList.remove("confirmed");
   ["pesos", "disponibilidade", "cronograma"].forEach((tab) => setTabEnabled(tab, false));
@@ -6474,9 +6475,20 @@ function nextCycleStrategyCandidates(analysis) {
 
 function nextCycleStrategyLimits(config = {}, candidates = []) {
   const capacityMinutes = Math.max(0, Math.round(Number(config.capacidade?.plannedMinutes) || Number(config.horasSemanaCronograma || 0) * 60));
-  const projectedBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
   const activeSubjects = new Set((candidates || []).map((candidate) => candidate.subject).filter(Boolean)).size;
-  return { capacityMinutes, projectedBlocks, activeSubjects, maxBlocksPerSubject: normalSubjectBlockCap(projectedBlocks, activeSubjects) };
+  // A validação trabalha com a duração de referência de uma hora; o gerador
+  // recalcula o limite efetivo sobre blocos e minutos realmente escolhidos.
+  const preliminaryBlocks = Math.max(1, Math.ceil(capacityMinutes / 60));
+  const minimumPossibleBlocks = Math.max(1, Math.ceil(capacityMinutes / Math.max(...ALLOWED_BLOCK_MINUTES)));
+  const maximumPossibleBlocks = Math.max(1, Math.floor(capacityMinutes / Math.min(...ALLOWED_BLOCK_MINUTES)));
+  return {
+    capacityMinutes,
+    activeSubjects,
+    preliminaryBlocks,
+    minimumPossibleBlocks,
+    maximumPossibleBlocks,
+    maxBlocksPerSubject: normalSubjectBlockCap(preliminaryBlocks, activeSubjects),
+  };
 }
 
 function createAICycleBudget(strategy = {}, distribution = []) {
@@ -6485,12 +6497,22 @@ function createAICycleBudget(strategy = {}, distribution = []) {
     const subject = subjects.get(recommendation.subject);
     const normalizedMinutes = nearestAllowedDuration(Math.round(recommendation.suggestedMinutes / Math.max(1, recommendation.suggestedBlocks)));
     const maximumBlocks = Math.max(0, Math.min(Number(subject?.maxBlocos) || 0, recommendation.suggestedBlocks));
-    return { ...recommendation, normalizedMinutes, desiredBlocks: recommendation.suggestedBlocks, desiredMinutes: recommendation.suggestedMinutes, maximumBlocks, maximumMinutes: maximumBlocks * normalizedMinutes, appliedBlocks: 0, appliedMinutes: 0, fallbackBlocks: 0, adjustmentReason: "" };
+    return {
+      ...recommendation,
+      normalizedMinutes,
+      desiredBlocks: recommendation.suggestedBlocks,
+      desiredMinutes: recommendation.suggestedMinutes,
+      maximumBlocks,
+      maximumMinutes: maximumBlocks * normalizedMinutes,
+      distributionAddedBlocks: 0,
+      distributionRemaining: 0,
+      allocatedBlocks: 0,
+    };
   });
   const byKey = new Map(entries.map((entry) => [entry.key, entry]));
   const subjectDesired = new Map();
   entries.forEach((entry) => subjectDesired.set(entry.subject, Math.min(Number(subjects.get(entry.subject)?.maxBlocos) || 0, (subjectDesired.get(entry.subject) || 0) + entry.maximumBlocks)));
-  return { entries, byKey, subjectDesired };
+  return { entries, byKey, subjectDesired, baselineDistribution: new Map((distribution || []).map((item) => [item.materia, Number(item.blocos) || 0])) };
 }
 
 function applyAICycleBudgetToDistribution(distribution = [], budget = null) {
@@ -6507,38 +6529,68 @@ function applyAICycleBudgetToDistribution(distribution = [], budget = null) {
       donor.blocos -= 1; target.blocos += 1; needed -= 1;
     }
   });
+  const availableAddedBySubject = new Map(result.map((item) => [item.materia, Math.max(0, item.blocos - (budget.baselineDistribution.get(item.materia) || 0))]));
+  budget.entries.forEach((entry) => {
+    const available = availableAddedBySubject.get(entry.subject) || 0;
+    const added = Math.min(available, entry.maximumBlocks);
+    entry.distributionAddedBlocks = added;
+    entry.distributionRemaining = added;
+    availableAddedBySubject.set(entry.subject, Math.max(0, available - added));
+  });
   return result;
 }
 
+function cycleStrategySignature(blocks = []) {
+  return (blocks || []).filter((block) => !isStrategicPlanSessionBlock(block)).map((block) => [block.programUnitKey || programUnitKey(block), Number(block.duracao) || 0, block.tipoAtividade || ""].join("~")).join("|");
+}
+
 function recordAICycleApplication(budget = null, blocks = []) {
-  if (!budget?.entries?.length) return { source: "fallback", entries: [], appliedCount: 0, partialCount: 0, fallbackCount: 0 };
-  budget.entries.forEach((entry) => { entry.appliedBlocks = 0; entry.appliedMinutes = 0; });
-  (blocks || []).forEach((block) => {
-    const entry = budget.byKey.get(block.programUnitKey || programUnitKey(block));
-    if (entry) { entry.appliedBlocks += 1; entry.appliedMinutes += Math.round((Number(block.duracao) || 0) * 60); }
-  });
+  const cycleBlocks = (blocks || []).filter((block) => !isStrategicPlanSessionBlock(block));
+  if (!budget?.entries?.length) return { source: "local", entries: [], materialEntryCount: 0, materiallyAppliedBlocks: 0, localCompositionBlocks: cycleBlocks.length };
   const entries = budget.entries.map((entry) => {
-    const fallbackBlocks = Math.max(0, entry.desiredBlocks - entry.appliedBlocks);
-    const adjustmentReason = !entry.appliedBlocks ? "a composição local preservou cobertura, pré-requisitos ou limites de distribuição" : entry.appliedBlocks < entry.desiredBlocks || entry.appliedMinutes < entry.desiredMinutes ? "a sugestão foi reduzida para respeitar capacidade e distribuição" : "aplicada dentro dos limites do ciclo";
-    return { key: entry.key, subject: entry.subject, topic: entry.topic, suggestedBlocks: entry.desiredBlocks, suggestedMinutes: entry.desiredMinutes, normalizedMinutes: entry.normalizedMinutes, maximumBlocks: entry.maximumBlocks, maximumMinutes: entry.maximumMinutes, appliedBlocks: entry.appliedBlocks, appliedMinutes: entry.appliedMinutes, fallbackBlocks, adjustmentReason, justification: entry.justification };
+    const matched = cycleBlocks.filter((block) => (block.programUnitKey || programUnitKey(block)) === entry.key);
+    const material = matched.filter((block) => block.aiCycleInfluence?.recommendationKey === entry.key);
+    const matchedMinutes = matched.reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
+    const materiallyAppliedMinutes = material.reduce((sum, block) => sum + Math.round((Number(block.duracao) || 0) * 60), 0);
+    const materiallyAppliedBlocks = material.length;
+    const matchedButUnchangedBlocks = Math.max(0, matched.length - materiallyAppliedBlocks);
+    const unmetSuggestedBlocks = Math.max(0, entry.desiredBlocks - materiallyAppliedBlocks);
+    const unmetSuggestedMinutes = Math.max(0, entry.desiredMinutes - materiallyAppliedMinutes);
+    const influences = material.flatMap((block) => block.aiCycleInfluence.changes || []);
+    const adjustmentReason = materiallyAppliedBlocks
+      ? (unmetSuggestedBlocks || unmetSuggestedMinutes ? "a sugestão foi aplicada parcialmente dentro de capacidade, alternância e progressão" : "a estratégia alterou decisões dentro dos limites locais")
+      : matched.length ? "o ciclo local já continha a mesma decisão; a sugestão foi somente coincidente" : "a sugestão não coube sem ultrapassar as regras locais";
+    return { key: entry.key, subject: entry.subject, topic: entry.topic, suggestedBlocks: entry.desiredBlocks, suggestedMinutes: entry.desiredMinutes, normalizedMinutes: entry.normalizedMinutes, maximumBlocks: entry.maximumBlocks, maximumMinutes: entry.maximumMinutes, matchedBlocks: matched.length, matchedMinutes, materiallyAppliedBlocks, materiallyAppliedMinutes, matchedButUnchangedBlocks, unmetSuggestedBlocks, unmetSuggestedMinutes, influences, adjustmentReason, justification: entry.justification };
   });
-  return { source: "ai", entries, appliedCount: entries.filter((entry) => entry.appliedBlocks).length, partialCount: entries.filter((entry) => entry.appliedBlocks && (entry.appliedBlocks < entry.suggestedBlocks || entry.appliedMinutes < entry.suggestedMinutes)).length, fallbackCount: entries.filter((entry) => !entry.appliedBlocks).length };
+  const materiallyAppliedBlocks = entries.reduce((sum, entry) => sum + entry.materiallyAppliedBlocks, 0);
+  const materialEntryCount = entries.filter((entry) => entry.materiallyAppliedBlocks).length;
+  const hasUnmetSuggestion = entries.some((entry) => entry.unmetSuggestedBlocks || entry.unmetSuggestedMinutes);
+  const source = !materialEntryCount ? "local" : materialEntryCount === entries.length && !hasUnmetSuggestion ? "ai-guided" : "hybrid";
+  return { source, entries, materialEntryCount, materiallyAppliedBlocks, matchedButUnchangedBlocks: entries.reduce((sum, entry) => sum + entry.matchedButUnchangedBlocks, 0), unmetSuggestedBlocks: entries.reduce((sum, entry) => sum + entry.unmetSuggestedBlocks, 0), localCompositionBlocks: Math.max(0, cycleBlocks.length - materiallyAppliedBlocks) };
 }
 
 function nextCycleStrategySummary(application = null) {
-  if (!application?.entries?.length) return "Estratégia local aplicada";
-  const subjects = [...new Set(application.entries.filter((entry) => entry.appliedBlocks).map((entry) => entry.subject))].slice(0, 2).join(" e ") || "o histórico";
-  return application.partialCount + application.fallbackCount ? "Estratégia combinada: " + subjects + " recebeu prioridade com ajustes de capacidade" : "Estratégia do histórico aplicada em " + subjects;
+  if (!application?.entries?.length || application.source === "local") return "Ciclo composto pelas regras locais";
+  if (application.source === "ai-guided") return "Ciclo orientado pela estratégia da IA e validado pelas regras locais";
+  return "Ciclo com orientação parcial da IA e composição validada localmente";
 }
 
-function renderNextCycleStrategySummary(application = null) {
+function strategyApplicationForCurrentCycle() {
+  const application = state.nextCycleStrategyAudit?.application;
+  if (!application || !state.generatedBlocks.length) return null;
+  return application.cycleSignature === cycleStrategySignature(state.generatedBlocks) ? application : null;
+}
+
+function renderNextCycleStrategySummary(application = strategyApplicationForCurrentCycle()) {
   if (!els.aiCycleStrategySummary) return;
   const entries = application?.entries || [];
   if (!entries.length) { els.aiCycleStrategySummary.hidden = true; els.aiCycleStrategySummary.textContent = ""; return; }
-  const decisions = entries.filter((entry) => entry.appliedBlocks).slice(0, 2).map((entry) => entry.subject + ": " + entry.justification);
-  if (application.partialCount || application.fallbackCount) decisions.push("A composição foi ajustada para manter capacidade, alternância e cobertura das matérias.");
+  const decisions = [nextCycleStrategySummary(application)];
+  entries.filter((entry) => entry.materiallyAppliedBlocks).slice(0, 2).forEach((entry) => decisions.push(entry.subject + ": " + entry.justification));
+  if (entries.some((entry) => entry.matchedButUnchangedBlocks)) decisions.push("Algumas sugestões coincidiram com decisões que o ciclo local já tomaria.");
+  if (entries.some((entry) => entry.unmetSuggestedBlocks)) decisions.push("As demais sugestões foram ajustadas para preservar capacidade, alternância e progressão.");
   els.aiCycleStrategySummary.textContent = decisions.slice(0, 4).join(" · ");
-  els.aiCycleStrategySummary.hidden = !decisions.length;
+  els.aiCycleStrategySummary.hidden = false;
 }
 
 function nextCycleStrategyFallback(reason = "") {
@@ -8379,20 +8431,15 @@ function createAdaptiveCycleBlocks(materias, config, analysis, { aiStrategy = nu
   for (const item of queue) {
     if (remainingMinutes < ALLOWED_BLOCK_MINUTES[0]) break;
     const subject = subjectPlanningData(item.materia);
+    const localItem = { ...item, aiCycleRecommendation: null, aiBudgetEntry: null };
+    const localActivityType = activityForQueueItem(localItem);
     const activityType = activityForQueueItem(item);
     const reviewContext = reviewAttentionFor(item.materia, item.assunto);
-    const estimate = estimateBlockDuration({
-      subject,
-      topic: item.assunto,
-      activityType,
-      priority: item.prioridade,
-      reviewContext,
-      referenceDuration: config.duracaoBloco,
-      estimatedSize: item.tamanhoEstimado,
-      suggestedBlocks: item.metaRequiredBlocks,
-      difficulty: item.dificuldadeEstimada,
-    });
-    const preferredMinutes = item.aiBudgetEntry && item.aiBudgetEntry.appliedBlocks < item.aiBudgetEntry.maximumBlocks ? Math.min(item.aiBudgetEntry.normalizedMinutes, remainingMinutes) : estimate.minutes;
+    const estimateInput = { subject, topic: item.assunto, priority: item.prioridade, reviewContext, referenceDuration: config.duracaoBloco, estimatedSize: item.tamanhoEstimado, suggestedBlocks: item.metaRequiredBlocks, difficulty: item.dificuldadeEstimada };
+    const localEstimate = estimateBlockDuration({ ...estimateInput, activityType: localActivityType });
+    const estimate = activityType === localActivityType ? localEstimate : estimateBlockDuration({ ...estimateInput, activityType });
+    const localDurationMinutes = fittedDurationMinutes(localEstimate, remainingMinutes);
+    const preferredMinutes = item.aiBudgetEntry && item.aiBudgetEntry.allocatedBlocks < item.aiBudgetEntry.maximumBlocks ? Math.min(item.aiBudgetEntry.normalizedMinutes, remainingMinutes) : estimate.minutes;
     const durationMinutes = fittedDurationMinutes({ ...estimate, minutes: preferredMinutes }, remainingMinutes);
     if (!durationMinutes) continue;
     const duration = durationMinutes / 60;
@@ -8431,8 +8478,16 @@ function createAdaptiveCycleBlocks(materias, config, analysis, { aiStrategy = nu
       continue;
     }
     if (fairnessGate.exception) block.fairnessException = fairnessGate.exception;
+    const changes = [];
+    if (item.aiBudgetEntry?.distributionRemaining > 0) {
+      changes.push({ type: "distribution", localValue: item.aiBudgetEntry.distributionAddedBlocks ? Math.max(0, (aiBudget.baselineDistribution.get(item.materia) || 0)) : 0, finalValue: (aiBudget.baselineDistribution.get(item.materia) || 0) + item.aiBudgetEntry.distributionAddedBlocks });
+      item.aiBudgetEntry.distributionRemaining -= 1;
+    }
+    if (item.aiCycleRecommendation && activityType !== localActivityType) changes.push({ type: "activity", localValue: localActivityType, finalValue: activityType });
+    if (item.aiBudgetEntry && durationMinutes !== localDurationMinutes) changes.push({ type: "duration", localValue: localDurationMinutes, finalValue: durationMinutes });
+    if (changes.length && item.aiBudgetEntry) block.aiCycleInfluence = { recommendationKey: item.aiBudgetEntry.key, changes, justification: item.aiBudgetEntry.justification, authority: "local-rules" };
     blocks.push(block);
-    if (item.aiBudgetEntry) { item.aiBudgetEntry.appliedBlocks += 1; item.aiBudgetEntry.appliedMinutes += durationMinutes; }
+    if (item.aiBudgetEntry) item.aiBudgetEntry.allocatedBlocks += 1;
     remainingMinutes -= durationMinutes;
   }
 
@@ -8470,6 +8525,8 @@ function createAdaptiveCycleBlocks(materias, config, analysis, { aiStrategy = nu
       : queue.length <= blocks.length ? "não há conteúdo reservável com duração compatível"
         : "não houve encaixe possível nas durações permitidas";
   const aiApplication = recordAICycleApplication(aiBudget, integratedBlocks);
+  aiApplication.preliminaryLimits = nextCycleStrategyLimits(config, activeSubjects.map((subject) => ({ subject: subject.materia })));
+  aiApplication.finalLimits = { subjectBlockCap: normalSubjectBlockCap(integratedBlocks.length, activeSubjects.length), allocatedMinutes, capacityMinutes };
   const diagnostics = {
     plannedMinutes: capacityMinutes,
     allocatedMinutes,
@@ -9074,9 +9131,11 @@ async function generateSchedule({ completeSetup = false, openContinue = false } 
   const aiStrategy = await prepareNextCycleAIStrategy({ config, analysis });
   const cycle = createAdaptiveCycleBlocks(state.planningBase.materias, config, analysis, { aiStrategy });
   state.distribution = cycle.distribution;
-  if (state.nextCycleStrategyAudit) state.nextCycleStrategyAudit.application = cycle.diagnostics?.aiApplication || null;
   state.generatedBlocks = cycle.blocks.map((block) => ({ ...block, weeklyCycleId: weeklyCycle?.id || "" }));
   state.generatedBlocks = ensureWeeklyCycleBlockIds(state.generatedBlocks, weeklyCycle?.id || "");
+  if (state.nextCycleStrategyAudit) {
+    state.nextCycleStrategyAudit.application = { ...(cycle.diagnostics?.aiApplication || {}), cycleSignature: cycleStrategySignature(state.generatedBlocks) };
+  }
   ensureWeeklyStudyCycle();
   if ((completeSetup || setupIsIncomplete()) && state.generatedBlocks.length) finishSetup();
   setTabEnabled("cronograma", true);
@@ -9232,7 +9291,7 @@ function renderAppViews(options = {}) {
     evolution: true,
     ...options,
   };
-  if (settings.cycle) safeRender("Ciclo atual", renderGeneratedSchedule);
+  if (settings.cycle) { safeRender("Ciclo atual", renderGeneratedSchedule); renderNextCycleStrategySummary(); }
   if (settings.weekly) safeRender("Resultado do ciclo", renderWeeklyResult);
   if (settings.completed) safeRender("Temas concluídos", renderCompleted);
   if (settings.reviews) safeRender("Revisões", renderReviews);
@@ -9372,6 +9431,7 @@ function renderGeneratedSchedule() {
     return;
   }
   if (!state.generatedBlocks.some((block) => !isStrategicPlanSessionBlock(block))) {
+    renderNextCycleStrategySummary(null);
     if (els.scheduleStatus) els.scheduleStatus.textContent = "Nenhum ciclo gerado";
     syncPendingFilterControl();
     els.summaryGrid.innerHTML = "";
@@ -13890,6 +13950,7 @@ function resetCycles() {
   state.cycleHistory = [];
   state.cycleResults = [];
   state.reviews = [];
+  state.nextCycleStrategyAudit = null;
   setTabEnabled("cronograma", false);
   renderAppViews();
   updateContestSummary();
