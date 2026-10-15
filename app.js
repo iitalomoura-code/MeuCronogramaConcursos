@@ -246,7 +246,8 @@ let editalMapSearchTerm = "";
 let editalMapFilter = "all";
 let editalMapOpenSubjects = new Set();
 let pendingContentMigrationPlan = null;
-let continueAlternativesOpen = true;
+// A lista é opt-in: o primeiro clique em “Escolher outro tema” deve abri-la.
+let continueAlternativesOpen = false;
 let continueDetailsOpen = false;
 let weeklyDetailsOpen = false;
 let weeklyNextPreviewFor = "";
@@ -7280,11 +7281,19 @@ function openStrategicAdvisorModal(trigger = null) {
     measureFocusPerformance(performanceTrace, "renderLucideIcons", () => renderLucideIcons(els.strategicAdvisorModal));
     renderStrategicAdvisorPersistedCoachPreview(performanceTrace);
     els.strategicAdvisorModal.querySelector("[data-close-strategic-advisor]")?.focus();
-    scheduleAICoachHistoryForAdvisor();
   }
-  void measureFocusPerformance(performanceTrace, "paint before model", () => strategicPerfYield(performanceTrace, { frames: 2 })).then(() => {
+  void (async () => {
+    await measureFocusPerformance(performanceTrace, "paint before model", () => strategicPerfYield(performanceTrace, { frames: 2 }));
+    if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
+    setStrategicAdvisorLoadingProgress("Carregando recursos do Orientador...", "Preparando a análise detalhada somente agora.");
+    await (window.loadDeferredFeature?.("advisor-ai") || Promise.resolve());
+    if (!els.strategicAdvisorModal || els.strategicAdvisorModal.hidden || renderVersion !== strategicAdvisorRenderVersion) return;
     strategicPerfMark(performanceTrace, "advisorShellPainted");
-    return renderStrategicAdvisorContent(renderVersion, performanceTrace);
+    await renderStrategicAdvisorContent(renderVersion, performanceTrace);
+    scheduleAICoachHistoryForAdvisor();
+  })().catch((error) => {
+    if (/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) console.error("Falha ao carregar o Orientador estratégico.", error);
+    setStrategicAdvisorLoadingProgress("Não foi possível abrir a análise agora.", "Tente novamente em alguns instantes.");
   });
 }
 
@@ -9207,10 +9216,17 @@ function beginContinueInteractionMeasure(name) {
 
 function endContinueInteractionMeasure(trace) {
   if (!trace) return;
+  trace.workEndedAt = performance.now();
+  trace.workMs = Math.round((trace.workEndedAt - trace.startedAt) * 10) / 10;
+  window.__continueInteractionWork = {
+    name: trace.name,
+    workMs: trace.workMs,
+  };
   const publish = () => {
     trace.observer?.disconnect?.();
     window.__continueInteractionPerf = {
       name: trace.name,
+      workMs: trace.workMs,
       visualMs: Math.round((performance.now() - trace.startedAt) * 10) / 10,
       longTasks: trace.longTasks,
     };
@@ -9405,14 +9421,31 @@ function renderCycleSummary(model) {
 }
 
 async function appendCycleCardsInBatches(model, revision, jobRevision, trace) {
-  await yieldForPaint();
-  cycleTraceYield(trace);
   if (jobRevision !== cycleRenderJobRevision || revision !== cycleVisualRevision() || getActiveTabName() !== "cronograma") return;
-  cycleTraceMark(trace, "cycleShellPainted");
   cycleTraceMark(trace, "cycleMarkupStart");
   cycleTraceMark(trace, "cycleDomCommitStart");
   const queue = CYCLE_VIEW_GROUPS.flatMap((group) => model.groups.get(group.key).map((entry) => ({ group: group.key, entry })));
   let cursor = 0;
+
+  // O primeiro cartão é a confirmação visual de que o ciclo está pronto.
+  // Não o deixe atrás de um frame de espera, nem de uma lista inteira de 25+ itens.
+  const first = queue[cursor++];
+  if (first) {
+    const markupStartedAt = performance.now();
+    const markup = cycleCardMarkup(first.entry);
+    if (trace) {
+      trace.markupMs += performance.now() - markupStartedAt;
+      trace.htmlBytes += markup.length;
+    }
+    const commitStartedAt = performance.now();
+    els.scheduleWrap.querySelector(`[data-cycle-group-cards="${first.group}"]`)?.insertAdjacentHTML("beforeend", markup);
+    if (trace) trace.domCommitMs += performance.now() - commitStartedAt;
+    cycleTraceMark(trace, "cycleFirstCardCommitted");
+  }
+  await yieldForPaint();
+  cycleTraceYield(trace);
+  if (jobRevision !== cycleRenderJobRevision || revision !== cycleVisualRevision() || getActiveTabName() !== "cronograma") return;
+  cycleTraceMark(trace, "cycleShellPainted");
   while (cursor < queue.length) {
     const batchStartedAt = performance.now();
     const markupStartedAt = performance.now();
@@ -10255,7 +10288,7 @@ function rankedContinueEntries() {
 }
 
 function continueViewModelRevision() {
-  return [continueDerivedStateRevision, continueUiRevision, continueSuggestionOffset,
+  return [continueDerivedStateRevision, continueSuggestionOffset,
     continueRecommendationFilters?.minutes || 0, continueRecommendationFilters?.activity || "",
     continueManualOverride?.materia || "", continueManualOverride?.assunto || ""].join(":");
 }
@@ -10681,7 +10714,6 @@ function renderContinueAlternativesOnly() {
   const slot = els.continuePanel?.querySelector("[data-continue-alternatives-slot]");
   if (!slot) return false;
   slot.innerHTML = continueAlternativesMarkup(getContinueViewModel());
-  renderLucideIcons(slot);
   return true;
 }
 
@@ -11487,9 +11519,11 @@ async function openFocusedStudy(index, context = { context: "estudo" }) {
     focusedStudyDrafts.set(index, draft);
     if (!context.standaloneReview || context.persistStandalone) void persistFocusedSession({ immediate: Boolean(context.persistStandalone), label: "Sessão iniciada" });
   }
+  const interactionTrace = beginContinueInteractionMeasure("open-focused-study");
   continueDetailsOpen = false;
   focusedDraftFor(index, context);
   renderFocusedStudyOverlay();
+  endContinueInteractionMeasure(interactionTrace);
 }
 
 function recordReviewAttempt(reviewId, block, draft, outcome) {
@@ -16093,7 +16127,8 @@ async function initializeCloudPlanSource() {
     const record = preloadedRecord?.id === active.id ? preloadedRecord : null;
     await loadCloudPlanIntoState(active.id, { restoreTab: true, record });
     return true;
-  } catch {
+  } catch (error) {
+    if (/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) console.error("Falha ao carregar o planejamento do Supabase.", error);
     state.dataSource = "cloud-unavailable";
     updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;

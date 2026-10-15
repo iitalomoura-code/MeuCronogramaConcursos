@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 const indexPath = new URL("../index.html", import.meta.url);
 const write = process.argv.includes("--write");
 let index = await readFile(indexPath, "utf8");
-const matches = [...index.matchAll(/(?:href|src)="(\.\/(?:[^"?#]+\.(?:css|js)))(?:\?v=[^"]*)?"/g)];
+const matches = [...index.matchAll(/(?:href|src|data-deferred-src)="(\.\/(?:[^"?#]+\.(?:css|js)))(?:\?v=[^"]*)?"/g)];
 for (const match of matches) {
   const relative = match[1];
   const file = new URL(`../${relative.slice(2)}`, import.meta.url);
