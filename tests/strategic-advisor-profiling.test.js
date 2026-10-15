@@ -50,7 +50,7 @@ assert.equal(planningIndex.stats.topicCandidateScans, 30000, "Cada tema deve exa
 assert.equal(baselineScans, 720000, "A linha de base controlada deve revelar o custo de varrer todo o histórico a cada chamada.");
 assert.ok(baselineScans > planningIndex.stats.sourceScans, "O benchmark deve demonstrar a eliminação de scans completos repetidos.");
 
-assert.ok(index.includes('./js/strategic-planning-index.js?v=20260913-advisor-performance'), "O índice deve carregar antes do app.");
+assert.ok(index.includes('./js/strategic-planning-index.js?v='), "O índice deve carregar antes do app.");
 assert.ok(app.includes("window.__strategicPerf") && app.includes("PerformanceObserver") && app.includes('entryTypes: ["longtask"]'), "O Orientador deve expor profiling opt-in e observar long tasks quando houver suporte.");
 assert.ok(app.includes('"advisorOpenStart"') && app.includes('"advisorShellPainted"') && app.includes('"advisorExecutiveReady"') && app.includes('"advisorFullModelReady"'), "O profiling deve marcar os principais momentos visuais do modal.");
 assert.ok(app.includes('"masteryDiagnosisForTarget"') && app.includes('"initialDiagnosisEvidence"') && app.includes('"errorSignalsForTarget"') && app.includes('"strategicPriorityForTarget"'), "As operações por tópico devem aparecer separadamente no profiler.");

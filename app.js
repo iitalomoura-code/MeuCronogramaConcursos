@@ -134,7 +134,7 @@ let notebookReturnToFocus = null;
 const ON_DEMAND_VENDOR_ASSETS = Object.freeze({
   lucide: { source: "./vendor/lucide.min.js", ready: () => Boolean(window.lucide?.createIcons) },
   mammoth: { source: "./vendor/mammoth.browser.min.js", ready: () => Boolean(window.mammoth) },
-  quill: { source: "./vendor/quill.js", ready: () => typeof window.Quill === "function" },
+  quill: { source: "./vendor/quill.js", stylesheet: "./vendor/quill.snow.css", ready: () => typeof window.Quill === "function" },
 });
 const onDemandVendorLoads = new Map();
 
@@ -143,7 +143,18 @@ function loadOnDemandVendor(name) {
   if (!asset) return Promise.reject(new Error(`Recurso opcional desconhecido: ${name}`));
   if (asset.ready()) return Promise.resolve();
   if (onDemandVendorLoads.has(name)) return onDemandVendorLoads.get(name);
-  const load = new Promise((resolve, reject) => {
+  const loadStylesheet = asset.stylesheet ? new Promise((resolve, reject) => {
+    const existing = document.querySelector(`link[data-on-demand-vendor-style="${name}"]`);
+    if (existing) { resolve(); return; }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = asset.stylesheet;
+    link.dataset.onDemandVendorStyle = name;
+    link.onload = resolve;
+    link.onerror = () => reject(new Error(`Nao foi possivel carregar o estilo opcional: ${name}`));
+    document.head.append(link);
+  }) : Promise.resolve();
+  const load = loadStylesheet.then(() => new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = asset.source;
     script.async = true;
@@ -151,7 +162,7 @@ function loadOnDemandVendor(name) {
     script.onload = () => asset.ready() ? resolve() : reject(new Error(`Recurso opcional indisponivel: ${name}`));
     script.onerror = () => reject(new Error(`Nao foi possivel carregar o recurso opcional: ${name}`));
     document.head.append(script);
-  });
+  }));
   onDemandVendorLoads.set(name, load);
   return load;
 }
@@ -302,6 +313,15 @@ let learningDiagnosisView = { subject: "all", attentionOnly: false, status: "", 
 let errorNotebookView = { subject: "all", topic: "all", type: "all", period: "all", editingId: "" };
 let recentFocusedErrorSubmission = { key: "", at: 0 };
 let continueDerivedStateRevision = 0;
+// Revisões explícitas evitam reconstruir assinaturas de todos os blocos durante
+// interações visuais. Cada invalidação de dados descarta somente os modelos em memória.
+let cycleDataRevision = 0;
+let reviewsRevision = 0;
+let planningRevision = 0;
+let historyRevision = 0;
+let continueUiRevision = 0;
+let continueBaseRankingCache = { revision: -1, entries: [] };
+let continueViewModelCache = { revision: "", model: null };
 let studyAlertsRefreshTimer = 0;
 let continueAlertsExpanded = false;
 let mobileDrawerOpen = false;
@@ -722,6 +742,12 @@ function invalidateDerivedStudyCaches() {
   predictiveEvolutionSnapshot = null;
   historyInheritanceCache.clear();
   continueDerivedStateRevision += 1;
+  cycleDataRevision += 1;
+  reviewsRevision += 1;
+  planningRevision += 1;
+  historyRevision += 1;
+  continueBaseRankingCache = { revision: -1, entries: [] };
+  continueViewModelCache = { revision: "", model: null };
   window.StudyDerivedState?.invalidate?.();
   });
 }
@@ -736,6 +762,10 @@ function invalidatePriorityDerivedCaches() {
   // marcados como desatualizados e só serão reconstruídos quando forem abertos.
   priorityDerivedRevision += 1;
   continueDerivedStateRevision += 1;
+  planningRevision += 1;
+  cycleDataRevision += 1;
+  continueBaseRankingCache = { revision: -1, entries: [] };
+  continueViewModelCache = { revision: "", model: null };
   window.StudyDerivedState?.invalidate?.();
   const metrics = priorityPerformanceSnapshot();
   if (metrics) {
@@ -9163,6 +9193,32 @@ function renderLucideIcons(root = document) {
   window.lucide.createIcons({ icons: window.lucide.icons, root: root || document });
 }
 
+function beginContinueInteractionMeasure(name) {
+  if (!window.performance) return null;
+  const trace = { name, startedAt: performance.now(), longTasks: [] };
+  if (typeof PerformanceObserver === "function") {
+    try {
+      trace.observer = new PerformanceObserver((entries) => entries.getEntries().forEach((entry) => trace.longTasks.push(Math.round(entry.duration * 10) / 10)));
+      trace.observer.observe({ entryTypes: ["longtask"] });
+    } catch {}
+  }
+  return trace;
+}
+
+function endContinueInteractionMeasure(trace) {
+  if (!trace) return;
+  const publish = () => {
+    trace.observer?.disconnect?.();
+    window.__continueInteractionPerf = {
+      name: trace.name,
+      visualMs: Math.round((performance.now() - trace.startedAt) * 10) / 10,
+      longTasks: trace.longTasks,
+    };
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(publish);
+  else publish();
+}
+
 function cyclePerformanceEnabled() {
   try {
     return new URLSearchParams(window.location.search).has("cyclePerf")
@@ -9277,7 +9333,9 @@ function renderAppViews(options = {}) {
 
 function cycleVisualRevision() {
   const config = scheduleConfig();
-  return [showPendingOnly, unitDetailIndex, performanceEditIndex, config.horasSemanaCronograma, JSON.stringify(state.generatedBlocks || []), performanceEditIndex >= 0 ? JSON.stringify(performanceDraft || null) : ""].join("|");
+  // O conteúdo do ciclo muda por operações que invalidam os derivados. Usar a
+  // revisão numérica preserva o cache visual sem serializar todos os blocos.
+  return [cycleDataRevision, planningRevision, showPendingOnly ? 1 : 0, unitDetailIndex, performanceEditIndex, config.horasSemanaCronograma].join("|");
 }
 
 const CYCLE_VIEW_GROUPS = [
@@ -10104,13 +10162,9 @@ function continueSuggestionScore(entry) {
 function continueDerivedSnapshot() {
   const entries = pendingCycleEntries().filter(({ block }) => isPedagogicallyExecutable(block));
   const phase = currentExamPhaseState();
-  const signature = [
-    state.generatedBlocks.map((block, index) => [block.id || index, block.status, block.prioridade, block.duracao, block.questoes, block.acertos, block.reprogramacoes, block.tempoEstudado].join(":")),
-    state.reviews.map((review, index) => [review.id || index, review.status, review.dataPrevista, review.disponivelEm, review.atualizadaEm].join(":")),
-    state.planningBase?.materias?.map((subject) => [subject.materia, subject.peso, subject.dominio].join(":")),
-    phase.configuredPhase,
-    els.examDate?.value || "",
-  ].join("|");
+  // Os dados abaixo são protegidos por continueDerivedStateRevision, alterada
+  // em toda mutação persistível. Assim a leitura não percorre o planejamento
+  // inteiro apenas para descobrir que o cache continua válido.
   const deriveEntry = (entry, phaseState) => {
     const block = entry.block || {};
     const adaptive = adaptivePriorityForTarget(block);
@@ -10173,7 +10227,6 @@ function continueDerivedSnapshot() {
   }
   return window.StudyDerivedState.continueSnapshot({
     revision: continueDerivedStateRevision,
-    signature,
     entries,
     phase,
     deriveEntry,
@@ -10182,16 +10235,49 @@ function continueDerivedSnapshot() {
 }
 
 function rankedContinueEntries() {
-  const snapshot = continueDerivedSnapshot();
-  const hasActiveFilter = Boolean(Number(continueRecommendationFilters?.minutes) || continueRecommendationFilters?.activity);
-  if (!window.ContinueRecommendation?.rank) {
-    return snapshot.entries.map((entry) => ({ ...entry, suggestion: entry.derived }));
+  // A ordenação estratégica é independente dos filtros da interface. Mantê-la
+  // em memória evita ordenar todos os blocos a cada clique de chip ou alternativa.
+  if (continueBaseRankingCache.revision !== continueDerivedStateRevision) {
+    const snapshot = continueDerivedSnapshot();
+    const entries = !window.ContinueRecommendation?.rank
+      ? snapshot.entries.map((entry) => ({ ...entry, suggestion: entry.derived }))
+      : window.ContinueRecommendation.rank(snapshot, {
+        normalizeStatus,
+        matchesFilters: () => true,
+        hasActiveFilter: false,
+      });
+    continueBaseRankingCache = { revision: continueDerivedStateRevision, entries };
   }
-  return window.ContinueRecommendation.rank(snapshot, {
-    normalizeStatus,
-    matchesFilters: blockMatchesContinueFilters,
-    hasActiveFilter,
-  });
+  const hasActiveFilter = Boolean(Number(continueRecommendationFilters?.minutes) || continueRecommendationFilters?.activity);
+  return hasActiveFilter
+    ? continueBaseRankingCache.entries.filter((entry) => blockMatchesContinueFilters(entry.block))
+    : continueBaseRankingCache.entries;
+}
+
+function continueViewModelRevision() {
+  return [continueDerivedStateRevision, continueUiRevision, continueSuggestionOffset,
+    continueRecommendationFilters?.minutes || 0, continueRecommendationFilters?.activity || "",
+    continueManualOverride?.materia || "", continueManualOverride?.assunto || ""].join(":");
+}
+
+function getContinueViewModel() {
+  const revision = continueViewModelRevision();
+  if (continueViewModelCache.revision === revision) return continueViewModelCache.model;
+  const pending = rankedContinueEntries();
+  if (continueSuggestionOffset >= pending.length) continueSuggestionOffset = 0;
+  const recommendationResult = buildContinueRecommendation(pending, true);
+  const manualEntry = manualOverrideEntry();
+  const suggested = manualEntry || recommendationResult.recommendation;
+  // O motor já explica a recomendação enquanto a escolhe. O contexto fica no
+  // modelo para que Modo Foco e a troca visual não reexecutem o diagnóstico.
+  const explanation = suggested
+    ? (suggested === recommendationResult.recommendation
+      ? { text: recommendationResult.reasons.join("; ") || "Este é o próximo bloco pendente do ciclo atual.", factors: recommendationResult.reasons }
+      : explainStudySuggestion(suggested.block, suggested.suggestion))
+    : { text: "", factors: [] };
+  const model = { revision, pending, recommendationResult, manualEntry, suggested, explanation };
+  continueViewModelCache = { revision, model };
+  return model;
 }
 
 function manualOverrideEntry() {
@@ -10573,10 +10659,54 @@ function continueAlternativeEntries(suggested, rankedEntries = null) {
 }
 
 function continueAlternativeReason(entry = {}) {
-  const explanation = explainStudySuggestion(entry.block, entry.suggestion);
-  if (explanation.factors?.length) return explanation.factors[0];
+  // A lista de alternativas usa informações já derivadas pela fila estratégica.
+  // Não calcule novamente diagnóstico, histórico e incidência apenas para o rótulo.
   if (entry.suggestion?.review?.hasAttention) return "revisão disponível";
-  return explanation.text || "próximo bloco pendente do ciclo";
+  return entry.suggestion?.strategic?.strategic?.reasons?.[0]
+    || entry.suggestion?.strategic?.reasons?.[0]
+    || entry.block?.pedagogicalReason
+    || entry.suggestion?.rotation?.reasons?.[0]
+    || "próximo bloco pendente do ciclo";
+}
+
+function continueAlternativesMarkup(model) {
+  if (!continueAlternativesOpen) return "";
+  const alternatives = model.recommendationResult.alternatives || [];
+  const minuteFilters = [30, 45, 60, 90].map((minutes) => `<button class="continue-filter-chip ${Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : ""}" type="button" data-continue-filter-minutes="${minutes}">Tenho ${formatMinutesShort(minutes)}</button>`).join("");
+  const items = alternatives.length ? alternatives.map((entry) => `<article><div><strong>${escapeHtml(entry.block.materia)}</strong><span>${escapeHtml(themeTitle(entry.block.assunto))}</span></div><em>${escapeHtml(continueAlternativeReason(entry) + " · " + formatDuration(entry.block.duracao))}</em><button class="text-action" type="button" data-study-alternative="${entry.index}">Estudar este</button></article>`).join("") : `<p class="muted-note">Não há outra meta pendente neste ciclo.</p>`;
+  return `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${minuteFilters}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${items}</div>`;
+}
+
+function renderContinueAlternativesOnly() {
+  const slot = els.continuePanel?.querySelector("[data-continue-alternatives-slot]");
+  if (!slot) return false;
+  slot.innerHTML = continueAlternativesMarkup(getContinueViewModel());
+  renderLucideIcons(slot);
+  return true;
+}
+
+function continueRecommendationCardMarkup(model) {
+  const { suggested, explanation, recommendationResult, manualEntry, pending } = model;
+  if (!suggested) return `<section class="continue-main-card continue-recommendation-card"><div class="continue-card-header"><div><span class="section-kicker">Próximo estudo recomendado</span><h3>Ciclo concluído</h3><p>Todos os blocos deste ciclo foram concluídos.</p></div></div><div class="continue-actions"><button class="primary-button" type="button" data-open-cycle-goals>Ver ciclo completo</button></div></section>`;
+  const activity = manualEntry?.override?.action?.label || suggested.suggestion?.strategic?.strategic?.recommendedSession?.label || suggested.suggestion?.strategic?.recommendedSession?.label || suggested.block.atividadeSugerida || recommendationResult.activityType;
+  return `<section class="continue-main-card continue-recommendation-card" data-continue-recommendation-card>
+    <div class="continue-card-header"><div><span class="section-kicker">Próximo estudo recomendado</span><span class="continue-recommendation-subject">${escapeHtml(suggested.block.materia)}</span><h3>${escapeHtml(themeTitle(suggested.block))}</h3><p>${escapeHtml(shortText(programUnitDescription(suggested.block) || suggested.block.conteudoBloco || suggested.block.assunto, 180))}</p></div><span class="continue-duration">${formatDuration(suggested.block.duracao)}</span></div>
+    <div class="continue-reason-box"><div class="continue-reason-heading"><i data-lucide="sparkles"></i><strong>Por que este tema agora?</strong></div><ul>${explanation.factors?.length ? explanation.factors.map((factor) => `<li>${escapeHtml(factor)}</li>`).join("") : `<li>${escapeHtml(explanation.text)}</li>`}</ul></div>
+    <div class="continue-meta-grid"><div class="continue-meta-activity"><span>Atividade sugerida</span>${activityBadgeMarkup({ ...suggested.block, atividadeSugerida: activity }, "continue-activity-badge")}</div><div class="continue-meta-status"><span>Status</span>${statusBadge(suggested.block.status)}</div><div class="continue-meta-priority"><span>Prioridade</span>${priorityDots(displayPriorityForBlock(suggested.block))}</div></div>
+    <div class="continue-duration-adjust"><span>Ajustar tempo deste estudo</span><div>${[30, 45, 60, 90].map((minutes) => `<button class="continue-filter-chip ${Math.round((Number(suggested.block.duracao) || 0) * 60) === minutes ? "is-active" : ""}" type="button" data-continue-duration="${suggested.index}" data-duration-minutes="${minutes}">${formatMinutesShort(minutes)}</button>`).join("")}</div></div>
+    <div class="continue-actions"><button class="primary-button study-play-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
+    <div data-continue-alternatives-slot>${continueAlternativesMarkup(model)}</div>
+  </section>`;
+}
+
+function renderContinueRecommendationOnly() {
+  const current = els.continuePanel?.querySelector(".continue-recommendation-card");
+  if (!current) return false;
+  const model = getContinueViewModel();
+  current.outerHTML = continueRecommendationCardMarkup(model);
+  const card = els.continuePanel.querySelector(".continue-recommendation-card");
+  if (card) renderLucideIcons(card);
+  return true;
 }
 
 function continueAvailableReviews() {
@@ -11123,7 +11253,12 @@ function renderFocusedStudyOverlay() {
   const session = focusedStudySession || state.activeFocusSession;
   const context = { context: session?.context || "estudo", reviewId: session?.reviewId || "" };
   const review = context.reviewId ? state.reviews.find((record) => record.id === context.reviewId) : null;
-  document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex, context), explainStudySuggestion(block), { ...context, review }));
+  const continueModel = getContinueViewModel();
+  const cached = continueModel.pending.find((entry) => entry.index === focusedStudyIndex);
+  const suggestion = cached?.index === continueModel.suggested?.index
+    ? continueModel.explanation
+    : (cached?.suggestion ? explainStudySuggestion(block, cached.suggestion) : explainStudySuggestion(block));
+  document.body.insertAdjacentHTML("beforeend", focusedStudyMarkup(block, focusedStudyIndex, focusedDraftFor(focusedStudyIndex, context), suggestion, { ...context, review }));
   renderLucideIcons(document.querySelector(".focused-study-modal"));
   document.querySelector(".focused-study-panel [data-focused-field]")?.focus();
 }
@@ -11777,7 +11912,6 @@ function renderContinuePanel() {
   // só pode abrir por uma ação explícita de retomar ou iniciar o estudo.
   if (focusedStudyIndex < 0) removeFocusedStudyOverlay();
   if (state.activeFocusSession?.status === "running") ensureFocusedTimerInterval();
-  if (state.generatedBlocks.length) startupPerfMeasure(startupTrace, "ensure weekly study cycle", () => ensureWeeklyStudyCycle());
   if (!els.continuePanel) return;
   const config = getContestConfig();
   if (!config.concurso && !state.generatedBlocks.length) {
@@ -11814,21 +11948,17 @@ function renderContinuePanel() {
     return;
   }
 
-  const weeklyGoal = startupPerfMeasure(startupTrace, "ensure current weekly goal", () => ensureCurrentWeeklyGoal());
+  const weeklyGoal = currentWeeklyGoal();
   const weeklyClosure = startupPerfMeasure(startupTrace, "read pending weekly closure", () => pendingWeeklyClosure());
   const weeklyProgress = startupPerfMeasure(startupTrace, "calculate weekly progress", () => weeklyGoal ? weeklyProgressFor(weeklyGoal) : weeklyProgressFromSummary(weeklyClosure));
   startupPerfMeasure(startupTrace, "render weekly summary", () => renderContinueWeeklySummary(weeklyGoal || weeklyClosure, weeklyProgress), "stages");
-  const pending = startupPerfMeasure(startupTrace, "rank Continue entries", () => rankedContinueEntries());
+  const continueModel = startupPerfMeasure(startupTrace, "build Continue view model", () => getContinueViewModel());
+  const { pending, recommendationResult, manualEntry, suggested, explanation: suggestion } = continueModel;
   const cycleBlocks = state.generatedBlocks.filter((block) => !isStrategicPlanSessionBlock(block));
   const total = cycleBlocks.length;
   const completed = cycleBlocks.filter((block) => normalizeStatus(block.status) === "Concluído").length;
   const progress = total ? Math.round((completed / total) * 100) : 0;
   startupPerfMeasure(startupTrace, "render cycle progress", () => renderContinueCycleProgress(completed, total, progress), "stages");
-  const recommendationResult = startupPerfMeasure(startupTrace, "build Continue recommendation", () => buildContinueRecommendation(pending, continueAlternativesOpen));
-  const manualEntry = manualOverrideEntry();
-  const suggested = manualEntry || recommendationResult.recommendation;
-  const suggestion = suggested ? explainStudySuggestion(suggested.block, suggested.suggestion) : null;
-  const alternatives = recommendationResult.alternatives;
   const reviews = continueAvailableReviews();
   const nextSteps = pending
     .filter((entry) => entry.index !== suggested?.index)
@@ -11867,7 +11997,7 @@ function renderContinuePanel() {
         ${continueDetailsOpen ? "<div class=\"continue-detail-box\"><strong>Detalhes da recomendação</strong><p>Prioridade base: " + escapeHtml(priorityInfo(suggested.block.prioridadeBase ?? suggested.block.prioridade).label) + ". " + (suggested.block.duracaoMotivos?.length ? "Duração sugerida: " + escapeHtml(suggested.block.duracaoMotivos.slice(0, 3).join("; ")) + "." : "A duração foi definida pela estimativa do tema e sua referência de bloco.") + "</p></div>" : ""}
         ${manualEntry ? `<div class="continue-manual-override"><strong>Reforço selecionado</strong><span>Escolhido no Diagnóstico · ${escapeHtml(manualEntry.override.action?.label || "Intervenção")}${Number(manualEntry.override.action?.questions) ? ` · ${manualEntry.override.action.questions} questões` : ""}</span><button class="text-action" type="button" data-clear-manual-override>Voltar à recomendação automática</button></div>` : ""}
         <div class="continue-actions"><button class="primary-button study-play-button" type="button" data-start-continue="${suggested.index}"><i data-lucide="play"></i><span>${normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Iniciar estudo"}</span></button><button class="ghost-button" type="button" data-toggle-alternatives ${pending.length < 2 ? "disabled" : ""}><i data-lucide="shuffle"></i><span>Escolher outro tema</span></button><button class="text-action" type="button" data-toggle-continue-details>${continueDetailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</button></div>
-        ${continueAlternativesOpen ? `<div class="continue-alternatives"><div class="continue-card-header compact"><div><h4>Outras opções</h4><p>Escolha livremente outra meta pendente do ciclo.</p></div></div><div class="continue-quick-filters"><span>Filtrar opções:</span>${[30, 45, 60, 90].map((minutes) => "<button class=\"continue-filter-chip " + (Number(continueRecommendationFilters.minutes) === minutes ? "is-active" : "") + "\" type=\"button\" data-continue-filter-minutes=\"" + minutes + "\">Tenho " + formatMinutesShort(minutes) + "</button>").join("")}<button class="continue-filter-chip ${continueRecommendationFilters.activity === "Questões" ? "is-active" : ""}" type="button" data-continue-filter-activity="Questões">Questões</button><button class="continue-filter-chip ${continueRecommendationFilters.activity === "Revisão" ? "is-active" : ""}" type="button" data-continue-filter-activity="Revisão">Revisar</button></div>${alternatives.length ? alternatives.map((entry) => "<article><div><strong>" + escapeHtml(entry.block.materia) + "</strong><span>" + escapeHtml(themeTitle(entry.block.assunto)) + "</span></div><em>" + escapeHtml(entry.suggestion.review.hasAttention ? "Revisão disponível" : (entry.block.atividadeSugerida || entry.block.tipoAtividade || entry.block.tipo || "Teoria e questões") + " · " + formatDuration(entry.block.duracao)) + "</em><button class=\"text-action\" type=\"button\" data-study-alternative=\"" + entry.index + "\">Estudar este</button></article>").join("") : "<p class=\"muted-note\">Não há outra meta pendente neste ciclo.</p>"}</div>` : ""}
+        <div data-continue-alternatives-slot>${continueAlternativesMarkup(continueModel)}</div>
       ` : "<div class=\"continue-actions\"><button class=\"primary-button\" type=\"button\" data-open-cycle-goals><i data-lucide=\"check-circle-2\"></i><span>Ver ciclo completo</span></button></div>"}
     </section>
     ${strategicAdvisorCompactMarkup()}
@@ -11880,14 +12010,6 @@ function renderContinuePanel() {
   `;
   const topicContext = els.continuePanel.querySelector(".continue-recommendation-card .continue-card-header p");
   if (topicContext) topicContext.classList.add("continue-topic-context");
-  els.continuePanel.querySelectorAll("[data-study-alternative]").forEach((button) => {
-    const entry = alternatives.find((item) => item.index === Number(button.dataset.studyAlternative));
-    const meta = button.closest("article")?.querySelector("em");
-    if (entry && meta) meta.textContent = `${continueAlternativeReason(entry)} · ${formatDuration(entry.block.duracao)}`;
-  });
-  els.continuePanel.querySelectorAll("[data-continue-filter-minutes]").forEach((button) => {
-    button.textContent = formatMinutesShort(Number(button.dataset.continueFilterMinutes));
-  });
   const startLabel = els.continuePanel.querySelector("[data-start-continue] span");
   if (startLabel && suggested) startLabel.textContent = normalizeStatus(suggested.block.status) === "Em andamento" ? "Continuar estudo" : "Começar estudo";
   renderLucideIcons(els.continuePanel);
@@ -15921,11 +16043,11 @@ function uniqueCloudPlanName(name, existingPlans = state.plans) {
   return attempt;
 }
 
-async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurrentTab = false } = {}) {
+async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurrentTab = false, record: preloadedRecord = null } = {}) {
   const currentTab = preserveCurrentTab ? getActiveTabName() : "";
   const trace = beginStartupHydration(planId);
   startupPerfMark(trace, "snapshotLoadStart");
-  const record = await startupPerfMeasure(trace, "load cloud snapshot", () => window.loadCloudPlan(planId), "stages");
+  const record = preloadedRecord || await startupPerfMeasure(trace, "load cloud snapshot", () => window.loadCloudPlan(planId), "stages");
   startupPerfMark(trace, "snapshotLoadEnd");
   const meta = cloudPlanMeta(record);
   state.currentPlanId = meta.id;
@@ -15949,7 +16071,12 @@ async function loadCloudPlanIntoState(planId, { restoreTab = true, preserveCurre
 async function initializeCloudPlanSource() {
   if (!cloudIsAvailable()) return false;
   try {
-    const records = await window.listCloudPlans();
+    const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
+    // A lista abastece o seletor, mas não é pré-requisito para buscar o plano
+    // ativo. As duas leituras remotas começam juntas na abertura.
+    const recordsPromise = window.listCloudPlans();
+    const activeRecordPromise = rememberedId ? window.loadCloudPlan(rememberedId).catch(() => null) : Promise.resolve(null);
+    const [records, preloadedRecord] = await Promise.all([recordsPromise, activeRecordPromise]);
     if (!records.length) {
       state.dataSource = "cloud";
       state.plans = [];
@@ -15962,17 +16089,16 @@ async function initializeCloudPlanSource() {
     }
     state.dataSource = "cloud";
     state.plans = records.map(cloudPlanMeta);
-    const rememberedId = state.activeStudyPlanId || localStorage.getItem(ACTIVE_CLOUD_PLAN_KEY);
     const active = state.plans.find((plan) => plan.id === rememberedId) || state.plans[0];
-    await loadCloudPlanIntoState(active.id, { restoreTab: true });
+    const record = preloadedRecord?.id === active.id ? preloadedRecord : null;
+    await loadCloudPlanIntoState(active.id, { restoreTab: true, record });
     return true;
   } catch {
     state.dataSource = "cloud-unavailable";
-    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conex\u00e3o com o banco. Reconecte para continuar." });
+    updateSaveStatus({ state: "error", destination: "cloud", message: "Sem conexão com o banco. Reconecte para continuar." });
     return false;
   }
 }
-
 async function initializeNewPlanCloudSource() {
   if (!cloudIsAvailable()) return false;
   try {
@@ -16313,6 +16439,9 @@ function applyAppSnapshot(saved = {}) {
     });
   }
   state.weeklyGoals = Array.isArray(saved.weeklyGoals) ? saved.weeklyGoals : [];
+  // Atualização de estado ocorre durante a hidratação, não durante renderização.
+  // isRestoring impede que essa compatibilização agende uma gravação.
+  ensureCurrentWeeklyGoal();
   state.studyAlerts = Array.isArray(saved.studyAlerts) ? saved.studyAlerts : [];
   state.initialDiagnosis = Array.isArray(saved.initialDiagnosis)
     ? saved.initialDiagnosis.map((record) => ({
@@ -17490,8 +17619,11 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-toggle-alternatives]")) {
+    const trace = beginContinueInteractionMeasure("toggle-alternatives");
     continueAlternativesOpen = !continueAlternativesOpen;
-    renderContinuePanel();
+    continueUiRevision += 1;
+    if (!renderContinueAlternativesOnly()) renderContinuePanel();
+    endContinueInteractionMeasure(trace);
     return;
   }
 
@@ -17514,31 +17646,40 @@ document.addEventListener("click", (event) => {
   const minutesFilter = event.target.closest("[data-continue-filter-minutes]");
   if (minutesFilter) {
     const minutes = Number(minutesFilter.dataset.continueFilterMinutes);
+    const trace = beginContinueInteractionMeasure("filter-alternatives");
     continueRecommendationFilters.minutes = Number(continueRecommendationFilters.minutes) === minutes ? 0 : minutes;
     continueSuggestionOffset = 0;
-    renderContinuePanel();
+    continueUiRevision += 1;
+    if (!renderContinueAlternativesOnly()) renderContinuePanel();
+    endContinueInteractionMeasure(trace);
     return;
   }
 
   const activityFilter = event.target.closest("[data-continue-filter-activity]");
   if (activityFilter) {
     const activity = activityFilter.dataset.continueFilterActivity || "";
+    const trace = beginContinueInteractionMeasure("filter-alternatives");
     continueRecommendationFilters.activity = continueRecommendationFilters.activity === activity ? "" : activity;
     continueSuggestionOffset = 0;
-    renderContinuePanel();
+    continueUiRevision += 1;
+    if (!renderContinueAlternativesOnly()) renderContinuePanel();
+    endContinueInteractionMeasure(trace);
     return;
   }
 
   const alternative = event.target.closest("[data-study-alternative]");
   if (alternative) {
+    const trace = beginContinueInteractionMeasure("select-alternative");
     const index = Number(alternative.dataset.studyAlternative);
-    const pending = rankedContinueEntries();
+    const pending = getContinueViewModel().pending;
     const position = pending.findIndex((entry) => entry.index === index);
     if (position >= 0) {
       continueSuggestionOffset = position;
       continueAlternativesOpen = false;
-      renderContinuePanel();
+      continueUiRevision += 1;
+      if (!renderContinueRecommendationOnly()) renderContinuePanel();
     }
+    endContinueInteractionMeasure(trace);
     return;
   }
 

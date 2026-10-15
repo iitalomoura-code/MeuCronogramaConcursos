@@ -39,8 +39,8 @@ assert.ok(app.includes("masteryDiagnosisForTarget"), "A geração deve consultar
 assert.ok(app.includes("initialDiagnosisReason(block.materia, block.assunto, block.subarea)"), "A tela Continuar deve explicar o diagnóstico por assunto quando relevante.");
 assert.ok(app.includes("initialDiagnosisEvidence(materia, assunto, subarea, { performanceTrace })"), "A evidência inicial deve ser calculada por assunto sem misturar temas da matéria.");
 assert.ok(app.includes("initialDiagnosisEvidenceCache"), "A evidência inicial deve ser reutilizada dentro da mesma revisão derivada.");
-assert.ok(index.includes('./js/initial-diagnosis.js?v=20260911-initial-profile'), "O módulo local deve ser carregado antes do app.");
-assert.ok(index.includes('./js/mastery-diagnosis.js?v=20260909-topic-isolation'), "O motor de domínio deve ser carregado antes do app.");
+assert.ok(index.includes('./js/initial-diagnosis.js?v='), "O módulo local deve ser carregado antes do app.");
+assert.ok(index.includes('./js/mastery-diagnosis.js?v='), "O motor de domínio deve ser carregado antes do app.");
 assert.ok(!index.includes('data-tab-target="diagnostico"'), "O diagnóstico não deve aparecer como item permanente da navegação.");
 
 console.log("OK - diagnóstico inicial é neutro quando desconhecido, perde peso com evidência e preserva compatibilidade.");

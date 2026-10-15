@@ -24,7 +24,10 @@ assert.ok(app.includes("window.requestIdleCallback(render, { timeout: 250 })"), 
 assert.ok(app.includes('data-timer-state="${running ? "Pausar tempo" : "Iniciar tempo"}"'), "Os cronômetros não devem recriar todos os ícones quando a aba do ciclo abre.");
 assert.ok(app.includes('<div class="focused-study-backdrop" aria-hidden="true"></div>'), "Clicar fora do modo focado não deve minimizar a sessão sem querer.");
 assert.ok(app.includes('data-finalize-active-focused>Retomar para finalizar'), "O cartão minimizado deve explicar que o botão reabre o estudo antes de salvar.");
-assert.ok(app.includes("buildContinueRecommendation(pending, continueAlternativesOpen)"), "A recomendação deve reutilizar a ordenação já calculada no mesmo render.");
+assert.ok(app.includes("function getContinueViewModel()") && app.includes("continueBaseRankingCache"), "A recomendação deve reutilizar a ordenação já calculada no modelo da tela.");
+assert.ok(app.includes("function renderContinueAlternativesOnly()") && app.includes("function renderContinueRecommendationOnly()"), "Alternativas e seleção devem atualizar somente seus contêineres.");
+assert.ok(app.includes("function beginContinueInteractionMeasure") && app.includes("window.__continueInteractionPerf"), "Interações de Continuar devem expor tempo até a pintura e tarefas longas no navegador.");
+assert.ok(!app.includes("JSON.stringify(state.generatedBlocks || [])"), "A aba Ciclo não deve serializar todos os blocos para verificar a revisão visual.");
 assert.ok(!app.includes("showToast((focusedStudySession?.context || context.context)"), "Iniciar estudo não deve abrir uma notificação de rotina.");
 assert.ok(!app.includes("if (focusedStudyIndex === index) renderContinuePanel();"), "Abrir o modo foco não deve reconstruir a tela Continuar por trás do painel.");
 assert.ok(!app.includes("document.startViewTransition(run)"), "A troca de aba não deve capturar a página inteira antes de responder.");

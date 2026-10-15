@@ -20,7 +20,7 @@ assert.ok(styles.includes('font-family: "Source Sans 3", "Segoe UI", Arial, sans
 assert.ok(styles.includes("font-weight: 300"), "O slogan deve usar apenas o peso Light.");
 
 assert.ok(index.includes('<brand-logo class="brand-logo" variant="compact"></brand-logo>'), "A sidebar deve usar o componente de marca compacto.");
-assert.ok(index.includes('js/brand-logo.js?v=20260812-brand-logo'), "O componente deve ser carregado com cache-busting.");
+assert.ok(index.includes('js/brand-logo.js?v='), "O componente deve ser carregado com cache-busting.");
 assert.ok(component.includes('customElements.define("brand-logo", BrandLogo)'), "A marca deve ser registrada como Web Component.");
 assert.ok(component.includes('["compact", "default", "large"]'), "As três variantes devem estar disponíveis.");
 assert.ok(component.includes("Meu Cronograma") && component.includes("CONCURSOS"), "A grafia oficial da marca deve ser preservada.");

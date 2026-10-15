@@ -29,5 +29,8 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
+      - name: Verify content-hashed static assets
+        run: node scripts/generate-asset-versions.mjs
+
       - name: Run tests
         run: npm test

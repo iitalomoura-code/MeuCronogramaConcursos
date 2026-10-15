@@ -35,7 +35,7 @@ assert.strictEqual(risk.atRisk, true);
 
 assert.ok(index.includes('id="examPhase"'), "Dados do Concurso deve permitir escolher a fase.");
 assert.ok(index.includes('id="newPlanExamPhase"'), "Novo planejamento deve permitir escolher a fase.");
-assert.ok(index.includes('./js/exam-phase.js?v=20260817-exam-phase'), "O motor de fase deve ser carregado antes do app.");
+assert.ok(index.includes('./js/exam-phase.js?v='), "O motor de fase deve ser carregado antes do app.");
 assert.ok(app.includes("examPhase: window.ExamPhaseEngine?.normalizePhase"), "A fase deve integrar o snapshot sem pontuação derivada.");
 assert.ok(app.includes("phaseUpdatedAt"), "A atualização da fase deve ser persistida.");
 assert.ok(app.includes("O ciclo atual") && app.includes("não será reorganizado"), "A transição deve preservar explicitamente o ciclo atual.");
