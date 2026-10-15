@@ -8,7 +8,8 @@ const matches = [...index.matchAll(/(?:href|src)="(\.\/(?:[^"?#]+\.(?:css|js)))(
 for (const match of matches) {
   const relative = match[1];
   const file = new URL(`../${relative.slice(2)}`, import.meta.url);
-  const hash = createHash("sha256").update(await readFile(file)).digest("hex").slice(0, 12);
+  const contents = (await readFile(file, "utf8")).replace(/\r\n/g, "\n");
+  const hash = createHash("sha256").update(contents).digest("hex").slice(0, 12);
   const replacement = match[0].replace(/(?:\?v=[^"]*)?"$/, `?v=${hash}"`);
   index = index.replace(match[0], replacement);
 }
